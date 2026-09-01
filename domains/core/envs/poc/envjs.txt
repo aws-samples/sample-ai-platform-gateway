@@ -1,0 +1,5 @@
+// Injetado pelo Terraform — endpoints do ambiente.
+window.AIPLAT = {
+  adminApi: "https://<admin-api-id>.execute-api.us-west-2.amazonaws.com/".replace(/\/$/, ""),
+  gateway: "https://<gateway-id>.execute-api.us-west-2.amazonaws.com".replace(/\/$/, "")
+};

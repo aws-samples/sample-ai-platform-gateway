@@ -1,0 +1,1 @@
+{"auto_cheapest": false, "cache_ttl": 3600, "guardrails": {"mask_pii": true, "block_secrets": true, "block_injection": false}}

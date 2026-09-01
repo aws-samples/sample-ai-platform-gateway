@@ -1,0 +1,37 @@
+{
+  "status": 400,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "error": {
+      "code": "no_eligible_model",
+      "message": "no model can serve this request in the current scope",
+      "type": "invalid_request_error"
+    }
+  },
+  "records": [
+    {
+      "app_tag": "apptest",
+      "cache_hit": false,
+      "category": "dependency",
+      "detail": "m1:no_tool_use",
+      "estimated_cost_usd": 0,
+      "feature": "",
+      "latency_ms": "\u003cvolatile\u003e",
+      "mode": "sync",
+      "model": "m1",
+      "provider": "",
+      "reason": "no_eligible_model",
+      "request_id": "test-req-inelegivel",
+      "saved_usd": 0,
+      "savings_reason": "",
+      "sli_eligible": true,
+      "status": "blocked",
+      "team": "default",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "ts": "\u003cvolatile\u003e"
+    }
+  ]
+}

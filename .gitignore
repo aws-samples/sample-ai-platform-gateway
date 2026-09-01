@@ -1,0 +1,128 @@
+# Environment Variables
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# Secrets and Credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+# Anchored with a leading slash on purpose. Unanchored, `secrets/` matched at ANY
+# depth and silently excluded domains/core/src/internal/adapters/secrets/ — the
+# Secrets Manager adapter that cmd/router imports. The working tree built fine
+# because the file was on disk; a fresh clone could not compile the gateway at
+# all. Same trap as `vendor/` below. Only a real top-level drop folder is ignored.
+/secrets/
+/credentials/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+# `vendor/` unanchored would match at ANY depth, which silently excluded
+# domains/frontend/site/vendor/ — the self-hosted Tailwind build the console
+# loads and Terraform publishes. That made `terraform plan` abort on a clean
+# clone (filemd5 is evaluated at plan time) and pushed anyone hitting it back to
+# the CDN, undoing the supply-chain fix. Keep the Go convention scoped instead.
+/vendor/
+**/src/vendor/
+
+# Build artifacts
+dist/
+build/
+target/
+*.pyc
+__pycache__/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Docker
+docker-compose.override.yml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Midway/corp-auth edge gate — proprietário, NUNCA vai para o open-source.
+# Existe só localmente durante o desenvolvimento (ver domains/frontend/README.md).
+domains/frontend/midway-edge/
+
+# Kiro steering — instruções/anotações de trabalho para o assistente, não fazem
+# parte do produto. Os fixtures de contrato entre domínios que ANTES viviam em
+# .kiro/specs/ foram movidos para testdata/contracts/ (código de teste real,
+# consumido por domains/*/*/*_test.go) — continuam versionados normalmente.
+.kiro/steering/
+
+# Kiro specs — planos de refactor internos (requisitos/design/tarefas para o
+# assistente executar depois). Mesma categoria do steering: é processo de
+# engenharia do autor, não produto. O código que sair de um spec é versionado
+# normalmente; o plano em si, não.
+.kiro/specs/
+
+# Artefatos de processo interno do autor (auditoria pessoal, planejamento da
+# transformação para open-source, scripts com paths absolutos do Mac do autor).
+# Nada disso é consumido pelo produto nem por um usuário externo do repositório.
+security-audit/
+security-tests/
+Vulnerability-Scan/
+opensource-transformation-specs/
+config-testekiro.sh
+setup-testekiro.sh
+test-suite.sh
+validate-hints.sh
+build-check.sh
+deploy-core.sh
+deploy-p1.sh
+testekiro.env
+
+# Console env.js é GERADO pelo Terraform (domains/frontend/site/env.js.tftpl) no
+# deploy, a partir do Contrato de Ambiente (SSM). A cópia local de teste não deve
+# ser versionada — contém endpoints e IDs específicos do ambiente.
+domains/frontend/site/app/env.js
+
+# Script pessoal do operador: sincroniza uma nota no Obsidian local (paths
+# absolutos do Mac do autor, credenciais de demonstração). Não é parte do produto.
+scripts/sync-aiplat-vault.sh
+
+# Scripts de validação one-off do operador contra um deploy específico
+# (paths pessoais, credenciais de demonstração, IDs de recursos reais). Não são
+# parte do produto — mesma categoria de test-suite.sh / validate-hints.sh acima.
+scripts/validate-backoffice.sh
+scripts/test-create-org.sh
+
+# Wiring de teste INTERNO (Midway) — reaplica, via AWS CLI, o acesso do console
+# interno de teste ao bucket/CORS do produto após um `terraform apply`. NUNCA
+# versionar: é infra de teste interno, não faz parte do produto open-source.
+internal-midway/
+
+# RepoLinter report (evidência p/ o ticket de release open-source; não é produto).
+repolinter-report/
+
+# Artefatos de processo de release (descrição de MR, rascunhos de ticket) — não é produto.
+release-artifacts/

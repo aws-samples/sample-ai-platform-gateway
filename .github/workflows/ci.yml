@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go build & test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - domains/core/src
+          - domains/governance/src
+          - domains/observability/src
+          - domains/audit/src
+          - domains/help/src
+          - tools/decoupling
+    steps:
+      # Actions are pinned to a commit SHA, not a moving tag: a tag can be
+      # repointed at new code, which would run unreviewed third-party steps in CI.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+      - name: Build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test ./...
+
+  terraform-fmt:
+    name: Terraform fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      - name: terraform fmt -check
+        run: terraform fmt -check -recursive domains

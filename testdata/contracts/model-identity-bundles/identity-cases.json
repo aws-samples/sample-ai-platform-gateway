@@ -1,0 +1,92 @@
+{
+  "routing": {
+    "gpt-openai": {
+      "provider": "openai_compatible",
+      "model_id": "openai/gpt-5.2",
+      "aggregator": false,
+      "capabilities": {"tier": "frontier", "tool_use": true, "multimodal": false, "context_window_tokens": 200000},
+      "price": {"input": 0.010, "output": 0.030}
+    },
+    "gpt-azure": {
+      "provider": "openai_compatible",
+      "model_id": "openai/gpt-5.2",
+      "aggregator": false,
+      "capabilities": {"tier": "frontier", "tool_use": true, "multimodal": false, "context_window_tokens": 200000},
+      "price": {"input": 0.008, "output": 0.024}
+    },
+    "gpt-via-agregador": {
+      "provider": "openai_compatible",
+      "model_id": "openai/gpt-5.2",
+      "aggregator": true,
+      "capabilities": {"tier": "frontier", "tool_use": true, "multimodal": false, "context_window_tokens": 200000},
+      "price": {"input": 0.006, "output": 0.018}
+    },
+    "claude-sonnet": {
+      "provider": "anthropic",
+      "model_id": "anthropic/claude-sonnet-5",
+      "aggregator": false,
+      "capabilities": {"tier": "frontier", "tool_use": true, "multimodal": true, "context_window_tokens": 200000},
+      "price": {"input": 0.003, "output": 0.015}
+    },
+    "nova-lite": {
+      "provider": "bedrock",
+      "model_id": "amazon/nova-lite",
+      "aggregator": false,
+      "capabilities": {"tier": "balanced", "tool_use": true, "multimodal": true, "context_window_tokens": 300000},
+      "price": {"input": 0.00006, "output": 0.00024}
+    },
+    "nova-micro": {
+      "provider": "bedrock",
+      "model_id": "amazon/nova-micro",
+      "aggregator": false,
+      "capabilities": {"tier": "fast", "tool_use": true, "multimodal": false, "context_window_tokens": 128000},
+      "price": {"input": 0.000035, "output": 0.00014}
+    },
+    "sem-identidade-a": {
+      "provider": "openai_compatible",
+      "model_id": "",
+      "aggregator": false,
+      "capabilities": {"tier": "balanced", "tool_use": true, "multimodal": false, "context_window_tokens": 128000},
+      "price": {"input": 0.001, "output": 0.003}
+    },
+    "sem-identidade-b": {
+      "provider": "openai_compatible",
+      "model_id": "",
+      "aggregator": false,
+      "capabilities": {"tier": "balanced", "tool_use": true, "multimodal": false, "context_window_tokens": 128000},
+      "price": {"input": 0.001, "output": 0.003}
+    }
+  },
+  "classificacao_de_troca": [
+    { "pedida": "gpt-openai", "servida": "gpt-openai", "classe": "", "porque": "mesma rota, sem troca" },
+    { "pedida": "gpt-openai", "servida": "gpt-azure", "classe": "same_model", "porque": "mesmo model_id declarado, provedor diferente" },
+    { "pedida": "gpt-openai", "servida": "claude-sonnet", "classe": "equivalent", "porque": "modelo diferente, mesmo tier (frontier)" },
+    { "pedida": "gpt-openai", "servida": "nova-lite", "classe": "downgrade", "porque": "modelo diferente, tier inferior (balanced < frontier)" },
+    { "pedida": "nova-lite", "servida": "claude-sonnet", "classe": "equivalent", "porque": "tier superior nunca é rebaixamento" },
+    { "pedida": "gpt-openai", "servida": "gpt-via-agregador", "classe": "equivalent", "porque": "agregador nunca entra no grupo de identidade mesmo com model_id igual" }
+  ],
+  "politica_de_troca": [
+    { "politica": "", "classe": "", "permitido": true, "porque": "sem política, tudo permitido" },
+    { "politica": "", "classe": "downgrade", "permitido": true, "porque": "sem política, tudo permitido" },
+    { "politica": "same_model_only", "classe": "", "permitido": true, "porque": "servir a rota pedida é sempre permitido" },
+    { "politica": "same_model_only", "classe": "same_model", "permitido": true, "porque": "teto permite same_model" },
+    { "politica": "same_model_only", "classe": "equivalent", "permitido": false, "porque": "teto não permite equivalent" },
+    { "politica": "same_model_only", "classe": "downgrade", "permitido": false, "porque": "teto não permite downgrade" },
+    { "politica": "allow_equivalent", "classe": "same_model", "permitido": true, "porque": "teto permite até equivalent" },
+    { "politica": "allow_equivalent", "classe": "equivalent", "permitido": true, "porque": "teto permite até equivalent" },
+    { "politica": "allow_equivalent", "classe": "downgrade", "permitido": false, "porque": "teto não chega a downgrade" },
+    { "politica": "allow_downgrade", "classe": "downgrade", "permitido": true, "porque": "teto permite tudo" }
+  ],
+  "pin_por_modelo": [
+    {
+      "feature_models": ["openai/gpt-5.2"],
+      "elegiveis": ["gpt-openai", "gpt-azure"],
+      "porque": "pin por model_id expande para o grupo inteiro, exceto o agregador"
+    },
+    {
+      "feature_models": ["claude-sonnet"],
+      "elegiveis": ["claude-sonnet"],
+      "porque": "pin por nome de rota casa só a própria rota"
+    }
+  ]
+}

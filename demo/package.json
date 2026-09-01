@@ -1,0 +1,13 @@
+{
+  "name": "aiplat-demo",
+  "private": true,
+  "type": "module",
+  "description": "Local demo server and screenshot capture for the AIPlat console. Not part of the deployed product.",
+  "scripts": {
+    "serve": "node server.mjs",
+    "capture": "node capture.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

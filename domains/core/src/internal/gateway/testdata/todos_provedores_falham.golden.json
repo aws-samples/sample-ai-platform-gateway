@@ -1,0 +1,35 @@
+{
+  "status": 502,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "error": {
+      "message": "all providers failed: provider down: connection refused"
+    }
+  },
+  "records": [
+    {
+      "app_tag": "apptest",
+      "cache_hit": false,
+      "category": "dependency",
+      "detail": "provider down: connection refused",
+      "estimated_cost_usd": 0,
+      "feature": "",
+      "latency_ms": "\u003cvolatile\u003e",
+      "mode": "sync",
+      "model": "m1",
+      "provider": "",
+      "reason": "provider_unreachable",
+      "request_id": "test-req-falha",
+      "saved_usd": 0,
+      "savings_reason": "",
+      "sli_eligible": true,
+      "status": "error",
+      "team": "default",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "ts": "\u003cvolatile\u003e"
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json"
+  },
+  "body": {
+    "aiplat": {
+      "app_tag": "apptest",
+      "auto_cheapest": false,
+      "budget_state": "",
+      "cache_hit": false,
+      "escalated": false,
+      "estimated_cost_usd": 0.00002,
+      "feature": "",
+      "latency_ms": "\u003cvolatile\u003e",
+      "model": "m1",
+      "provider": "bedrock",
+      "requested_model": "m1",
+      "saved_usd": 0,
+      "savings_class": "",
+      "savings_reason": "",
+      "swap_class": "",
+      "team": "default"
+    },
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "olá do provedor falso",
+          "role": "assistant"
+        }
+      }
+    ],
+    "id": "chatcmpl-75051b95edb8",
+    "model": "m1",
+    "object": "chat.completion",
+    "usage": {
+      "completion_tokens": 5,
+      "prompt_tokens": 10,
+      "total_tokens": 15
+    }
+  },
+  "records": [
+    {
+      "app_tag": "apptest",
+      "attempt_count": 1,
+      "availability_degraded": false,
+      "cache_counters": "absent",
+      "cache_hit": false,
+      "cache_key": "75051b95edb88c90bd4635c8e8942cdf28a051a3978aa38a189d430d55b7ad9b",
+      "cache_read_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "cash_usd": 0.00002,
+      "category": "ok",
+      "credit_usd": 0,
+      "economy_mode": false,
+      "escalated": false,
+      "estimated_cost_usd": 0.00002,
+      "feature": "",
+      "latency_ms": "\u003cvolatile\u003e",
+      "mode": "sync",
+      "model": "m1",
+      "out_tokens_source": "heuristic",
+      "paid_from": "cash",
+      "price_source": "list",
+      "pricing_status": "derived",
+      "provider": "bedrock",
+      "request_id": "test-req-sucesso",
+      "requested_cost_usd": 0.001024,
+      "requested_model": "m1",
+      "saved_counterfactual_usd": 0,
+      "saved_net_usd": 0.001004,
+      "saved_usd": 0,
+      "saved_verified_usd": 0,
+      "savings_class": "",
+      "savings_floored": false,
+      "savings_reason": "",
+      "sli_eligible": true,
+      "status": "success",
+      "swap_class": "",
+      "team": "default",
+      "tokens_in": 10,
+      "tokens_out": 5,
+      "ts": "\u003cvolatile\u003e",
+      "upstream": "bedrock"
+    }
+  ]
+}

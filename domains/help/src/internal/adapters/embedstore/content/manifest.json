@@ -1,0 +1,89 @@
+{
+  "contract_version": "2",
+
+  "_comment": "languages is the FALLBACK CHAIN, in order. A requested language is tried first, then every entry here until a body is found. English is first because it is the source language (see aiplat-language-policy.md); pt sits second so a screen keeps working while an en file is still missing. File paths resolve as content/<kind>/<lang>/<file>.",
+  "languages": ["en", "pt", "es"],
+
+  "faq": {
+    "overview":   { "file": "overview.md",   "version": 1 },
+    "usage":      { "file": "usage.md",      "version": 1 },
+    "roi":        { "file": "roi.md",        "version": 1 },
+    "logs":       { "file": "logs.md",       "version": 1 },
+    "play":       { "file": "play.md",       "version": 1 },
+    "models":     { "file": "models.md",     "version": 1 },
+    "limits":     { "file": "limits.md",     "version": 1 },
+    "guardrails": { "file": "guardrails.md", "version": 1 },
+    "teams":      { "file": "teams.md",      "version": 1 },
+    "keys":       { "file": "keys.md",       "version": 1 },
+    "alerts":     { "file": "alerts.md",     "version": 1 },
+    "billing":    { "file": "billing.md",    "version": 1 },
+    "settings":   { "file": "settings.md",   "version": 1 }
+  },
+
+  "internal": {
+    "savings_calc": {
+      "file": "savings_calc.md", "version": 1,
+      "title": {
+        "en": "Savings calculation (auto-cheapest, cache, counterfactual)",
+        "pt": "Cálculo de economia (auto-cheapest, cache, contrafactual)",
+        "es": "Cálculo de ahorro (auto-cheapest, cache, contrafactual)"
+      }
+    },
+    "routing": {
+      "file": "routing.md", "version": 1,
+      "title": {
+        "en": "Routing, fallback and auto-cheapest",
+        "pt": "Roteamento, fallback e auto-cheapest",
+        "es": "Enrutamiento, fallback y auto-cheapest"
+      }
+    },
+    "cache": {
+      "file": "cache.md", "version": 1,
+      "title": {
+        "en": "Exact and semantic cache",
+        "pt": "Cache exato e semântico",
+        "es": "Cache exacto y semántico"
+      }
+    },
+    "config_scope": {
+      "file": "config_scope.md", "version": 1,
+      "title": {
+        "en": "Config inheritance (defaults → ORG# → TEAM# → APP#)",
+        "pt": "Herança de config (defaults → ORG# → TEAM# → APP#)",
+        "es": "Herencia de config (defaults → ORG# → TEAM# → APP#)"
+      }
+    },
+    "sli_slo": {
+      "file": "sli_slo.md", "version": 1,
+      "title": {
+        "en": "SLI/SLO: Wilson, shrinkage and burn rate",
+        "pt": "SLI/SLO: Wilson, shrinkage e burn rate",
+        "es": "SLI/SLO: Wilson, shrinkage y burn rate"
+      }
+    },
+    "failures": {
+      "file": "failures.md", "version": 1,
+      "title": {
+        "en": "Failure taxonomy (reason/category/sli_eligible)",
+        "pt": "Taxonomia de falhas (reason/category/sli_eligible)",
+        "es": "Taxonomía de fallas (reason/category/sli_eligible)"
+      }
+    },
+    "limits_budget": {
+      "file": "limits_budget.md", "version": 1,
+      "title": {
+        "en": "Rate limit and budget",
+        "pt": "Rate limit e budget",
+        "es": "Rate limit y budget"
+      }
+    },
+    "guardrails": {
+      "file": "guardrails.md", "version": 1,
+      "title": {
+        "en": "Deterministic guardrails",
+        "pt": "Guardrails determinísticos",
+        "es": "Guardrails deterministas"
+      }
+    }
+  }
+}

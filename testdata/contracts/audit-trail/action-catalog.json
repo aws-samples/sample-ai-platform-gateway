@@ -1,0 +1,39 @@
+{
+  "contract_version": "1",
+  "categories": ["config", "models", "members", "keys", "account"],
+  "actions": {
+    "config_update": "config",
+    "credit_update": "config",
+    "credit_delete": "config",
+
+    "model_add": "models",
+    "model_update": "models",
+    "model_remove": "models",
+    "model_enable": "models",
+    "model_disable": "models",
+    "provider_secret_set": "models",
+    "bundle_add": "models",
+    "bundle_update": "models",
+    "bundle_remove": "models",
+    "swap_policy_update": "models",
+
+    "member_invite": "members",
+    "member_update": "members",
+    "member_remove": "members",
+    "member_enable": "members",
+    "member_disable": "members",
+    "password_reset": "members",
+    "invite_resend": "members",
+    "team_create": "members",
+    "team_rename": "members",
+    "team_archive": "members",
+    "team_remove": "members",
+    "app_create": "members",
+    "app_rename": "members",
+    "app_archive": "members",
+    "app_remove": "members",
+
+    "key_issue": "keys",
+    "key_revoke": "keys"
+  }
+}

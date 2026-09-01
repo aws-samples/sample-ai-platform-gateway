@@ -1,0 +1,43 @@
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "olá"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "text": "o que é isto?"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "parts": [
+        {
+          "text": ""
+        }
+      ],
+      "role": "model"
+    },
+    {
+      "parts": [
+        {
+          "text": "25C"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "você é um assistente"
+      }
+    ]
+  }
+}

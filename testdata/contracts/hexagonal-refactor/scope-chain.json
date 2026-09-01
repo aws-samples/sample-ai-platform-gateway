@@ -1,0 +1,52 @@
+{
+  "note": "Core and Governance now share the SAME scope chain (ORG#<org>#TEAM#...#APP#...). The Core's org (DEPLOYMENT_ORG) is a fixed deployment-level constant, not a per-request parameter, but it is supplied to scopeKeys() so both domains read/write identical DynamoDB keys. This fixture used to document an intentional divergence (chain_core had no org level) — that divergence was a bug: config written by Governance under ORG#... never reached the Core's runtime lookup, which was scoped to team:.../app:... instead. Fixed by threading org through both sides.",
+  "cases": [
+    {
+      "name": "global only",
+      "org": "", "team": "", "app": "",
+      "cross_domain_equal": true,
+      "scope_key": "global",
+      "chain": ["global"],
+      "chain_governance": ["global"],
+      "scope_key_governance": "global",
+      "chain_core": ["global"],
+      "scope_key_core": "global"
+    },
+    {
+      "name": "org isolated",
+      "org": "acme", "team": "", "app": "",
+      "cross_domain_equal": true,
+      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#default"],
+      "scope_key_governance": "ORG#acme",
+      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#default"],
+      "scope_key_core": "global"
+    },
+    {
+      "name": "org + team",
+      "org": "acme", "team": "eng", "app": "",
+      "cross_domain_equal": true,
+      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#eng"],
+      "scope_key_governance": "ORG#acme#TEAM#eng",
+      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#eng"],
+      "scope_key_core": "global"
+    },
+    {
+      "name": "org + team + app",
+      "org": "acme", "team": "eng", "app": "web",
+      "cross_domain_equal": true,
+      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#eng", "ORG#acme#TEAM#eng#APP#web"],
+      "scope_key_governance": "ORG#acme#TEAM#eng#APP#web",
+      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#eng", "ORG#acme#TEAM#eng#APP#web"],
+      "scope_key_core": "global"
+    },
+    {
+      "name": "org + app, no team (defaults to team default)",
+      "org": "acme", "team": "", "app": "web",
+      "cross_domain_equal": true,
+      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#default", "ORG#acme#TEAM#default#APP#web"],
+      "scope_key_governance": "ORG#acme#TEAM#default#APP#web",
+      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#default", "ORG#acme#TEAM#default#APP#web"],
+      "scope_key_core": "global"
+    }
+  ]
+}

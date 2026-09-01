@@ -1,0 +1,18 @@
+{
+  "region": "us-west-2",
+  "cognito_user_pool_id": "us-west-2_XXXXXXXXX",
+  "cognito_client_id": "<cognito-client-id>",
+  "admin_api_url": "https://<admin-api-id>.execute-api.us-west-2.amazonaws.com",
+  "gateway_url": "https://<gateway-id>.execute-api.us-west-2.amazonaws.com",
+  "keyadmin_url": "https://<keyadmin-id>.execute-api.us-west-2.amazonaws.com",
+  "usage_api_url": "https://<usage-api-id>.execute-api.us-west-2.amazonaws.com",
+  "audit_api_url": "https://<audit-api-id>.execute-api.us-west-2.amazonaws.com",
+  "org": "XYZ_ORG",
+  "default_bedrock_model": {
+    "alias": "claude-haiku",
+    "provider_model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "region": "us-west-2",
+    "price_input_per_1k": 0.001,
+    "price_output_per_1k": 0.005
+  }
+}
