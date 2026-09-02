@@ -10,6 +10,39 @@ Amazon Bedrock. Deployed per domain with Terraform, each domain holding its own 
 
 ![The console overview](assets/screenshots/overview.png)
 
+## Disclaimer
+
+**This is a sample, published for reference and experimentation. It is not an AWS service and it
+is not supported by AWS. Using it is at your own risk.** Read the code and the Terraform before
+you put anything you care about behind it, and treat the defaults as a starting point rather than
+a hardened configuration.
+
+Specifically, before any production use:
+
+- **`domains/*/envs/poc` is a proof of concept.** It is a single environment with a local
+  Terraform backend, sized for iteration rather than operation. Production needs remote state
+  with locking, separated environments, and your own review of every IAM policy in the modules.
+- **You own the cost.** Lambda, API Gateway, DynamoDB, CloudFront and — usually the largest line —
+  the model spend on Amazon Bedrock or whichever provider you configure are billed to your
+  account. Set the cap under **Limits & Budget** before you hand the gateway to callers.
+- **You own the security review.** [Security posture](#security-posture) lists what the Terraform
+  configures. That is a description, not a compliance claim, and it has not been assessed against
+  any framework.
+- **No warranty of any kind.** See [LICENSE](LICENSE).
+
+### Known limitations
+
+- **First sign-in with MFA required.** The console does not implement the Cognito `MFA_SETUP`
+  challenge. With the user pool at the default `mfa_configuration = "ON"` and a user who has not
+  yet enrolled a TOTP factor, sign-in fails instead of guiding enrolment. Deploy with
+  `mfa_configuration = "OPTIONAL"` for the first sign-in, enrol from **Settings → 2FA**, then move
+  the pool back to `"ON"`.
+- **Cost attribution is per request, not a billing reconciliation.** Figures come from the prices
+  you declare per model, so they track your provider invoice only as closely as those prices do.
+  Until you enter a negotiated price the console uses the provider list price and says so.
+- **Savings are reported in two categories on purpose.** Only the verified ones are free of
+  assumption — see [How savings are counted](#how-savings-are-counted) before quoting a number.
+
 ## Why
 
 Once more than one team is calling models, three problems show up together and none of them are
