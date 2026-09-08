@@ -46,11 +46,11 @@ Specifically, before any production use:
 - **Responses are buffered, not streamed to the client.** The router sets
   `content-type: text/event-stream` and the API accepts `"stream": true`, but an API Gateway REST
   integration buffers the Lambda response, so the caller receives it in one piece at the end.
-  Time-to-first-token is therefore the same as time-to-last-token. If you need real streaming, or
-  responses that stream as they are generated, the router has to be exposed through a Lambda
-  Function URL with
-  `invoke_mode = "RESPONSE_STREAM"` (and the client has to read the stream) — that is not what
-  this sample deploys.
+  Time-to-first-token is therefore the same as time-to-last-token. Real streaming — tokens
+  reaching the caller as the model produces them — needs the router exposed through a Lambda
+  Function URL with `invoke_mode = "RESPONSE_STREAM"`, and a client that reads the stream. This
+  sample does not deploy that. Note this is a separate concern from the time budget above: raising
+  the integration timeout buys a longer request, not an earlier first token.
 - **First sign-in with MFA required.** The console does not implement the Cognito `MFA_SETUP`
   challenge. With the user pool at the default `mfa_configuration = "ON"` and a user who has not
   yet enrolled a TOTP factor, sign-in fails instead of guiding enrolment. Deploy with
