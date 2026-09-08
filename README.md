@@ -32,6 +32,18 @@ Specifically, before any production use:
 
 ### Known limitations
 
+- **A single request is capped at 29 seconds.** The gateway is fronted by an API Gateway REST API,
+  whose integration timeout is the binding limit — not the Lambda ceiling. The router Lambda is
+  configured at 120 s, and AWS Lambda's own maximum is 15 minutes, but neither is reachable
+  through this front door: API Gateway returns a 504 at 29 s. A long generation on a frontier
+  model can exceed that.
+- **Responses are buffered, not streamed to the client.** The router sets
+  `content-type: text/event-stream` and the API accepts `"stream": true`, but an API Gateway REST
+  integration buffers the Lambda response, so the caller receives it in one piece at the end.
+  Time-to-first-token is therefore the same as time-to-last-token. If you need real streaming, or
+  responses longer than 29 s, the router has to be exposed through a Lambda Function URL with
+  `invoke_mode = "RESPONSE_STREAM"` (and the client has to read the stream) — that is not what
+  this sample deploys.
 - **First sign-in with MFA required.** The console does not implement the Cognito `MFA_SETUP`
   challenge. With the user pool at the default `mfa_configuration = "ON"` and a user who has not
   yet enrolled a TOTP factor, sign-in fails instead of guiding enrolment. Deploy with
