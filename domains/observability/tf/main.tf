@@ -212,8 +212,11 @@ resource "aws_lambda_function" "usage_api" {
   role             = aws_iam_role.usage_api.arn
   filename         = "${local.dist}/usage-api.zip"
   source_code_hash = filebase64sha256("${local.dist}/usage-api.zip")
-  timeout          = 30
-  memory_size      = 256
+  # 27 s, deliberately just under the API Gateway integration timeout (29 s, which is
+  # itself capped by the account quota). Keeping the function shorter than the gateway
+  # means a stuck query returns the function's own error rather than a bare 504.
+  timeout     = 27
+  memory_size = 256
   environment {
     variables = {
       COST_STORE_TABLE = aws_dynamodb_table.cost_store.name
@@ -272,10 +275,16 @@ resource "aws_api_gateway_integration" "proxy_any" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.usage_api.invoke_arn
-  # Slightly above the Lambda timeout (usage-api Lambda timeout is 30 s) so a dead invocation
-  # surfaces the function error instead of the gateway cutting in first,
-  # and so a hung call does not hold the caller for the 29 s default.
-  timeout_milliseconds = 32000
+  # Slightly above the usage-api Lambda timeout (27 s) so a dead invocation surfaces
+  # the function error instead of the gateway cutting in first.
+  #
+  # 29000 is a ceiling here, not a preference: the account's Maximum integration
+  # timeout quota (L-E5AE38E3) caps EVERY integration, not just the gateway route,
+  # and API Gateway rejects anything above it with "Timeout should be between 50 ms
+  # and 29000 ms". That is why the Lambda below is 27 s and not 30 s -- a usage query
+  # that slow is already pathological, and staying under the cap is what lets the
+  # function's own error surface instead of a bare 504.
+  timeout_milliseconds = 29000
 }
 
 # OPTIONS without authorizer: a CORS preflight carries no token, so requiring
