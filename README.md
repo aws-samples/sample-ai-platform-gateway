@@ -32,16 +32,23 @@ Specifically, before any production use:
 
 ### Known limitations
 
-- **A single request is capped at 29 seconds.** The gateway is fronted by an API Gateway REST API,
-  whose integration timeout is the binding limit — not the Lambda ceiling. The router Lambda is
-  configured at 120 s, and AWS Lambda's own maximum is 15 minutes, but neither is reachable
-  through this front door: API Gateway returns a 504 at 29 s. A long generation on a frontier
-  model can exceed that.
+- **A single request is capped at 29 seconds as shipped — and that cap is raisable.** The gateway
+  is fronted by a Regional API Gateway REST API and the Terraform sets
+  `timeout_milliseconds = 29000`, matching the default *Maximum integration timeout* service
+  quota. API Gateway returns a 504 at that point, which a long generation on a frontier model can
+  reach. It is a quota, not a hard limit: since
+  [June 2024](https://aws.amazon.com/about-aws/whats-new/2024/06/amazon-api-gateway-integration-timeout-limit-29-seconds/)
+  it is adjustable for Regional and private REST APIs, so a longer ceiling is a quota increase
+  plus a change to that value, not a redesign. Two things to keep in mind: the approved maximum is
+  granted per request, so confirm yours before designing around a number; and past 120 s the
+  router Lambda's own `timeout = 120` becomes the next limit. HTTP APIs, by contrast, keep a fixed
+  30 s that cannot be raised.
 - **Responses are buffered, not streamed to the client.** The router sets
   `content-type: text/event-stream` and the API accepts `"stream": true`, but an API Gateway REST
   integration buffers the Lambda response, so the caller receives it in one piece at the end.
   Time-to-first-token is therefore the same as time-to-last-token. If you need real streaming, or
-  responses longer than 29 s, the router has to be exposed through a Lambda Function URL with
+  responses that stream as they are generated, the router has to be exposed through a Lambda
+  Function URL with
   `invoke_mode = "RESPONSE_STREAM"` (and the client has to read the stream) — that is not what
   this sample deploys.
 - **First sign-in with MFA required.** The console does not implement the Cognito `MFA_SETUP`
