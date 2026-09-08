@@ -76,3 +76,12 @@ variable "console_origin" {
 
 # No admin_token variable here: the keyadmin API is gated by the API Gateway
 # COGNITO_USER_POOLS authorizer, and the module no longer injects ADMIN_TOKEN.
+
+# Raised from the 29000 default because measured p95 here is 16 s and the slowest
+# observed request hit 39.7 s (4096 output tokens), which the default would have
+# cut off with a 504. Requires the L-E5AE38E3 quota increase to be APPROVED before
+# applying -- API Gateway validates this against the account quota.
+variable "integration_timeout_ms" {
+  type    = number
+  default = 300000
+}

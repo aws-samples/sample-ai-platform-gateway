@@ -24,4 +24,6 @@ module "domain" {
 
   # CORS allowlist for browser callers. Empty = deny all browser origins.
   console_origin = var.console_origin
+
+  integration_timeout_ms = var.integration_timeout_ms
 }

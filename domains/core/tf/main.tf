@@ -20,6 +20,13 @@ locals {
   # Routing_Hints belongs to the Observability domain; we derive it from the
   # convention, like the other external identifiers — without coupling state between domains.
   hints_table_name = coalesce(var.hints_table_name, "${var.project}-${var.environment}-obs-routing-hints")
+
+  # The router Lambda must outlive the API Gateway integration timeout, otherwise
+  # the function is killed mid-generation and the caller gets a 502 instead of the
+  # 504 that actually explains what happened. Derived instead of hardcoded so the
+  # two can never drift apart: 30 s of headroom over the gateway, capped at the
+  # Lambda service maximum of 900 s.
+  router_timeout_s = min(900, ceil(var.integration_timeout_ms / 1000) + 30)
   usage_queue_name = "${var.project}-${var.environment}-obs-usage"
   usage_queue_arn  = coalesce(var.usage_queue_arn, "arn:aws:sqs:${local.region}:${local.account_id}:${local.usage_queue_name}")
   usage_queue_url  = coalesce(var.usage_queue_url, "https://sqs.${local.region}.amazonaws.com/${local.account_id}/${local.usage_queue_name}")
@@ -167,7 +174,7 @@ resource "aws_lambda_function" "router" {
   role             = aws_iam_role.router.arn
   filename         = "${local.dist}/router.zip"
   source_code_hash = filebase64sha256("${local.dist}/router.zip")
-  timeout          = 120
+  timeout          = local.router_timeout_s
   memory_size      = 256
   environment {
     variables = {
@@ -237,7 +244,7 @@ resource "aws_api_gateway_integration" "router_proxy_any" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.router.invoke_arn
-  timeout_milliseconds    = 29000
+  timeout_milliseconds    = var.integration_timeout_ms
 }
 
 resource "aws_api_gateway_deployment" "router" {
@@ -552,6 +559,10 @@ resource "aws_api_gateway_integration" "keyadmin_proxy_any" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.keyadmin.invoke_arn
+  # Slightly above the Lambda timeout (keyadmin Lambda timeout is 15 s) so a dead invocation
+  # surfaces the function error instead of the gateway cutting in first,
+  # and so a hung call does not hold the caller for the 29 s default.
+  timeout_milliseconds = 17000
 }
 
 # OPTIONS without authorizer: a CORS preflight carries no token, so requiring
@@ -724,6 +735,31 @@ variable "platform_error_alarm_threshold" {
   type        = number
   default     = 10
   description = "Number of sli-eligible failures in 5 min that triggers the operator's systemic alarm."
+}
+
+# How long a single gateway request may take. This is the binding limit on a
+# synchronous completion: API Gateway returns 504 when the integration exceeds it,
+# no matter what the Lambda timeout says.
+#
+# The default matches the DEFAULT account quota (Maximum integration timeout,
+# L-E5AE38E3) so a fresh clone applies cleanly anywhere. Raising it above 29000
+# requires a Service Quotas increase FIRST -- otherwise the apply fails, because
+# API Gateway validates this value against the account quota. The quota is
+# adjustable only for Regional and private REST APIs, up to 300000 ms; HTTP APIs
+# are fixed at 30 s.
+#
+# Rough sizing: this deployment measures ~10 ms per output token, so 29 s allows
+# ~2.9k output tokens and 300 s allows ~30k. The router Lambda's own timeout is
+# derived from this value (see local.router_timeout_s), so it always outlives the
+# gateway.
+variable "integration_timeout_ms" {
+  type        = number
+  default     = 29000
+  description = "API Gateway integration timeout for the gateway route, in milliseconds. Above 29000 needs a Service Quotas increase on L-E5AE38E3 first."
+  validation {
+    condition     = var.integration_timeout_ms >= 50 && var.integration_timeout_ms <= 300000
+    error_message = "integration_timeout_ms must be between 50 and 300000 (300 s is the maximum the API Gateway quota can be raised to)."
+  }
 }
 
 # Topic the alarm publishes to. The subscription (email/Slack/PagerDuty) is

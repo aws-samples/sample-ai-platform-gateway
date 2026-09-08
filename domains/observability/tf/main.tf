@@ -272,6 +272,10 @@ resource "aws_api_gateway_integration" "proxy_any" {
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = aws_lambda_function.usage_api.invoke_arn
+  # Slightly above the Lambda timeout (usage-api Lambda timeout is 30 s) so a dead invocation
+  # surfaces the function error instead of the gateway cutting in first,
+  # and so a hung call does not hold the caller for the 29 s default.
+  timeout_milliseconds = 32000
 }
 
 # OPTIONS without authorizer: a CORS preflight carries no token, so requiring

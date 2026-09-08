@@ -61,6 +61,30 @@ curl -s -X DELETE "$KA" -H "$T" -H "Content-Type: application/json" -d '{"id":"<
 
 > **Streaming:** `stream:true` returns valid SSE, but **buffered** (not token-by-token), because API Gateway does not stream. We tried a Lambda Function URL with `RESPONSE_STREAM`, but (1) a public URL is blocked by the account's public-endpoint guardrail and (2) with CloudFront+OAC/IAM, AWS requires the **client** to send `x-amz-content-sha256` on a POST with a body, which breaks the SDK drop-in.
 
+> **Request time budget:** the binding limit on a completion is the API Gateway integration
+> timeout, not the Lambda timeout. It is `var.integration_timeout_ms`, defaulting to **29000 ms**
+> to match the default `Maximum integration timeout` account quota (`L-E5AE38E3`). Raising it
+> needs a Service Quotas increase **first** — API Gateway validates the value against the quota,
+> so applying a higher number on a default account fails. The quota is adjustable only for
+> Regional and private REST APIs, up to **300000 ms**; HTTP APIs are fixed at 30 s.
+>
+> The router Lambda's own `timeout` is **derived** from that value
+> (`local.router_timeout_s = min(900, ceil(ms / 1000) + 30)`), so the function always outlives the
+> gateway. If it did not, the function would be killed mid-generation and the caller would get a
+> 502 instead of the 504 that actually explains what happened.
+>
+> Sizing from measurements in this deployment: roughly **10 ms per output token** (p50 4.3 s,
+> p95 16.2 s, slowest observed 39.7 s at 4096 output tokens). So 29 s allows ~2.9k output tokens
+> and 300 s allows ~30k. Beyond 300 s there is no synchronous option — that is an async job with
+> polling or a webhook.
+>
+> The other domains' APIs set an explicit `timeout_milliseconds` slightly **above** their own
+> Lambda timeout (keyadmin 17 s, config-api 17 s, usage-api 32 s, audit-api 22 s, help-api 12 s)
+> for the same reason, and so a hung control-plane call does not hold the caller for the 29 s
+> default while its Lambda died much earlier. Those are deliberately **not** raised to 300 s:
+> they are CRUD and query paths, and a 5-minute ceiling there would let one stuck request hold a
+> concurrency slot while hiding the failure.
+
 ## Supported providers (adapters)
 `bedrock` · `openai_compatible` (real streaming) · `anthropic` (native) · `google`/`gemini` (native). Real streaming today is on `openai_compatible`; the others do pseudo-streaming (buffered and sliced into SSE).
 
