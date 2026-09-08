@@ -79,6 +79,12 @@ variable "deployment_org" {
 # was enabled, erasing in production a callback URL that becomes necessary again
 # the moment someone turns on the first IdP. Config that vanishes on its own is worse than
 # config that requires an argument at bootstrap.
+variable "additional_console_origins" {
+  type        = list(string)
+  default     = []
+  description = "Extra browser origins allowed by CORS on the admin API, beyond the frontend's own console_url. Empty by default."
+}
+
 variable "console_url" {
   description = "Console URL (OAuth callback). null = read from the SSM Contract when social login is enabled."
   type        = string
@@ -295,7 +301,17 @@ resource "aws_lambda_function" "config_api" {
       # list (buildAllowedOrigins in cmd/config-api/main.go) — empty (bootstrap
       # with no frontend yet) turns off CORS entirely, a safe degradation: deny by
       # default instead of accepting an example domain that does not exist.
-      CONSOLE_ORIGIN = local.console_url == null ? "" : trimsuffix(local.console_url, "/console.html")
+      # additional_console_origins appends origins that are NOT the frontend this
+      # stack knows about — a second console fronted by a different distribution,
+      # a reverse proxy, a local dev server. Empty by default, so the behaviour is
+      # unchanged unless you opt in. Kept as a variable rather than edited in place
+      # because otherwise every apply reverts an origin added out of band, and the
+      # console silently stops loading data with no error other than the browser's
+      # CORS block.
+      CONSOLE_ORIGIN = join(",", compact(concat(
+        [local.console_url == null ? "" : trimsuffix(local.console_url, "/console.html")],
+        var.additional_console_origins,
+      )))
     }
   }
 

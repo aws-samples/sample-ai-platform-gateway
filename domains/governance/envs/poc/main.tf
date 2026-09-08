@@ -54,11 +54,17 @@ variable "seed_user_password" {
   }
 }
 
+variable "additional_console_origins" {
+  type    = list(string)
+  default = []
+}
+
 module "domain" {
-  source      = "../../tf"
-  project     = var.project
-  environment = var.environment
-  region      = var.region
+  source                     = "../../tf"
+  additional_console_origins = var.additional_console_origins
+  project                    = var.project
+  environment                = var.environment
+  region                     = var.region
   # path.module here = the env folder; reproduces the original strings.
   dist_path        = "${path.module}/../../dist"
   config_seed_path = "${path.module}/default_config.json"

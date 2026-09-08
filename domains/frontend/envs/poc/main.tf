@@ -63,11 +63,23 @@ variable "acm_certificate_arn" {
   default = null
 }
 
+variable "console_enabled" {
+  type    = bool
+  default = true
+}
+
+variable "additional_oac_distribution_arns" {
+  type    = list(string)
+  default = []
+}
+
 module "domain" {
-  source      = "../../tf"
-  project     = var.project
-  environment = var.environment
-  region      = var.region
+  source                           = "../../tf"
+  additional_oac_distribution_arns = var.additional_oac_distribution_arns
+  console_enabled                  = var.console_enabled
+  project                          = var.project
+  environment                      = var.environment
+  region                           = var.region
   # path.module here = the env folder; reproduces the original source/filemd5 string.
   site_path = "${path.module}/../../site"
 

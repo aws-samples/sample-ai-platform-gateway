@@ -14,6 +14,18 @@ terraform {
 
 # site_path is passed by the env (where path.module = the env folder), preserving the
 # exact source/filemd5 string and avoiding a diff when migrating from envs/poc to tf/.
+variable "console_enabled" {
+  type        = bool
+  default     = true
+  description = "Whether the CloudFront distribution serves the console. false keeps the infrastructure but stops answering requests."
+}
+
+variable "additional_oac_distribution_arns" {
+  type        = list(string)
+  default     = []
+  description = "Extra CloudFront distribution ARNs allowed to read the site bucket via OAC, beyond the one this stack creates. Empty by default."
+}
+
 variable "site_path" {
   type = string
 }
@@ -302,7 +314,11 @@ resource "aws_s3_bucket_acl" "logs" {
 }
 
 resource "aws_cloudfront_distribution" "site" {
-  enabled             = true
+  # Serving the console can be turned off without destroying the distribution or
+  # the bucket, which is what you want when the console is reachable through some
+  # other front door and this one should not answer at all. A hardcoded `true`
+  # meant every apply put a disabled distribution back online.
+  enabled             = var.console_enabled
   default_root_object = "console.html"
   comment             = "${local.name} site (console)"
 
@@ -363,16 +379,26 @@ resource "aws_cloudfront_distribution" "site" {
 resource "aws_s3_bucket_policy" "site" {
   bucket     = aws_s3_bucket.site.id
   depends_on = [aws_s3_bucket_public_access_block.site]
+  # One statement per authorised distribution. The first is the one this stack
+  # creates; additional_oac_distribution_arns lets another distribution read the
+  # same bucket — a second front door for the same console, behind different auth.
+  # Empty by default, so the policy is unchanged unless you opt in. It is a
+  # variable rather than something added out of band because a bucket policy is
+  # replaced wholesale on every apply: an extra statement written by hand
+  # disappears the next time this runs, and the other distribution starts
+  # returning 403 with nothing in the diff to explain it.
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid       = "AllowCloudFrontOAC"
-      Effect    = "Allow"
-      Principal = { Service = "cloudfront.amazonaws.com" }
-      Action    = "s3:GetObject"
-      Resource  = "${aws_s3_bucket.site.arn}/*"
-      Condition = { StringEquals = { "AWS:SourceArn" = aws_cloudfront_distribution.site.arn } }
-    }]
+    Statement = [
+      for arn in concat([aws_cloudfront_distribution.site.arn], var.additional_oac_distribution_arns) : {
+        Sid       = "AllowOAC${substr(sha256(arn), 0, 12)}"
+        Effect    = "Allow"
+        Principal = { Service = "cloudfront.amazonaws.com" }
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.site.arn}/*"
+        Condition = { StringEquals = { "AWS:SourceArn" = arn } }
+      }
+    ]
   })
 }
 
