@@ -11,7 +11,6 @@
 package anthropic
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -98,30 +97,14 @@ func toWireMessages(msgs []ports.Message) []wireMsg {
 }
 
 func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Result, error) {
-	baseURL := a.BaseURL
-	if baseURL == "" {
-		baseURL = "https://api.anthropic.com"
+	// Same builder as OpenStream (see stream.go), with stream=false. Sharing it is what
+	// keeps the two wire formats from drifting — the prompt-caching cache_control block
+	// in particular, where a difference would show up as a silent change in cost rather
+	// than as an error.
+	req, err := a.buildRequest(ctx, in, false)
+	if err != nil {
+		return ports.Result{}, err
 	}
-	system, conv := splitSystem(in.Messages)
-	payload := map[string]interface{}{"model": a.ModelID, "max_tokens": 1024, "messages": toWireMessages(conv)}
-	if system != "" {
-		// With prompt caching on, system goes as a block with cache_control
-		// ephemeral (marking the end of the stable prefix to cache). Without it, it
-		// stays a plain string — keeping the wire identical to before for routes
-		// without caching.
-		if a.CachePrefix {
-			payload["system"] = []map[string]interface{}{
-				{"type": "text", "text": system, "cache_control": map[string]string{"type": "ephemeral"}},
-			}
-		} else {
-			payload["system"] = system
-		}
-	}
-	b, _ := json.Marshal(payload)
-	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/messages", bytes.NewReader(b))
-	req.Header.Set("content-type", "application/json")
-	req.Header.Set("x-api-key", a.APIKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
 		return ports.Result{}, err

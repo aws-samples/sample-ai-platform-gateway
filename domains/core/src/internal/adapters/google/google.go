@@ -10,7 +10,6 @@
 package google
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -47,27 +46,12 @@ func splitSystem(msgs []ports.Message) (string, []ports.Message) {
 }
 
 func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Result, error) {
-	baseURL := a.BaseURL
-	if baseURL == "" {
-		baseURL = "https://generativelanguage.googleapis.com"
+	// Same builder as OpenStream (see stream.go), with stream=false: identical body,
+	// different endpoint. Sharing it keeps the two from drifting.
+	req, err := a.buildRequest(ctx, in, false)
+	if err != nil {
+		return ports.Result{}, err
 	}
-	system, conv := splitSystem(in.Messages)
-	var contents []map[string]interface{}
-	for _, m := range conv {
-		role := "user"
-		if m.Role == "assistant" {
-			role = "model"
-		}
-		contents = append(contents, map[string]interface{}{"role": role, "parts": []map[string]string{{"text": m.Text}}})
-	}
-	payload := map[string]interface{}{"contents": contents}
-	if system != "" {
-		payload["systemInstruction"] = map[string]interface{}{"parts": []map[string]string{{"text": system}}}
-	}
-	b, _ := json.Marshal(payload)
-	url := baseURL + "/v1beta/models/" + a.ModelID + ":generateContent?key=" + a.APIKey
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
-	req.Header.Set("content-type", "application/json")
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
 		return ports.Result{}, err

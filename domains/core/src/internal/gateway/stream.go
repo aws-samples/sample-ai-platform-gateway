@@ -10,10 +10,12 @@ package gateway
 // var.response_streaming). Two asymmetries are worth knowing before reading a latency
 // number off this code:
 //
-//   - `openai_compatible` (proxied verbatim) and `bedrock` (ConverseStream, via
-//     ports.StreamProvider) emit the first frame as soon as the provider does. `anthropic`
-//     and `google` still fetch the whole answer and then pseudoStream it, so first-token
-//     time equals last-token time on those two until they implement OpenStream.
+//   - every adapter now emits the first frame as soon as the provider does:
+//     `openai_compatible` proxies its frames verbatim, and `bedrock` (ConverseStream),
+//     `anthropic` (Messages API `stream:true`) and `google` (`:streamGenerateContent`
+//     with `alt=sse`) go through ports.StreamProvider. pseudoStream is still the path for
+//     a cache hit — where the answer genuinely already exists — and the fallback when a
+//     provider refuses to open a stream.
 //   - the transport itself is no longer the constraint. aws-lambda-go does not implement
 //     the Runtime API side of streaming, so cmd/router runs its own invocation loop; see
 //     internal/awslambda/runtimeapi.go.

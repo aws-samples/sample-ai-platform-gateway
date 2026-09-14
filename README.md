@@ -54,10 +54,10 @@ Specifically, before any production use:
   8-null-byte delimiter), not a transport. So `cmd/router` runs its own invocation loop
   (`internal/awslambda/runtimeapi.go`, ~150 lines, one handler shape) when streaming is enabled,
   and drops back to `lambda.Start` when it is not. If the header lands upstream, that file gets
-  deleted and `AdaptStream` becomes the wiring. Second asymmetry worth knowing, upstream of all
-  this: `openai_compatible` consumes a real provider stream, while `bedrock`, `anthropic` and
-  `google` fetch the whole answer and then slice it into SSE events — so on those three, first
-  token still arrives at roughly last-token time.
+  deleted and `AdaptStream` becomes the wiring. All four provider adapters stream natively, so
+  first-token time is genuinely lower than last-token time (measured: 2.9 s of a 7.4 s
+  response); see the provider table in
+  [domains/core/README.md](domains/core/README.md) for the per-dialect details.
 - **First sign-in with MFA required.** The console does not implement the Cognito `MFA_SETUP`
   challenge. With the user pool at the default `mfa_configuration = "ON"` and a user who has not
   yet enrolled a TOTP factor, sign-in fails instead of guiding enrolment. Deploy with

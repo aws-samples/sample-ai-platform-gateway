@@ -204,17 +204,40 @@ when patching an item by hand and the failure mode would be a silent 403 on ever
 ## Supported providers (adapters)
 `bedrock` · `openai_compatible` · `anthropic` (native) · `google`/`gemini` (native).
 
-Upstream behaviour differs and it is worth knowing which is which: `openai_compatible`
-consumes a real provider stream and proxies each frame through, so the first frame is
-available as soon as the provider emits it. The others fetch the complete answer and then
-slice it into SSE events. Closing that gap means teaching those adapters
-`InvokeModelWithResponseStream` — the IAM permission is already granted.
+**All four stream natively.** Each speaks its own dialect, and each is reached through the
+optional `ports.StreamProvider` port (except `openai_compatible`, which is proxied frame by
+frame because it already speaks the client's dialect):
 
-This is now the **remaining** limit on time-to-first-token, and it is a separate concern from
-the client-facing transport above. With streaming enabled, a `bedrock` completion still shows
-first-token time ≈ last-token time (measured: TTFB 55.4 s of a 56.1 s response) because the
-adapter has the whole answer before the first frame is emitted. The transport is no longer
-what holds it back.
+| adapter | how it streams |
+|---|---|
+| `openai_compatible` | its SSE frames are forwarded verbatim |
+| `bedrock` | `ConverseStream` (chosen over `InvokeModelWithResponseStream` because Converse normalizes the model families — one translation instead of one per family) |
+| `anthropic` | Messages API with `"stream": true` |
+| `google`/`gemini` | `:streamGenerateContent` with **`alt=sse`** |
+
+That was not always true, and the difference was measurable: before the native paths
+existed, a `bedrock` completion showed TTFB 55.4 s of a 56.1 s response, because the adapter
+had the whole answer before the first frame went out. It is now 2.9 s of 7.4 s.
+
+Three dialect traps are worth knowing, because each produces a **correct-looking answer with
+a wrong number** — the failure mode that only surfaces on an invoice:
+
+- **Anthropic splits usage across two events.** `message_start` carries `input_tokens` and
+  the prompt-cache counters plus `output_tokens: 1`, a *placeholder*; the real output count
+  arrives in `message_delta`. Reading only the first gives every response a cost of one
+  token; skipping it loses the cache read entirely.
+- **Gemini's `usageMetadata` is cumulative**, repeated on every chunk, so the counters are
+  assigned and never added — summing them multiplies the cost by roughly the number of
+  chunks. Its `alt=sse` is also mandatory: without it the response is a chunked JSON array,
+  an SSE reader finds no `data:` lines, and the request completes empty with no error.
+- **The three providers disagree on whether cached tokens are inside the input count.**
+  Bedrock and Anthropic report input EXCLUDING them; Gemini INCLUDES them. The cost model is
+  told which convention applies through `capabilities.cache_tokens_inclusive`, so each
+  adapter's only job is to report the provider's number faithfully — and to preserve the
+  reported/absent distinction, since "said zero" and "did not say" price differently.
+
+The SSE transport mechanics are shared (`internal/adapters/ssestream`) precisely so those
+per-dialect rules are the only thing written twice.
 
 ## Semantic cache: the index is behind a port
 
