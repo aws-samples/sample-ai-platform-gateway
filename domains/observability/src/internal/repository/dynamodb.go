@@ -19,6 +19,18 @@ import (
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
+// Config holds the repository configuration.
+//
+// It used to live in a factory alongside a `Backend string` selector and connection
+// fields for Postgres and MongoDB, whose implementations were stubs that returned
+// "not implemented". A selector offering three backends where two cannot work is worse
+// than no selector: it advertises portability the product does not have. The product is
+// DynamoDB-only by design (see the domain README), so the configuration says so.
+type Config struct {
+	DynamoDBTable  string
+	DynamoDBRegion string
+}
+
 // DynamoDBUsageRepository implements UsageRepository for DynamoDB.
 // Schema change: pk = "USAGE" (no org prefix), sk = "TS#<timestamp>#<request_id>"
 type DynamoDBUsageRepository struct {

@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// Boundary Verifier for the Governance pure domain (hexagonal-refactor, R5/D5,
+// Boundary Verifier for the Governance pure domain (R5/D5,
 // Properties 2 and 3). Modeled on core/internal/routing/boundary_test.go.
 //
 // Fails the build when govcore starts depending on the network, files, the
@@ -130,7 +130,7 @@ func TestBoundaryScannerActuallyCatchesViolations(t *testing.T) {
 	}
 }
 
-// TestNoGovernancePackageImportsAnotherDomain (hexagonal-refactor task 12.4,
+// TestNoGovernancePackageImportsAnotherDomain (
 // R9.1/9.2, Property 6): walks ALL Governance packages and fails if any of them
 // imports another platform domain (github.com/aiplat/<x> with x != governance).
 // It is what guarantees no shared runtime package is born between domains.

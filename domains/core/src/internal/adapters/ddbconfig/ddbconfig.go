@@ -4,7 +4,6 @@
 // Package ddbconfig is the outbound adapter for the Core's effective config, read
 // from the Governance config table as a CONTRACT (never a synchronous Lambda call).
 //
-// Feature: hexagonal-refactor, task 4.2. Code MOVED from cmd/router/main.go
 // (loadConfig, scopeKeys, deepMerge and the 15s cache) without rewriting the logic.
 // It preserves the mandatory FALLBACK: unavailable config does not take the gateway
 // down — the caller passes the environment defaults as `base`, and whatever the

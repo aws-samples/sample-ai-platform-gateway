@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// E2E characterization of handle() WITHOUT AWS (hexagonal-refactor, tasks 1.1–1.3).
+// E2E characterization of handle WITHOUT AWS.
 //
 // These tests drive the Core's decision function (handle) end to end using the
 // injection seams — callProviderFn (fake provider), authResolveFn (fake auth) and
@@ -81,17 +81,37 @@ func fakeAuth(_ context.Context, _ map[string]string) (identity, bool, error) {
 func installSeams(t *testing.T, provider func(context.Context, Route, []chatMsg, []toolDef) (result, error)) *[]map[string]interface{} {
 	t.Helper()
 	prevAuth, prevProv, prevEmit := authResolveFn, callProviderFn, emitUsageFn
+	prevStream := openProviderStreamFn
 	recs := &[]map[string]interface{}{}
 	authResolveFn = fakeAuth
 	callProviderFn = provider
+	// The native-streaming seam has to be stubbed too, and it is NOT optional: a
+	// streaming request does not go through callProviderFn, so without this the handler
+	// reaches the real Bedrock adapter with a nil client pool and panics inside the
+	// producer goroutine. Default is "no native stream", which routes every existing
+	// scenario down the buffered path it was written against. A test that wants the
+	// native path installs its own with installStreamSeam.
+	openProviderStreamFn = func(context.Context, Route, []chatMsg, []toolDef) (ports.ProviderStream, error) {
+		return nil, errNoNativeStream
+	}
 	emitUsageFn = func(_ context.Context, rec map[string]interface{}) {
 		// Defensive copy: handle reuses and mutates nested maps after emitting.
 		*recs = append(*recs, deepCopyMap(rec))
 	}
 	t.Cleanup(func() {
 		authResolveFn, callProviderFn, emitUsageFn = prevAuth, prevProv, prevEmit
+		openProviderStreamFn = prevStream
 	})
 	return recs
+}
+
+// installStreamSeam points the native-streaming path at a fake. Call it AFTER
+// installSeams, which resets the seam to "no native stream".
+func installStreamSeam(t *testing.T, open func(context.Context, Route, []chatMsg, []toolDef) (ports.ProviderStream, error)) {
+	t.Helper()
+	prev := openProviderStreamFn
+	openProviderStreamFn = open
+	t.Cleanup(func() { openProviderStreamFn = prev })
 }
 
 // --- normalization of volatile fields ----------------------------------------
@@ -203,7 +223,7 @@ func jsonEqual(a, b interface{}) bool {
 // --- scenarios ---------------------------------------------------------------
 
 // Scenario 1: served successfully. One eligible model, the fake provider answers OK.
-func TestE2E_SucessoServido(t *testing.T) {
+func TestE2E_ServedOK(t *testing.T) {
 	neutralizeCoreGlobals(t)
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tool_use":true,"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
@@ -229,14 +249,14 @@ func TestE2E_SucessoServido(t *testing.T) {
 	if len(*recs) != 1 {
 		t.Fatalf("expected 1 emitted Usage_Record, got %d", len(*recs))
 	}
-	runScenario(t, "sucesso_servido", req, recs, resp)
+	runScenario(t, "served_ok", req, recs, resp)
 }
 
 // Scenario 2: no eligible model → 400 no_eligible_model.
 // The requested model exists in the catalog (otherwise it would be unknown_model), but
 // the request carries tools and the only model does not declare tool use → eligibility
 // empties out and the domain returns ErrNoEligibleModel.
-func TestE2E_NenhumModeloElegivel(t *testing.T) {
+func TestE2E_NoEligibleModel(t *testing.T) {
 	neutralizeCoreGlobals(t)
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tool_use":false,"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
@@ -264,13 +284,13 @@ func TestE2E_NenhumModeloElegivel(t *testing.T) {
 	if called {
 		t.Error("the provider should NOT be called when there is no eligible model")
 	}
-	runScenario(t, "nenhum_modelo_elegivel", req, recs, resp)
+	runScenario(t, "no_eligible_model", req, recs, resp)
 }
 
 // Scenario 3: all providers fail → 502.
 // An eligible model, but the fake provider returns an error on every attempt; the
 // fallback loop runs out, handle emits an error Usage_Record and answers 502.
-func TestE2E_TodosProvedoresFalham(t *testing.T) {
+func TestE2E_AllProvidersFail(t *testing.T) {
 	neutralizeCoreGlobals(t)
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tool_use":true,"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
@@ -296,7 +316,7 @@ func TestE2E_TodosProvedoresFalham(t *testing.T) {
 	if len(*recs) != 1 {
 		t.Fatalf("expected 1 error Usage_Record, got %d", len(*recs))
 	}
-	runScenario(t, "todos_provedores_falham", req, recs, resp)
+	runScenario(t, "all_providers_fail", req, recs, resp)
 }
 
 // Guarantees a stable key order when serializing (defensive; encoding/json already

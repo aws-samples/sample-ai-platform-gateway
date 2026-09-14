@@ -156,7 +156,7 @@ func TestBoundaryScannerActuallyCatchesViolations(t *testing.T) {
 	}
 }
 
-// TestNoCorePackageImportsAnotherDomain (hexagonal-refactor, task 7.2, R9.1,
+// TestNoCorePackageImportsAnotherDomain (R9.1,
 // Property 6): scans ALL Core packages (cmd/... and internal/...) and fails if any of
 // them imports another platform domain (github.com/aiplat/<x> with x != core). It is
 // what prevents a shortcut into synchronous coupling between domains — the golden

@@ -16,6 +16,13 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CONSOLE="$ROOT/domains/frontend/site/app/console.html"
+# The application code lives in its own file now; console.html is markup. Both are
+# language surfaces, and they carry DIFFERENT halves of the problem:
+#   console.html → data-i18n attributes and markup text nodes
+#   console.js   → the pt/es dictionaries, _t() calls, and prose written to the DOM
+# Every check below states which one it reads. Getting that wrong is not a loud failure:
+# pointing a dictionary check at the markup silently finds zero keys and reports "ok".
+CONSOLE_JS="$ROOT/domains/frontend/site/app/assets/console.js"
 QUIET="${1:-}"
 FAIL=0
 
@@ -23,14 +30,24 @@ say() { [ "$QUIET" = "--quiet" ] || printf '%s\n' "$*"; }
 hdr() { say ""; say "── $* ──"; }
 
 [ -f "$CONSOLE" ] || { echo "console.html not found at $CONSOLE"; exit 1; }
+[ -f "$CONSOLE_JS" ] || { echo "console.js not found at $CONSOLE_JS"; exit 1; }
+
+# SRC is the pair concatenated, for the checks that used to scan one file when the JS was
+# inline. A single file rather than passing both to grep: with two arguments grep prefixes
+# every line with "file:", which breaks the awk/sed field parsing downstream.
+SRC="$(mktemp)"
+cat "$CONSOLE" "$CONSOLE_JS" > "$SRC"
+trap 'rm -f "$SRC"' EXIT
 
 # ── 1. Duplicate top-level declarations ───────────────────────────────────────
 # A duplicated `const` is a SyntaxError, and a SyntaxError in an inline script
 # kills the ENTIRE script. This already broke login once (ROLE_LABEL declared
 # twice). get_diagnostics on an HTML file does not parse inline JS, so this grep
 # is the only cheap guard that catches it.
+# Reads console.js: after the split there is no top-level declaration left in the HTML, so
+# scanning that file would report "ok — no collisions" while inspecting nothing.
 hdr "1. Duplicate top-level declarations"
-DUPES="$(grep -oE '^(const|let|function) +[A-Za-z_$][A-Za-z0-9_$]*' "$CONSOLE" \
+DUPES="$(grep -oE '^(const|let|function) +[A-Za-z_$][A-Za-z0-9_$]*' "$CONSOLE_JS" \
          | awk '{print $2}' | sort | uniq -d)"
 if [ -n "$DUPES" ]; then
   say "FAIL — declared more than once at top level:"
@@ -40,51 +57,55 @@ else
   say "ok — no collisions"
 fi
 
-# ── 1b. Real syntax check of every inline <script> ────────────────────────────
-# Check 1 is a grep and only catches duplicate declarations. This parses the inline
-# JS for real, so an unbalanced quote or bracket fails here instead of on screen.
-# get_diagnostics on an HTML file does NOT parse inline JS, so without this the
-# only signal is a blank console. Skipped when node is absent.
-hdr "1b. Inline script syntax"
-# Both consoles are checked, not just the translated one. The operator console
-# (backoffice) has no dictionaries and no other gate at all, so a stray quote
-# there ships a blank page to the person whose job is to notice outages.
+# ── 1b. Real syntax check of the JS ───────────────────────────────────────────
+# Check 1 is a grep and only catches duplicate declarations. This parses the JS for real,
+# so an unbalanced quote or bracket fails here instead of on screen. A SyntaxError takes
+# down the WHOLE file, so the symptom is a blank console with no other signal.
 #
-# An ARRAY, not a space-separated string: the repo path contains spaces
-# ("My Documents"), so word splitting turned two files into six bogus ones — and
-# awk failing to open them still let the check print "ok". A guard that reports
-# success while inspecting nothing is worse than no guard, so the count of files
-# checked is printed and the loop counts only real parses.
-HTML_FILES=("$CONSOLE")
-OPCONSOLE="$ROOT/domains/backoffice/site/app/index.html"
-[ -f "$OPCONSOLE" ] && HTML_FILES+=("$OPCONSOLE")
+# Two sources, because the split left two kinds behind:
+#   · assets/console.js — the application, checked directly with node --check;
+#   · the inline <script> blocks still in console.html (the Tailwind theme config and the
+#     pre-paint theme resolver), extracted by line range and checked the same way.
+# The second half is still needed: those blocks are small but they run before everything
+# else, and a syntax error there is indistinguishable on screen from a broken app.
+hdr "1b. JS syntax (external + remaining inline blocks)"
 if command -v node >/dev/null 2>&1; then
   TMPD="$(mktemp -d)"
-  for html in "${HTML_FILES[@]}"; do
-    # Pair up the <script> ... </script> line numbers, skipping tags with src=.
-    awk 'index($0,"<script")&&!index($0,"src=")&&!index($0,"</script>"){open=NR;next}
-         index($0,"</script>")&&open{print open+1","NR-1;open=0}' "$html" \
-    | while IFS= read -r range; do
-        n="${range%%,*}"
-        sed -n "${range}p" "$html" > "$TMPD/$n.js"
-        if OUT="$(node --check "$TMPD/$n.js" 2>&1)"; then
-          echo x >> "$TMPD/parsed"
-        else
-          say "FAIL — syntax error in $(basename "$html"), script starting at line $n:"
-          printf '%s\n' "$OUT" | head -6 | sed 's/^/    /'
-          echo fail > "$TMPD/failed"
-        fi
-      done
-  done
-  PARSED="$(grep -c . "$TMPD/parsed" 2>/dev/null || echo 0)"
-  if [ -f "$TMPD/failed" ]; then
-    FAIL=1
-  elif [ "$PARSED" -lt "${#HTML_FILES[@]}" ]; then
-    # Fewer blocks parsed than files inspected means the extraction itself broke.
-    say "FAIL — only $PARSED script blocks parsed across ${#HTML_FILES[@]} files; extraction is broken"
-    FAIL=1
+  PARSED=0
+  # The external application file.
+  if OUT="$(node --check "$CONSOLE_JS" 2>&1)"; then
+    PARSED=$((PARSED + 1))
   else
-    say "ok — $PARSED inline script blocks parse across ${#HTML_FILES[@]} files"
+    say "FAIL — syntax error in $(basename "$CONSOLE_JS"):"
+    printf '%s\n' "$OUT" | head -6 | sed 's/^/    /'
+    FAIL=1
+  fi
+  # The inline blocks that remain in the markup.
+  # Pair up the <script> ... </script> line numbers, skipping tags with src=.
+  INLINE=0
+  while IFS= read -r range; do
+    [ -n "$range" ] || continue
+    n="${range%%,*}"
+    sed -n "${range}p" "$CONSOLE" > "$TMPD/$n.js"
+    INLINE=$((INLINE + 1))
+    if OUT="$(node --check "$TMPD/$n.js" 2>&1)"; then
+      PARSED=$((PARSED + 1))
+    else
+      say "FAIL — syntax error in console.html, inline script starting at line $n:"
+      printf '%s\n' "$OUT" | head -6 | sed 's/^/    /'
+      FAIL=1
+    fi
+  done <<EOF
+$(awk 'index($0,"<script")&&!index($0,"src=")&&!index($0,"</script>"){open=NR;next}
+       index($0,"</script>")&&open{print open+1","NR-1;open=0}' "$CONSOLE")
+EOF
+  # A guard against the extraction silently inspecting nothing, which is how this check
+  # once reported success over zero files. console.js plus at least one inline block.
+  if [ "$PARSED" -lt 2 ]; then
+    say "FAIL — only $PARSED JS unit(s) parsed (expected console.js + $INLINE inline block(s)); extraction is broken"
+    FAIL=1
+  elif [ "$FAIL" -eq 0 ]; then
+    say "ok — console.js + $INLINE inline block(s) parse"
   fi
   rm -rf "$TMPD"
 else
@@ -96,13 +117,17 @@ fi
 # English sentence inside a Spanish screen. Escaped apostrophes inside keys
 # ("your org\'s rate limit") are swapped for \x01 before parsing, then restored —
 # without that the naive quote regex splits the key in the wrong place.
+# Reads console.js: the I18N object moved there with the rest of the application. The awk
+# still anchors on two-space indentation (`^  pt:{` … `^  },`), so keep the dictionaries at
+# that indentation — deeper or shallower and this silently extracts zero keys, which reads
+# as "ok — dictionaries match" and takes 3b and 6 down with it (everything looks missing).
 hdr "2. Dictionary parity (pt vs es)"
 extract_keys() { # $1 = lang label
   awk -v want="$1" '
     /^  (pt|es):\{/ { cur = ($0 ~ /pt/) ? "pt" : "es"; next }
     /^  \},/        { cur = "" ; next }
     cur == want     { print }
-  ' "$CONSOLE" \
+  ' "$CONSOLE_JS" \
   | sed "s/\\\\'/\x01/g" \
   | grep -oE "'[^']*':" \
   | sed "s/':$//; s/^'//; s/\x01/'/g" \
@@ -204,8 +229,10 @@ fi
 # even when the user picked pt/es. Only single-quoted literals are matched —
 # `_t(variable)` and template literals are out of reach for grep and are checked
 # at the label-map definition instead.
+# Reads BOTH: _t() calls are overwhelmingly in the JS now, but the markup can still carry
+# one inside an inline handler attribute, and that is exactly the kind that gets forgotten.
 hdr "3c. _t() literals missing from dictionaries"
-TCALLS="$(sed "s/\\\\'/\x01/g" "$CONSOLE" \
+TCALLS="$(sed "s/\\\\'/\x01/g" "$SRC" \
   | grep -oE "_t\('[^']*'" \
   | sed "s/^_t('//; s/'$//; s/\x01/'/g" \
   | sort -u)"
@@ -232,6 +259,9 @@ fi
 # alert/confirm/prompt, that is NOT wrapped in _t() and looks like prose (a letter,
 # then a space). Prose reaching the DOM unwrapped is the bug; a css class or an id
 # has no space and is skipped.
+# Reads BOTH, for the same reason as 3c. Line numbers are reported, so the concatenated
+# file would give useless offsets — grep runs over the two named files with -n, and prefixes
+# each hit with the filename, which is an improvement here rather than a problem.
 hdr "3d. Prose written to the DOM without _t()"
 # A line that calls _t() anywhere is already participating in translation; the bare
 # literal next to it is the HTML wrapper, not the message. Requiring the ABSENCE of
@@ -241,7 +271,7 @@ hdr "3d. Prose written to the DOM without _t()"
 # Then: take the quoted literals, drop HTML tags and entities, and only report what
 # still reads as prose (two consecutive words). A css class, an id, an option value
 # or a single word survives the strip without matching.
-RAWDOM="$(grep -nE "(\.(textContent|innerHTML) *= *|(alert|confirm|prompt)\()'" "$CONSOLE" \
+RAWDOM="$(grep -nE "(\.(textContent|innerHTML) *= *|(alert|confirm|prompt)\()'" "$CONSOLE" "$CONSOLE_JS" \
   | grep -v '_t(' \
   | grep -v 'data-i18n' \
   | awk '{
@@ -269,8 +299,11 @@ fi
 # stages. Fails nothing, so a normal change is not blocked by legacy debt.
 hdr "4. Internal text in Portuguese (informational)"
 GO_N="$(grep -rhE '[áàâãéêíóôõúüçÁÉÍÓÚÃÕÇ]' --include='*.go' "$ROOT/domains" 2>/dev/null | grep -c . || true)"
-CMT_N="$(grep -cE '^[[:space:]]*(\/\/|\/\*|<!--).*[áàâãéêíóôõúüç]' "$CONSOLE" || true)"
-say "Go lines: $GO_N · console.html comments: $CMT_N"
+# Counted over the pair: comments went wherever their code went, so scanning only the
+# markup would show the backlog shrinking because of the split rather than because
+# anything was translated.
+CMT_N="$(grep -chE '^[[:space:]]*(\/\/|\/\*|<!--).*[áàâãéêíóôõúüç]' "$CONSOLE" "$CONSOLE_JS" | paste -sd+ - | bc || true)"
+say "Go lines: $GO_N · console comments: $CMT_N"
 say "(informational — see .kiro/specs/i18n-console/inventory.md)"
 
 # ── 5. Help content coverage (domains/help) ───────────────────────────────────
@@ -354,9 +387,15 @@ fi
 #
 # Only fixed messages are checked. A message built by concatenation cannot be a key
 # and is expected to stay English — that is a known, accepted limitation.
+#
+# The `[,}]` after the closing quote is what actually enforces that. `[^"+]*` alone only
+# rejects a `+` INSIDE the literal, so a message whose concatenation starts with a literal
+# ("app " + name + " belongs to …") still matched, and the report then asked for a
+# dictionary entry for the fragment `app ` — a key that can never exist. Requiring the
+# literal to be the whole value keeps the check aligned with what it says it does.
 hdr "6. Backend error messages missing from dictionaries"
-GO_ERRS="$(grep -rhoE '"error": *"[^"+]*"' --include='*.go' "$ROOT/domains" 2>/dev/null \
-  | sed -E 's/^"error": *"//; s/"$//' \
+GO_ERRS="$(grep -rhoE '"error": *"[^"+]*"[,}]' --include='*.go' "$ROOT/domains" 2>/dev/null \
+  | sed -E 's/^"error": *"//; s/"[,}]$//' \
   | grep -vE '^(not found|unauthorized|forbidden|bad request|internal error)$' \
   | grep -vE ': ?$' \
   | sort -u)"

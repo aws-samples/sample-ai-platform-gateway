@@ -1,6 +1,5 @@
 // Package secrets is the outbound adapter for AWS Secrets Manager.
 //
-// Feature: hexagonal-refactor, task 4.6. Code MOVED from cmd/router/main.go
 // (getSecret, resolveSecretName, fetchSecret) with security enhancements.
 // Single-org model: BYO per-org credential support removed. Secrets are now
 // deployment-level. Cache keyed by secret name with encrypted storage and 1 min TTL.

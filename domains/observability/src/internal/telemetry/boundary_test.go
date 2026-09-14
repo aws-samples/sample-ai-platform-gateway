@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// Boundary Verifier of the Observability pure domain (hexagonal-refactor, R5/D5,
+// Boundary Verifier of the Observability pure domain (R5/D5,
 // Property 2 and 3). Modeled on core/internal/routing/boundary_test.go and on
 // governance/internal/govcore/boundary_test.go.
 //
@@ -129,7 +129,7 @@ func TestBoundaryScannerActuallyCatchesViolations(t *testing.T) {
 	}
 }
 
-// TestNoObservabilityPackageImportsAnotherDomain (hexagonal-refactor, R9.1/9.2,
+// TestNoObservabilityPackageImportsAnotherDomain (R9.1/9.2,
 // Property 6): sweeps ALL Observability packages and fails if any imports another
 // platform domain (github.com/aiplat/<x> with x != observability). It is what ensures
 // no shared runtime package is born between domains.

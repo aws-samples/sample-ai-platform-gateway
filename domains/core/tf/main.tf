@@ -26,10 +26,23 @@ locals {
   # 504 that actually explains what happened. Derived instead of hardcoded so the
   # two can never drift apart: 30 s of headroom over the gateway, capped at the
   # Lambda service maximum of 900 s.
+  #
+  # At the ceiling the headroom disappears (gateway 900 s, Lambda 900 s) because both
+  # services stop at 15 minutes. That is acceptable: there is no value above it to give
+  # headroom against, and the gateway is the one that answers the client.
   router_timeout_s = min(900, ceil(var.integration_timeout_ms / 1000) + 30)
-  usage_queue_name = "${var.project}-${var.environment}-obs-usage"
-  usage_queue_arn  = coalesce(var.usage_queue_arn, "arn:aws:sqs:${local.region}:${local.account_id}:${local.usage_queue_name}")
-  usage_queue_url  = coalesce(var.usage_queue_url, "https://sqs.${local.region}.amazonaws.com/${local.account_id}/${local.usage_queue_name}")
+
+  # Response streaming needs a DIFFERENT integration URI than the buffered one:
+  # API version 2021-11-15 and the `response-streaming-invocations` action, which is
+  # what tells API Gateway to call Lambda through InvokeWithResponseStream.
+  #
+  # Built by hand because `aws_lambda_function.router.invoke_arn` is the BUFFERED form
+  # (2015-03-31/.../invocations). Pointing a STREAM integration at the buffered URI is
+  # an unsupported combination and API Gateway answers 500 to every request.
+  router_streaming_uri = "arn:aws:apigateway:${local.region}:lambda:path/2021-11-15/functions/${aws_lambda_function.router.arn}/response-streaming-invocations"
+  usage_queue_name     = "${var.project}-${var.environment}-obs-usage"
+  usage_queue_arn      = coalesce(var.usage_queue_arn, "arn:aws:sqs:${local.region}:${local.account_id}:${local.usage_queue_name}")
+  usage_queue_url      = coalesce(var.usage_queue_url, "https://sqs.${local.region}.amazonaws.com/${local.account_id}/${local.usage_queue_name}")
 
   # Audit bus (Audit domain), by convention like the other external identifiers.
   # Convention instead of a data source avoids an ORDER dependency between the
@@ -198,6 +211,15 @@ resource "aws_lambda_function" "router" {
       # (they send no Origin header). Set it to the console origin to use the
       # Playground.
       CONSOLE_ORIGIN = var.console_origin
+      # Response transport. "streaming" makes the router run its own Runtime API loop
+      # (internal/awslambda/runtimeapi.go) so responses are genuinely streamed; anything
+      # else keeps lambda.Start and the buffered path. Driven by the same flag as the
+      # integration's response_transfer_mode — that is the whole point, the two cannot
+      # disagree.
+      # "buffered" rather than "" on purpose: an empty string in this map renders as null
+      # in the plan, and a null value in a Lambda environment is rejected at apply time.
+      # Naming the default mode also makes the deployed configuration self-describing.
+      AIPLAT_RESPONSE_MODE = var.response_streaming ? "streaming" : "buffered"
     }
   }
 
@@ -243,17 +265,44 @@ resource "aws_api_gateway_integration" "router_proxy_any" {
   http_method             = aws_api_gateway_method.router_proxy_any.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.router.invoke_arn
-  timeout_milliseconds    = var.integration_timeout_ms
+
+  # Transfer mode and URI are driven by ONE flag together with the Lambda's
+  # AIPLAT_RESPONSE_MODE (see the router's environment block).
+  #
+  # They must never be set independently. The three settings — integration mode,
+  # integration URI and the runtime's response mode — are one decision expressed in three
+  # places, and a mismatch does not fail loudly: API Gateway answers with the correct
+  # status code and an EMPTY BODY. That was measured here, and it is why a single variable
+  # governs all three instead of a comment asking the next person to remember.
+  #
+  # STREAM also needs the 2021-11-15 `response-streaming-invocations` URI: pointing a
+  # STREAM integration at the ordinary `invocations` URI is an unsupported combination.
+  response_transfer_mode = var.response_streaming ? "STREAM" : "BUFFERED"
+  uri                    = var.response_streaming ? local.router_streaming_uri : aws_lambda_function.router.invoke_arn
+  timeout_milliseconds   = var.integration_timeout_ms
 }
 
 resource "aws_api_gateway_deployment" "router" {
   rest_api_id = aws_api_gateway_rest_api.this.id
   triggers = {
+    # The MUTABLE ATTRIBUTES have to be in here, not just the ids.
+    #
+    # An integration change only reaches clients after the stage is redeployed, and an
+    # id does not change when an attribute does: switching this integration to STREAM
+    # updated the integration but left the stage serving the previous configuration.
+    # The symptom is nasty because it is not an error — API Gateway answered 200 with
+    # the right headers and an EMPTY BODY, which is the documented behaviour for a
+    # buffered stage in front of a function that returns the streaming format.
+    #
+    # Hashing the attributes means any future change to the transfer mode, the URI or
+    # the timeout forces a new deployment on the same apply.
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.router_proxy.id,
       aws_api_gateway_method.router_proxy_any.id,
       aws_api_gateway_integration.router_proxy_any.id,
+      aws_api_gateway_integration.router_proxy_any.uri,
+      aws_api_gateway_integration.router_proxy_any.response_transfer_mode,
+      aws_api_gateway_integration.router_proxy_any.timeout_milliseconds,
     ]))
   }
   lifecycle {
@@ -742,24 +791,79 @@ variable "platform_error_alarm_threshold" {
 # no matter what the Lambda timeout says.
 #
 # The default matches the DEFAULT account quota (Maximum integration timeout,
-# L-E5AE38E3) so a fresh clone applies cleanly anywhere. Raising it above 29000
-# requires a Service Quotas increase FIRST -- otherwise the apply fails, because
-# API Gateway validates this value against the account quota. The quota is
-# adjustable only for Regional and private REST APIs, up to 300000 ms; HTTP APIs
-# are fixed at 30 s.
+# L-E5AE38E3) so a fresh clone applies cleanly anywhere.
 #
-# Rough sizing: this deployment measures ~10 ms per output token, so 29 s allows
-# ~2.9k output tokens and 300 s allows ~30k. The router Lambda's own timeout is
-# derived from this value (see local.router_timeout_s), so it always outlives the
-# gateway.
+# The ceiling depends on the integration's response transfer mode, and the gateway route
+# uses STREAM:
+#   STREAM   -> up to 900000 ms (15 min), the Lambda service maximum.
+#   BUFFERED -> bounded by the account quota "Maximum integration timeout"
+#               (L-E5AE38E3), 29000 ms by default and adjustable only for Regional and
+#               private REST APIs. HTTP APIs are fixed at 30 s.
+# The AWS provider validates this pair for us and fails the plan with
+# "timeout_milliseconds must be at most N when response_transfer_mode is ...".
+#
+# Independently of this value, a streaming response on a Regional or private endpoint is
+# cut after 5 minutes of IDLE time. For token-by-token generation that never triggers;
+# for a long silent computation it does.
+#
+# Rough sizing: this deployment measures ~10 ms per output token, so 29 s allows ~2.9k
+# output tokens, 300 s ~30k, and 15 min removes the ceiling for any realistic single
+# completion. The router Lambda's own timeout is derived from this value (see
+# local.router_timeout_s).
+#
+# The default is 300000 (5 min), not the 900000 maximum, because this value also sizes the
+# router's own timeout: a provider that accepts the connection and then stalls is billed
+# until the timeout expires, and it holds a concurrency slot for that long. 5 minutes is
+# ~30k output tokens at the measured rate — past any single chat completion — while capping
+# the damage of a hung upstream at a third of what 15 minutes would cost.
+#
+# It pairs with response_streaming = true (the default). Setting response_streaming = false
+# without lowering this to 29000 fails at PLAN time with the provider's own message,
+# "timeout_milliseconds must be at most 29000 when response_transfer_mode is BUFFERED" —
+# a deliberate hard failure rather than a silent clamp, so nobody ends up with a ceiling
+# they did not choose.
 variable "integration_timeout_ms" {
   type        = number
-  default     = 29000
-  description = "API Gateway integration timeout for the gateway route, in milliseconds. Above 29000 needs a Service Quotas increase on L-E5AE38E3 first."
+  default     = 300000
+  description = "API Gateway integration timeout for the gateway route, in milliseconds. Up to 900000 on the STREAM integration; a BUFFERED integration above 29000 needs a Service Quotas increase on L-E5AE38E3 first."
   validation {
-    condition     = var.integration_timeout_ms >= 50 && var.integration_timeout_ms <= 300000
-    error_message = "integration_timeout_ms must be between 50 and 300000 (300 s is the maximum the API Gateway quota can be raised to)."
+    condition     = var.integration_timeout_ms >= 50 && var.integration_timeout_ms <= 900000
+    error_message = "integration_timeout_ms must be between 50 and 900000 (15 min, the maximum for a streaming integration and the Lambda service limit)."
   }
+}
+
+# Response streaming for the gateway route. ONE flag on purpose: it drives the
+# integration's response_transfer_mode, the integration URI, and the router's
+# AIPLAT_RESPONSE_MODE. Those three are a single decision, and a mismatch between them
+# does not raise an error — API Gateway returns the right status code with an empty body.
+#
+# Default TRUE. It was false while the path was unproven; it is now measured end to end
+# through the deployed Regional REST API (200, 848 SSE frames, 158895 bytes for a
+# 4000-token completion — the same request that returned 504 at 29.6 s buffered), so the
+# conservative choice and the correct one are the same one.
+#
+# What it buys:
+#   - responses stream progressively (time to first byte stops equalling time to last),
+#   - integration_timeout_ms may go to 900000 without the L-E5AE38E3 quota increase, which
+#     is what removes the 504 ceiling,
+#   - response payloads are no longer capped at 10 MB.
+#
+# What it costs:
+#   - the router runs our own Runtime API loop instead of lambda.Start, because
+#     aws-lambda-go (checked through v1.55.0) does not implement the streaming side of
+#     the Runtime API,
+#   - VTL response transformation, integration response caching and content encoding
+#     become unavailable on this integration (none are used here),
+#   - streaming responses on Regional and private endpoints are cut after 5 minutes of
+#     IDLE time, independently of the timeout above.
+#
+# Setting it to false also requires integration_timeout_ms = 29000 (or a raised
+# L-E5AE38E3), because a BUFFERED integration is bounded by that quota. The provider
+# rejects the mismatched pair at plan time.
+variable "response_streaming" {
+  type        = bool
+  default     = true
+  description = "Enable API Gateway response streaming on the gateway route. Drives the integration transfer mode, the integration URI and the router's AIPLAT_RESPONSE_MODE together."
 }
 
 # Topic the alarm publishes to. The subscription (email/Slack/PagerDuty) is

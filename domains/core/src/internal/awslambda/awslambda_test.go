@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// Equivalence test for the two inbound paths (hexagonal-refactor, R1.6).
+// Equivalence test for the two inbound paths.
 //
 // The same logical request, served by the direct http.Handler (httpapi.New) and by
 // the Lambda adapter (awslambda.Adapt), must reach the HandlerFunc identically and

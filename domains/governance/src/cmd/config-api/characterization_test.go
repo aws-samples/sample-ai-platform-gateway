@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// CHARACTERIZATION test for config-api (hexagonal-refactor, task 9).
+// CHARACTERIZATION test for config-api.
 //
 // Captures the CURRENT behavior of the Governance domain's decision rules BEFORE
 // any move into internal/govcore. If, after the migration, the characterization

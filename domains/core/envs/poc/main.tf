@@ -26,4 +26,11 @@ module "domain" {
   console_origin = var.console_origin
 
   integration_timeout_ms = var.integration_timeout_ms
+
+  # Must be forwarded explicitly. This wrapper passes variables one by one, so a
+  # variable declared in the module but not listed here silently takes the module
+  # default — which is how the first attempt at enabling streaming failed: the module
+  # stayed BUFFERED while the timeout was raised to 900000, and the provider rejected
+  # the pair. The rejection was correct and cost nothing, but the cause was here.
+  response_streaming = var.response_streaming
 }

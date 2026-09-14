@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// CHARACTERIZATION test of the usage-writer (hexagonal-refactor, task 15.4).
+// CHARACTERIZATION test of the usage-writer.
 //
 // Captures the CURRENT behavior of the Cost_Store item assembly (buildItem) and, in
 // particular, the basis of IDEMPOTENCY: the sort key sk embeds ts + request_id, so

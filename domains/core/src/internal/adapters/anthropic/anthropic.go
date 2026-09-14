@@ -4,7 +4,6 @@
 // Package anthropic is the outbound adapter for Anthropic's native API
 // (Messages API), its own dialect. It implements ports.Provider.
 //
-// Feature: hexagonal-refactor, task 3.3. Code MOVED from callAnthropic without
 // rewriting the logic. Non-system messages go in the body with the same shape
 // chatMsg used to marshal (content raw/null/array, name, tool_calls, tool_call_id),
 // rebuilt from ports.Message; system messages are concatenated into the dedicated

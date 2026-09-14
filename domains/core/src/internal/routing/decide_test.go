@@ -100,7 +100,7 @@ func TestDecide_ElegibilidadeValeSemAutoCheapest(t *testing.T) {
 	}
 }
 
-func TestDecide_SemCandidatoElegivelDevolveErro(t *testing.T) {
+func TestDecide_NoEligibleCandidateReturnsError(t *testing.T) {
 	// Only nova-micro in the catalog and the request needs tool use.
 	cands := []Candidate{cand("nova-micro", "bedrock", "fast", false, false, 128_000, 0.000035, 0.00014)}
 	req := RequestShape{InputTokens: 100, HasTools: true}

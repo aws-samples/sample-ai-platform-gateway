@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// In-memory doubles of the state ports (hexagonal-refactor, task 4.8).
+// In-memory doubles of the state ports.
 //
 // Every Core port has, besides the production adapter (ddbconfig, ddbcache,
 // ddblimits, sqsusage, secrets, ddbkeys), at least one DOUBLE used in tests (R3.2).
@@ -100,8 +100,12 @@ func TestE2E_CacheHit(t *testing.T) {
 	fc := newFakeCache(true)
 	cacheStore = fc
 	body := `{"model":"m1","messages":[{"role":"user","content":"oi"}]}`
+	// Team is part of the key: the default cache_scope is "team", and the fake auth
+	// resolves team="default". Preloading a key without it would silently MISS and the
+	// test would fail for the wrong reason (looking like a broken cache instead of a
+	// mismatched key).
 	ck := routing.CacheKey(routing.KeyInput{
-		Org: "default", Model: "m1",
+		Org: "default", Team: "default", Model: "m1",
 		Messages: []ports.Message{{Role: "user", Text: "oi", Raw: []byte(`"oi"`)}},
 	}, routing.KeyExact)
 	fc.Put(context.Background(), ck, "bedrock",

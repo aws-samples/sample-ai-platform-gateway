@@ -32,7 +32,7 @@ type ToolCall struct {
 // This exists as its own boundary type (rather than leaving adapters to re-parse
 // Raw) because every adapter that wants to send the image needs the same decode —
 // duplicating a base64/data-URL parser per adapter is exactly the kind of drift
-// hexagonal-refactor is meant to prevent.
+// the hexagonal split is meant to prevent.
 type ImagePart struct {
 	Format string
 	Bytes  []byte
@@ -94,4 +94,36 @@ type Result struct {
 // Provider is the outbound port for an inference provider.
 type Provider interface {
 	Invoke(ctx context.Context, in InvokeInput) (Result, error)
+}
+
+// ProviderStream is an OPEN provider stream, drained one text delta at a time.
+//
+// It is split from opening on purpose (see StreamProvider): the handler commits the
+// client's HTTP status before the first payload byte, so everything that could still
+// change that status has to happen while nothing has been written.
+//
+// Recv returns the next text delta. io.EOF means the model finished normally; any other
+// error means the stream broke mid-answer, and the caller keeps what it already received
+// rather than discarding it — the tokens were served and have to be billed.
+//
+// Result is only complete after Recv has returned an error. Providers report usage in a
+// trailing event, so asking earlier gives partial counts.
+type ProviderStream interface {
+	Recv() (string, error)
+	Result() Result
+	Close() error
+}
+
+// StreamProvider is the OPTIONAL native-streaming half of Provider.
+//
+// Optional on purpose: adapters implement it only where the provider has a real streaming
+// API, and the handler type-asserts for it. A provider without it still streams to the
+// client — the handler fetches the complete answer and slices it into frames — it just
+// cannot lower time-to-first-token.
+//
+// OpenStream must not return a stream and an error together, and must validate whatever
+// the provider validates up front (auth, model id, request shape) so a failure can still
+// fall back to another route.
+type StreamProvider interface {
+	OpenStream(ctx context.Context, in InvokeInput) (ProviderStream, error)
 }

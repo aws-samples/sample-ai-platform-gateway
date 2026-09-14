@@ -4,7 +4,7 @@
 // Package govcore is the PURE domain of Governance: the config scope chain, plan
 // rules, the role matrix (RBAC) and credit validation.
 //
-// Boundary rule (hexagonal-refactor, R5/D5): nothing here may reach an SDK, the
+// Boundary rule: nothing here may reach an SDK, the
 // network, a file, the environment, the clock or randomness. Every time
 // dependency comes in as a parameter. boundary_test.go verifies this through the
 // transitive closure.

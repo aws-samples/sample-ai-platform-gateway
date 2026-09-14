@@ -71,7 +71,7 @@ func TestWriter_PersisteEDerivaCategoria(t *testing.T) {
 
 // Property 4: reprocessing the same message does not create a second record. SQS
 // delivery is at-least-once, so this is the normal path, not the exceptional one.
-func TestWriter_Idempotente(t *testing.T) {
+func TestWriter_Idempotent(t *testing.T) {
 	tr := setup(t)
 	msg := body(baseEvent())
 
@@ -166,7 +166,7 @@ func TestWriter_AcaoDesconhecidaNaoEDescartada(t *testing.T) {
 // A store failure must return an error, so the message goes back to the queue and
 // ends up in the DLQ. Absorbing it here would silently lose audit data (violates
 // Property 7).
-func TestWriter_FalhaDoStoreVoltaParaAFila(t *testing.T) {
+func TestWriter_StoreFailureReturnsToQueue(t *testing.T) {
 	tr := setup(t)
 	tr.AppendErr = errors.New("dynamodb unavailable")
 

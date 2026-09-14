@@ -68,7 +68,19 @@ type SecretStore interface {
 
 // KeyIdentity is the team/app hierarchy resolved from the API key.
 // Org field removed for single-org deployments - org is deployment-level, not key-level.
-type KeyIdentity struct{ Team, App string }
+//
+// App is the key's DEFAULT app: what a request is attributed to when it does not name
+// one. Apps is the set the key is additionally ALLOWED to name per request, which is
+// what lets one key split spend across several projects.
+//
+// Apps is an allowlist rather than free text because `app` selects the configuration
+// scope (global → team → app), and budget and rate limits hang off that scope. An
+// unchecked app on the request would let a caller charge its spend to another app's
+// budget — governance would still report a number, just the wrong one.
+type KeyIdentity struct {
+	Team, App string
+	Apps      []string
+}
 
 // KeyStore resolves the API key (already extracted from the header) into team/app.
 // Org is omitted - single org per deployment.
@@ -76,5 +88,53 @@ type KeyIdentity struct{ Team, App string }
 //   - ok == false with err == nil → invalid/missing/revoked key → 401.
 type KeyStore interface {
 	Resolve(ctx context.Context, key string) (KeyIdentity, bool, error)
+	Enabled() bool
+}
+
+// --- Semantic index ----------------------------------------------------------
+
+// SemEntry is one entry of a tenant's semantic index: the response cache key plus the
+// embedding of the question that produced it, and the two fingerprints that must match
+// exactly before similarity is even considered.
+//
+// Ctx is the context fingerprint (system prompt + model): without it, different personas
+// and models share a response, which is a correctness error rather than the acceptable
+// imprecision of an approximate cache. Num is the fingerprint of the question's numbers,
+// because embeddings do not distinguish 60 from 600 — measured at 0.930 similarity, above
+// the 0.92 floor.
+type SemEntry struct {
+	CacheKey string
+	Vec      []float32
+	Ctx      string
+	Num      string
+}
+
+// SemIndex is the semantic cache index port.
+//
+// SEARCH IS PART OF THE PORT, deliberately. The obvious alternative — Get/Put over a list
+// of entries, with the caller running the similarity loop — would force every backend to
+// ship every candidate vector to the caller before it could rank them. That is exactly
+// what a vector database exists to avoid: it makes a store with server-side kNN
+// (ElastiCache for Valkey, S3 Vectors, OpenSearch) no faster than the brute-force one, and
+// the substitution buys nothing.
+//
+// Naming the operation rather than the storage is what lets the DynamoDB implementation
+// scan a small set locally while another implementation pushes the same question down to
+// the engine.
+//
+// Both methods DEGRADE rather than fail: the semantic cache is an optimization, so an
+// unavailable index means a miss (the provider is called), never a failed request. That is
+// why neither returns an error.
+type SemIndex interface {
+	// Search returns the cache key of the closest entry within `partition` whose Ctx and
+	// Num match exactly and whose similarity reaches threshold. ok=false on miss, error,
+	// or when the index is disabled.
+	Search(ctx context.Context, partition string, query []float32, threshold float64, semCtx, semNum string) (cacheKey string, score float64, ok bool)
+
+	// Index records cacheKey against the question's vector inside `partition`.
+	// Best-effort: a failure is silent and leaves the exact cache working.
+	Index(ctx context.Context, partition, cacheKey string, vec []float32, semCtx, semNum string, ttlSeconds int)
+
+	// Enabled tells whether the index is configured at all.
 	Enabled() bool
 }

@@ -5,7 +5,7 @@
 // correlation, aggregation, SLI/SLO, burn rate and anomaly. No SDK, no network, no
 // clock and no randomness — the reference instant always comes in as a parameter.
 // That is what makes this math testable by property, offline, and independent of
-// Lambda (hexagonal-refactor, R7, D2).
+// Lambda.
 //
 // This file gathers the types (Record, Agg) and the aggregations (Buckets, Series,
 // Totals, availability SLI, average latency). It is a faithful move of what used to

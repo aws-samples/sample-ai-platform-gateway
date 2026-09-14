@@ -91,7 +91,7 @@ func TestDeriveModelActions_NomeDeModeloComPonto(t *testing.T) {
 // was not in the anchor list, so "routing.m.api_key" became a "model" named "m.api_key"
 // — the model was split into TWO events, one of them with a made-up name. A route field
 // missing from the list causes exactly that.
-func TestDeriveModelActions_TodosOsCamposDeRotaResolvemOMesmoModelo(t *testing.T) {
+func TestDeriveModelActions_AllRouteFieldsResolveSameModel(t *testing.T) {
 	chs := Diff(obj(`{}`), obj(`{"routing":{"m1":{
 	   "provider":"openai_compatible","provider_model_id":"x","base_url":"https://a",
 	   "api_key":"sk-1","api_key_secret":"nome","region":"us-east-1","kind":"external",

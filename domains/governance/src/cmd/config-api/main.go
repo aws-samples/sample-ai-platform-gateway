@@ -944,7 +944,7 @@ func allClaims(req events.APIGatewayProxyRequest) map[string]string {
 //
 // The role/scope logic lives in govcore (role matrix covered by a property
 // test). These functions are the thin translation layer used by the handler and
-// by the characterization tests (hexagonal-refactor, tasks 9-10-13). Behavior is
+// by the characterization tests. Behavior is
 // identical to the original closures — the characterization proves it.
 
 type access struct {
@@ -1289,7 +1289,7 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	// Role/scope resolution. The logic is PURE and lives in package-level
 	// functions (resolveAccess/forceOrgFor/effTeamFor) so it can be covered by
 	// characterization tests before moving to internal/govcore
-	// (hexagonal-refactor, tasks 9-10).
+	//.
 	// Audit context: the actor and the origin of the REQUEST. Built once and
 	// passed along, so no emission site needs to reach the request object — which
 	// would open the door to deriving authorship from client input.

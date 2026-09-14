@@ -127,7 +127,7 @@ func expiresAt(ts string, retention time.Duration) int64 {
 // `attribute_not_exists(sk)` deduplicate reprocessing without double counting.
 // Post-refactor: pk = "USAGE" (no org), gsi1pk = "APP#<app>" (no org prefix).
 // It stays in the shell (it returns SDK types) by design decision: usage-writer is a
-// thin shell and does not get a write port (hexagonal-refactor task 17.3, D2).
+// thin shell and does not get a write port.
 func buildItem(u usage) map[string]ddbtypes.AttributeValue {
 	app := u.AppTag
 	if app == "" {

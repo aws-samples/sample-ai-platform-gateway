@@ -17,7 +17,16 @@
 //     punctuation) BEFORE hashing, so that "Férias?" and "ferias" collide. This
 //     affects ONLY the key — the body sent to the provider is always the original (P2).
 //
-// The org goes at the start of the hashed material: the cache NEVER crosses orgs (P3).
+// TENANCY (P3). Org, Team and App are all hashed, and whichever of them the caller
+// supplies becomes part of the identity. The shell decides which ones to supply, from
+// the effective `cache_scope` — the domain only hashes what it is given.
+//
+// Why Team/App exist here at all: under the single-org model Org is a constant, so
+// hashing it alone partitions nothing. Two teams sending the same prompt to the same
+// model produced the SAME key and shared the stored response — cost sharing by
+// accident, and a cross-team read of a response derived from another team's prompt.
+// An empty Team/App is omitted from the material, so a deployment that opts into
+// sharing keeps exactly the keys it had.
 //
 // Boundary: crypto/sha256 and encoding/hex are PURE computation (no IO, clock or
 // randomness) and are on the boundary_test allowlist for that reason.
@@ -56,7 +65,12 @@ func NormalizeKeyMode(s string) KeyMode {
 // response and is not here, the cache swaps semantics — which was exactly the
 // defect with tools.
 type KeyInput struct {
-	Org         string
+	Org string
+	// Team and App scope the key to the caller's identity. EMPTY means "do not
+	// partition by it" — that is what makes deployment-wide sharing expressible
+	// without a second code path, and what keeps previously stored keys valid.
+	Team        string
+	App         string
 	Model       string
 	Messages    []ports.Message
 	Tools       []ports.ToolDef
@@ -91,8 +105,12 @@ type keyTool struct {
 // keyMaterial is the deterministic object that goes into sha256. The field order is
 // fixed (a struct), and json.Marshal sorts map keys — so the hash is stable.
 type keyMaterial struct {
-	Mode     string    `json:"mode"`
-	Org      string    `json:"org"`
+	Mode string `json:"mode"`
+	Org  string `json:"org"`
+	// omitempty on purpose: an unscoped key must hash to the SAME bytes it hashed
+	// before these fields existed, so opting into sharing costs no cache warm-up.
+	Team     string    `json:"team,omitempty"`
+	App      string    `json:"app,omitempty"`
 	Model    string    `json:"model"`
 	Messages []keyMsg  `json:"messages"`
 	Tools    []keyTool `json:"tools,omitempty"`
@@ -104,7 +122,7 @@ type keyMaterial struct {
 func CacheKey(in KeyInput, mode KeyMode) string {
 	canonical := mode == KeyCanonical
 	m := keyMaterial{
-		Mode: string(mode), Org: in.Org, Model: in.Model,
+		Mode: string(mode), Org: in.Org, Team: in.Team, App: in.App, Model: in.Model,
 		Temp: in.Temperature, MaxTok: in.MaxTokens,
 	}
 	m.Messages = make([]keyMsg, len(in.Messages))

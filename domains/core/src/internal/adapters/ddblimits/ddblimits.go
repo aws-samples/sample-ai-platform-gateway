@@ -4,7 +4,6 @@
 // Package ddblimits is the outbound adapter for the atomic enforcement counters
 // (rate limit, monthly spend, credit) in the Core's *-limits table, with TTL.
 //
-// Feature: hexagonal-refactor, task 4.4. Code MOVED from cmd/router/main.go
 // (bump, readCounter) without rewriting the logic. The policies that USE these
 // counters (checkRate, addSpend, addRateTokens, addCreditSpend, readSpend) stay in
 // the handler — they are orchestration, not table mechanics. It preserves the no-op

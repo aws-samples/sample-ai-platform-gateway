@@ -4,7 +4,6 @@
 // Package bedrock is the outbound adapter for Amazon Bedrock (Converse API).
 // It implements ports.Provider.
 //
-// Feature: hexagonal-refactor, task 3.1. Code MOVED from cmd/router/main.go
 // (callBedrock, convertToolsToBedrockConfig, toSmithyDocument and bedrockFor)
 // without rewriting the logic. Client resolution (pooled account vs BYO
 // cross-account role, with a client cache) now lives in the Pool; the Adapter binds

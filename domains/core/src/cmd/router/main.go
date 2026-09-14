@@ -6,7 +6,7 @@
 // This file is the ONLY part of the Core that knows which concrete adapters exist
 // and how they are constructed. The request orchestration lives in
 // internal/gateway; the pure decision in internal/routing. That is the thin shell
-// R1.4 of hexagonal-refactor asks for: parse nothing, decide nothing — construct,
+// The wiring rule is: parse nothing, decide nothing — construct,
 // wire, choose the wrapper.
 //
 // AIPLAT_SERVE_ADDR: when set, the binary listens on local HTTP instead of starting
@@ -82,6 +82,29 @@ func main() {
 	})
 	if addr := os.Getenv("AIPLAT_SERVE_ADDR"); addr != "" {
 		if err := http.ListenAndServe(addr, httpapi.New(gateway.Handle)); err != nil {
+			panic(err)
+		}
+		return
+	}
+	// Two response transports, selected by AIPLAT_RESPONSE_MODE.
+	//
+	// STREAMING runs our own Runtime API loop (internal/awslambda/runtimeapi.go) because
+	// aws-lambda-go never sends `Lambda-Runtime-Function-Response-Mode: streaming`
+	// (checked by reading the source through v1.55.0), so returning the streaming response
+	// type from lambda.Start is not sufficient. It is measured working through the deployed
+	// REST API, and it is what removes the API Gateway 504 ceiling: the same 4000-token
+	// generation that timed out at 29.6 s buffered now completes in 56 s over 848 SSE
+	// frames. Details and the false lead that cost two outages are in runtimeapi.go.
+	//
+	// BUFFERED keeps lambda.Start and the SDK, and stays the fallback: one variable turns
+	// it back on without a rebuild, which is how those outages were recovered.
+	//
+	// The env var and the API Gateway integration's transfer mode come from the SAME
+	// Terraform flag (var.response_streaming) precisely so they cannot disagree. A
+	// streaming runtime behind a buffered integration — or the reverse — breaks every
+	// request, and it breaks it quietly: the right status code with an empty body.
+	if awslambda.StreamingEnabled() {
+		if err := awslambda.StartStreaming(gateway.Handle); err != nil {
 			panic(err)
 		}
 		return

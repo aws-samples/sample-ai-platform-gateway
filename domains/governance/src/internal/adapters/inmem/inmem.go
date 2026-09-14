@@ -3,7 +3,7 @@
 
 // Package inmem holds in-memory doubles of ports.Identity and ports.SecretStore,
 // used to test config-api's orchestration without a real Cognito or Secrets
-// Manager (hexagonal-refactor, task 11.4; D2 — a double to test orchestration).
+// Manager.
 package inmem
 
 import (

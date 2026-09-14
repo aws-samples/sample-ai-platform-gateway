@@ -193,11 +193,24 @@ resource "aws_cloudfront_origin_access_control" "site" {
 #
 #   script-src 'self' + jsDelivr — Tailwind is self-hosted (same origin) and
 #     Chart.js is pinned with Subresource Integrity; no other origin may run JS.
-#     'unsafe-inline' is required because console.html is a single file with
-#     inline <script> blocks (no build step, by design). It does NOT need
-#     'unsafe-eval': the vendored Tailwind build contains no eval/new Function
-#     (verified against the downloaded artifact).
-#   style-src 'unsafe-inline' — the Tailwind runtime injects <style> elements.
+#     It does NOT need 'unsafe-eval': the vendored Tailwind build contains no
+#     eval/new Function (verified against the downloaded artifact).
+#
+#     'unsafe-inline' is still required, and moving the application code out of
+#     console.html into assets/console.js did NOT change that — worth stating,
+#     because it looks like it should have. What pins it is the markup: ~140 inline
+#     event handler attributes (onclick=, onchange=), which CSP counts as inline
+#     script. Two inline <script> blocks also remain on purpose (the Tailwind theme
+#     config, and the theme resolver that has to run before first paint).
+#     Dropping 'unsafe-inline' therefore means converting all ~140 handlers to
+#     addEventListener first; hashes do not help (that needs 'unsafe-hashes' plus one
+#     sha256 per handler body) and a nonce is unavailable, since this policy is a
+#     static string with no CloudFront Function to inject a per-request value.
+#     The two remaining blocks are small and stable enough to be hashed on the day
+#     the handlers are gone.
+#   style-src 'unsafe-inline' — the Tailwind runtime injects <style> elements. This
+#     one cannot be removed while Tailwind is a runtime build, regardless of the
+#     stylesheet now being an external file (the markup carries zero style="").
 #   connect-src — the console only ever calls this deployment's APIs
 #     (API Gateway) and Cognito, both scoped to the deployment region.
 #   frame-ancestors 'none' — the console must never be embedded (clickjacking).
@@ -430,6 +443,40 @@ resource "aws_s3_object" "vendor_tailwind" {
   etag          = filemd5("${local.site}/vendor/tailwind-3.4.16.js")
 }
 
+# The console's stylesheet and application code, extracted out of console.html so the
+# HTML is markup (1.3k lines instead of 6.5k).
+#
+# Both under ONE `assets/` prefix rather than css/ and js/ separately: the second console
+# front door is a CloudFront distribution that routes by path prefix, and every prefix
+# costs a cache behavior there. One prefix is one behavior to add instead of two.
+#
+# `no-cache` like console.html, and NOT immutable: these have no version in the key, so an
+# immutable browser cache would serve yesterday's application against today's markup — the
+# one combination that produces a half-working console with no error anywhere. The version
+# in the query string comes from the same md5 that console.html already uses for env.js
+# (see local.console_html below), which is what makes a deploy take effect immediately.
+#
+# There is no fileset()/for_each anywhere in this module: a new asset that is not declared
+# here simply never reaches the bucket, and the page 404s at runtime with nothing in the
+# plan to warn about it.
+resource "aws_s3_object" "console_css" {
+  bucket        = aws_s3_bucket.site.id
+  key           = "assets/console.css"
+  content_type  = "text/css"
+  cache_control = "no-cache"
+  source        = "${local.site}/app/assets/console.css"
+  etag          = filemd5("${local.site}/app/assets/console.css")
+}
+
+resource "aws_s3_object" "console_js" {
+  bucket        = aws_s3_bucket.site.id
+  key           = "assets/console.js"
+  content_type  = "application/javascript"
+  cache_control = "no-cache"
+  source        = "${local.site}/app/assets/console.js"
+  etag          = filemd5("${local.site}/app/assets/console.js")
+}
+
 # env.js cache-buster: even with Cache-Control: no-cache, some browsers
 # reuse an old copy of a <script src> without revalidating correctly. The tag
 # in console.html loads env.js with ?v=<content hash>, so every time
@@ -449,10 +496,34 @@ locals {
     social_providers   = local.social_providers
     platform_account   = data.aws_caller_identity.current.account_id
   })
-  console_html = replace(
-    file("${local.site}/app/console.html"),
+
+  # Cache-busters for the three assets console.html references by name. Applied as one
+  # replace() per asset, in separate locals rather than nested calls, so each step can be
+  # read (and inspected in a plan) on its own.
+  #
+  # Each search string must match the tag in console.html BYTE FOR BYTE. A mismatch is not
+  # an error — replace() returns the input unchanged — so the version quietly disappears
+  # and the browser is free to pair new markup with a cached old script. That failure is
+  # invisible in the plan diff, which is why aws_s3_object.console below asserts all three
+  # landed.
+  console_css_hash = filemd5("${local.site}/app/assets/console.css")
+  console_js_hash  = filemd5("${local.site}/app/assets/console.js")
+
+  console_html_raw = file("${local.site}/app/console.html")
+  console_html_env = replace(
+    local.console_html_raw,
     "<script src=\"env.js\"></script>",
     "<script src=\"env.js?v=${md5(local.env_content)}\"></script>",
+  )
+  console_html_css = replace(
+    local.console_html_env,
+    "<link rel=\"stylesheet\" href=\"assets/console.css\" />",
+    "<link rel=\"stylesheet\" href=\"assets/console.css?v=${local.console_css_hash}\" />",
+  )
+  console_html = replace(
+    local.console_html_css,
+    "<script src=\"assets/console.js\"></script>",
+    "<script src=\"assets/console.js?v=${local.console_js_hash}\"></script>",
   )
 }
 
@@ -463,6 +534,20 @@ resource "aws_s3_object" "console" {
   cache_control = "no-cache"
   content       = local.console_html
   etag          = md5(local.console_html)
+
+  # The guard for the silent no-op described above. Renaming, reformatting or reordering
+  # any of those three tags in console.html now fails the PLAN with this message instead
+  # of shipping a page whose assets can be served from a stale cache.
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        can(regex("env\\.js\\?v=", local.console_html)),
+        can(regex("assets/console\\.css\\?v=", local.console_html)),
+        can(regex("assets/console\\.js\\?v=", local.console_html)),
+      ])
+      error_message = "A cache-buster did not apply: one of the env.js / assets/console.css / assets/console.js tags in console.html no longer matches the literal the replace() in locals searches for. Fix the tag or the search string — do not ignore this, the effect is a cached asset paired with new markup."
+    }
+  }
 }
 
 resource "aws_s3_object" "env" {

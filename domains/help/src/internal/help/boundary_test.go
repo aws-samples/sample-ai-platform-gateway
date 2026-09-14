@@ -3,7 +3,7 @@
 
 // Boundary verifier for the Help pure domain.
 //
-// Closes a real gap: `hexagonal-refactor` R5.1 requires every domain with a pure
+// Closes a real gap: the hexagonal split requires every domain with a pure
 // core to have this test, and `help` shipped without one. So the rule was
 // unenforced here — the thinnest domain is exactly where an `os.ReadFile` slips in
 // "just to load the markdown", which is the mistake `embedstore` exists to prevent.

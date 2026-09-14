@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// Characterization of the HTTP providers' WIRE FORMAT (hexagonal-refactor, task 3 —
+// Characterization of the HTTP providers' WIRE FORMAT (—
 // CRITICAL serialization RISK).
 //
 // Today the call* functions marshal chatMsg straight into the wire format: Content is

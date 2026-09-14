@@ -49,37 +49,45 @@ var (
 // reading config), never a synchronous call to the other domain's Lambda.
 // ok=false when there is no record or the read fails (graceful degradation: keyadmin
 // does NOT block issuing if it cannot validate).
-func readOrgTree(ctx context.Context, org string) (teams, apps map[string]bool, ok bool) {
+// appTeam maps each registered app to the team that owns it. It is returned alongside the
+// existence sets because "this app exists" and "this app belongs to the team this key is
+// being issued for" are different questions, and only the second one prevents a key from
+// filing its spend under another team's app.
+func readOrgTree(ctx context.Context, org string) (teams, apps map[string]bool, appTeam map[string]string, ok bool) {
 	if configTable == "" || org == "" {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: &configTable,
 		Key:       map[string]ddbtypes.AttributeValue{"pk": s("TEAMS#" + org)},
 	})
 	if err != nil || out.Item == nil {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	cv, _ := out.Item["config"].(*ddbtypes.AttributeValueMemberS)
 	if cv == nil {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	var tree struct {
 		Teams map[string]json.RawMessage `json:"teams"`
-		Apps  map[string]json.RawMessage `json:"apps"`
+		Apps  map[string]struct {
+			Team string `json:"team"`
+		} `json:"apps"`
 	}
 	if json.Unmarshal([]byte(cv.Value), &tree) != nil {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	teams = map[string]bool{}
 	for k := range tree.Teams {
 		teams[k] = true
 	}
 	apps = map[string]bool{}
-	for k := range tree.Apps {
+	appTeam = map[string]string{}
+	for k, v := range tree.Apps {
 		apps[k] = true
+		appTeam[k] = v.Team
 	}
-	return teams, apps, true
+	return teams, apps, appTeam, true
 }
 
 // allowedOrigins is the allowlist of browser origins permitted to READ this admin
@@ -239,6 +247,11 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			Team   string `json:"team"`
 			App    string `json:"app"`
 			AppTag string `json:"app_tag"` // compat: alias for app
+			// Apps are the ADDITIONAL apps this key may attribute a request to, via the
+			// gateway's x-aiplat-app header. It is what lets one developer working across
+			// several projects split the spend without one key per project, which is the
+			// case this exists for. `app` stays the default when a request names none.
+			Apps []string `json:"apps,omitempty"`
 		}
 		if json.Unmarshal([]byte(req.Body), &b) != nil {
 			return resp(reqOrigin, 400, map[string]string{"error": "invalid JSON"})
@@ -277,12 +290,55 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		// enforcement is the console selector, this is the backstop.
 		// Compat/degradation: an empty or unreadable record => accept (with 'default'
 		// always valid), so orgs that have not used the management UI yet do not break.
-		if teams, apps, okTree := readOrgTree(ctx, org); okTree && len(teams) > 0 {
+		// The multi-app allowlist goes through the SAME two gates as `app`: an
+		// app-scoped caller may only grant apps it holds itself (otherwise issuing a key
+		// would be a way to widen your own access), and every name must exist. It is
+		// deduplicated against `app`, which is always permitted as the default.
+		extraApps := []string{}
+		seenApp := map[string]bool{app: true}
+		for _, a := range b.Apps {
+			a = strings.TrimSpace(a)
+			if a == "" || seenApp[a] {
+				continue
+			}
+			if appScoped && !appSet[a] {
+				return resp(reqOrigin, 403, map[string]string{"error": "you do not have access to this app: " + a})
+			}
+			seenApp[a] = true
+			extraApps = append(extraApps, a)
+		}
+		if teams, apps, appTeam, okTree := readOrgTree(ctx, org); okTree && len(teams) > 0 {
 			if team != "default" && !teams[team] {
 				return resp(reqOrigin, 400, map[string]string{"error": "team does not exist — create the team under Teams & Apps before issuing the key"})
 			}
 			if app != "" && app != "default" && len(apps) > 0 && !apps[app] {
 				return resp(reqOrigin, 400, map[string]string{"error": "app does not exist — create the app under Teams & Apps before issuing the key"})
+			}
+			if len(apps) > 0 {
+				for _, a := range extraApps {
+					if a == "default" {
+						continue
+					}
+					if !apps[a] {
+						return resp(reqOrigin, 400, map[string]string{"error": "app does not exist: " + a + " — create it under Teams & Apps before issuing the key"})
+					}
+					// The granted app must belong to the key's own team. Existence alone
+					// is not enough: an app carries its own config scope (APP#<app>), so
+					// granting another team's app would let this key file spend — and pick
+					// up limits — under a scope its team does not own.
+					//
+					// Applied to `apps` and deliberately NOT retrofitted onto the single
+					// `app` field: that one has keys in the field and console flows built
+					// around it, so tightening it is a separate change with its own
+					// blast radius. Asymmetry noted rather than hidden.
+					if ot := appTeam[a]; ot != "" && team != "default" && ot != team {
+						// Leading text is a COMPLETE phrase, not a fragment: the console
+						// renders backend errors through _terr() -> _t(), where the English
+						// sentence is the dictionary key, so a message that starts mid-phrase
+						// ("app " + name + …) can never be translated.
+						return resp(reqOrigin, 400, map[string]string{"error": "a key can only attribute to its own team's apps: " + a + " belongs to " + ot + ", not " + team})
+					}
+				}
 			}
 		}
 		key := genKey()
@@ -290,19 +346,29 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		hash := hex.EncodeToString(sum[:])
 		created := time.Now().UTC().Format(time.RFC3339)
 		prefix := key[:14] + "…"
-		_, err := ddb.PutItem(ctx, &dynamodb.PutItemInput{TableName: &table, Item: map[string]ddbtypes.AttributeValue{
+		item := map[string]ddbtypes.AttributeValue{
 			"api_key_hash": s(hash),
 			"org_id":       s(org), "team_id": s(team), "app": s(app),
 			"tenant": s(org), "app_tag": s(app), // compat with old readers
 			"status": s("active"), "created_at": s(created), "key_prefix": s(prefix),
-		}})
+		}
+		// Written only when non-empty: DynamoDB rejects an empty string set, and an
+		// absent attribute is what every single-app key looks like.
+		if len(extraApps) > 0 {
+			item["apps"] = &ddbtypes.AttributeValueMemberSS{Value: extraApps}
+		}
+		_, err := ddb.PutItem(ctx, &dynamodb.PutItemInput{TableName: &table, Item: item})
 		if err != nil {
 			return resp(reqOrigin, 500, map[string]string{"error": err.Error()})
 		}
 		emitAudit(ctx, aud, audKeyIssue, org, team, app, prefix)
 		// api_key is returned only here, once.
-		return resp(reqOrigin, 200, map[string]string{"api_key": key, "key_prefix": prefix,
-			"org": org, "team": team, "app": app, "created_at": created})
+		out := map[string]interface{}{"api_key": key, "key_prefix": prefix,
+			"org": org, "team": team, "app": app, "created_at": created}
+		if len(extraApps) > 0 {
+			out["apps"] = extraApps
+		}
+		return resp(reqOrigin, 200, out)
 
 	case "GET":
 		// Isolation: an org scope is required. Without an org, return nothing (avoids a

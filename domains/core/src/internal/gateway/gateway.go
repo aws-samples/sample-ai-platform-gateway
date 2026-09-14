@@ -11,7 +11,7 @@
 // internal/awslambda's job) nor about how the adapters are constructed (that is
 // cmd/router/main.go's job, via Wire).
 //
-// Slice (c) of hexagonal-refactor task 7.4: `handle` and its helpers moved here
+// Slice (c) of the hexagonal split: `handle` and its helpers moved here
 // verbatim from cmd/router, which is now dependency wiring only (R1.4).
 package gateway
 
@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,7 +33,6 @@ import (
 
 	"github.com/aiplat/core/internal/adapters/anthropic"
 	"github.com/aiplat/core/internal/adapters/bedrock"
-	"github.com/aiplat/core/internal/adapters/ddbcache"
 	"github.com/aiplat/core/internal/adapters/ddbhints"
 	"github.com/aiplat/core/internal/adapters/google"
 	"github.com/aiplat/core/internal/adapters/openaicompat"
@@ -122,6 +122,16 @@ type Config struct {
 	// text variations (case/accent/whitespace/punctuation) collide on the key — it
 	// raises the hit rate on FAQ traffic. Inherited by scope (global→org→team→app).
 	CacheKeyMode string `json:"cache_key_mode,omitempty"`
+	// CacheScope decides WHO may read a cached response: "team" (default), "app" or
+	// "deployment". It partitions both the response cache key and the semantic index.
+	//
+	// The default is `team` and NOT `deployment` because absence of configuration must
+	// not be the least safe option — the same rule the guardrails already follow. A
+	// cached response is derived from the prompt that produced it, so serving it to
+	// another team is a cross-tenant read, not merely a shared saving. `deployment`
+	// remains available and maximizes hit rate; it is a declared decision now instead
+	// of an accident of the key format.
+	CacheScope string `json:"cache_scope,omitempty"`
 	// SemanticCache turns on the SEMANTIC cache (approximate match by embedding) on
 	// top of the exact/canonical one. Opt-in (default false): it admits false
 	// positives and adds an embedding call on the MISS. SemanticThreshold is the
@@ -216,7 +226,7 @@ func (c *Config) allowed(model string) bool {
 	return false
 }
 
-// State adapters (hexagonal-refactor, task 4). Every infrastructure concern lives
+// State adapters. Every infrastructure concern lives
 // behind its port in internal/adapters/*; the globals here are the production
 // instances, wired in main(). The helpers in this file (loadConfig, bump,
 // readCounter, emitUsage, getSecret, authResolve, cache) are a thin shell
@@ -245,18 +255,50 @@ var (
 	// config scoping, which configStore already handles internally.
 	deploymentOrg string
 
-	// Semantic cache (opt-in): embedder produces the question's vector and semStore
-	// holds the per-org index (same table as the cache). nil = feature unavailable
-	// (e.g. under test), and the handler simply skips it — graceful degradation.
+	// Semantic cache (opt-in): embedder produces the question's vector and semIndex
+	// searches/records it inside the caller's tenant partition. nil = feature
+	// unavailable (e.g. under test), and the handler simply skips it — graceful
+	// degradation.
 	embedder ports.Embedder
-	semStore *ddbcache.Store
+	semIndex ports.SemIndex
 
 	httpc = &http.Client{Timeout: 45 * time.Second}
 )
 
-// semIndexCap caps how many entries an org's semantic index keeps (FIFO).
-// It keeps the item well under DynamoDB's 400KB limit and the linear search cheap.
-const semIndexCap = 200
+// The semantic index cap moved to the adapter (ddbcache.semIndexCap): how many entries a
+// partition keeps is a property of the storage, not of the orchestration. The handler no
+// longer knows the index is a DynamoDB item, or that it is capped at all.
+
+// Cache tenancy scopes (Config.CacheScope).
+const (
+	// CacheScopeTeam is the DEFAULT: a response is reusable inside the team that
+	// produced it.
+	CacheScopeTeam = "team"
+	// CacheScopeApp is the strictest: reuse only inside the same app.
+	CacheScopeApp = "app"
+	// CacheScopeDeployment shares one cache across every team and app. Highest hit
+	// rate, and the ONLY setting under which one team can be served a response
+	// derived from another team's prompt. Opt-in, never inferred.
+	CacheScopeDeployment = "deployment"
+)
+
+// cacheScopeOf resolves the effective cache tenancy: which identity fields enter the
+// response cache key, and which partition the semantic index uses.
+//
+// Returning the semantic partition from the SAME function is deliberate: the index
+// stores cache keys, so an index partitioned more loosely than the keys would hand out
+// a key its reader cannot legitimately read — a miss that costs an embedding call, or
+// worse, a hit on a key another tenant owns.
+func cacheScopeOf(c *Config, team, app string) (keyTeam, keyApp, semPartition string) {
+	switch c.CacheScope {
+	case CacheScopeDeployment:
+		return "", "", "deployment"
+	case CacheScopeApp:
+		return team, app, "app:" + team + "/" + app
+	default:
+		return team, "", "team:" + team
+	}
+}
 
 // semDefaultStoreTTL is the TTL used to store responses when the semantic cache is
 // ON but the exact response cache is "off" (ttl=0). Without it the semantic cache
@@ -593,7 +635,7 @@ func fromPortsResult(pr ports.Result) result {
 	}
 }
 
-// callProviderFn is the provider's INJECTION SEAM (hexagonal-refactor).
+// callProviderFn is the provider's INJECTION SEAM.
 //
 // In production it points at callProvider, which now DISPATCHES to the adapters in
 // internal/adapters/{bedrock,openaicompat,anthropic,google} (each implements
@@ -604,7 +646,48 @@ var callProviderFn = callProvider
 // callProvider dispatches to the correct provider adapter, converting the boundary
 // to and from the handler's types. Single-org model: org parameter removed.
 func callProvider(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef) (result, error) {
-	in := ports.InvokeInput{Messages: toPortsMessages(msgs), Tools: toPortsTools(tools)}
+	p, err := providerFor(ctx, r)
+	if err != nil {
+		return result{}, err
+	}
+	pr, err := p.Invoke(ctx, ports.InvokeInput{Messages: toPortsMessages(msgs), Tools: toPortsTools(tools)})
+	if err != nil {
+		return result{}, err
+	}
+	return fromPortsResult(pr), nil
+}
+
+// errNoNativeStream says the route's adapter has no native streaming API — not that the
+// call failed. The streaming path uses it to fall back to the buffered call on the SAME
+// route instead of skipping to the next one, which would throw away a working route.
+var errNoNativeStream = errors.New("provider has no native streaming")
+
+// openProviderStreamFn is the streaming counterpart of callProviderFn, and exists for the
+// same reason: without a seam here a test cannot drive the native streaming path at all,
+// because it never goes through callProviderFn.
+var openProviderStreamFn = openProviderStream
+
+// openProviderStream opens a native provider stream when the route's adapter supports one.
+//
+// It builds the adapter through the same providerFor as the buffered call, so a streaming
+// request cannot end up talking to a differently-configured provider than a buffered one
+// (different region, role, model id or prompt-cache setting).
+func openProviderStream(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef) (ports.ProviderStream, error) {
+	p, err := providerFor(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	sp, ok := p.(ports.StreamProvider)
+	if !ok {
+		return nil, errNoNativeStream
+	}
+	return sp.OpenStream(ctx, ports.InvokeInput{Messages: toPortsMessages(msgs), Tools: toPortsTools(tools)})
+}
+
+// providerFor constructs the adapter for a route. Shared by the buffered and the streaming
+// paths on purpose — this is the single place that knows which concrete adapter serves a
+// provider name.
+func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
 	var p ports.Provider
 	switch r.Provider {
 	case "bedrock":
@@ -634,13 +717,9 @@ func callProvider(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef)
 	case "google", "gemini":
 		p = &google.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret)}
 	default:
-		return result{}, fmt.Errorf("provider %s not supported", r.Provider)
+		return nil, fmt.Errorf("provider %s not supported", r.Provider)
 	}
-	pr, err := p.Invoke(ctx, in)
-	if err != nil {
-		return result{}, err
-	}
-	return fromPortsResult(pr), nil
+	return p, nil
 }
 
 // Routing defaults. They live here (the impure layer) and enter the domain as a
@@ -702,11 +781,18 @@ func upstreamOf(r Route) string {
 // All three are protocol/output shell, not decision.
 
 // identity is the team/app hierarchy resolved from the API key.
-// The key is the ONLY source of truth for team/app (never the body).
+//
+// The key is the ONLY source of truth for the team, and for WHICH apps are reachable.
+// A request may name one of them (see resolveApp) so that a single key can split spend
+// across projects, but it can never introduce an app the key does not carry: `app`
+// selects the config scope, and budget and rate limits hang off that scope.
 // Single-org model: org field removed.
 type identity struct {
 	team string
 	app  string
+	// apps is the additional set this key may name per request. Empty means the key is
+	// single-app and `app` is the only possible attribution.
+	apps []string
 }
 
 // authResolve validates the API key (Bearer) against the table and resolves team/app.
@@ -717,7 +803,7 @@ type identity struct {
 //     customer's fault → the handler answers 503 and it counts as our failure (SLI).
 //   - ok == false with backendErr == nil → genuinely invalid/missing key → 401.
 //
-// authResolveFn is the AUTHENTICATION SEAM (hexagonal-refactor, task 1).
+// authResolveFn is the AUTHENTICATION SEAM.
 //
 // Same pattern as callProviderFn: in production it points at authResolve (which talks
 // to the API keys DynamoDB table). The characterization test replaces it with a fake
@@ -749,7 +835,61 @@ func authResolve(ctx context.Context, headers map[string]string) (identity, bool
 	if err != nil || !ok {
 		return identity{}, ok, err
 	}
-	return identity{team: ident.Team, app: ident.App}, true, nil
+	return identity{team: ident.Team, app: ident.App, apps: ident.Apps}, true, nil
+}
+
+// resolveApp decides which app a request is attributed to, and reports whether the
+// requested one was refused.
+//
+// Precedence: the `x-aiplat-app` header, then the body's `app` field, then the key's own
+// app. The header comes first because the caller most likely to use this is a tool
+// wrapping an OpenAI-compatible SDK, which can add a header but cannot add a field to a
+// body the SDK serializes.
+//
+// A request naming an app the key does not carry is REFUSED, not silently attributed to
+// the key's default. Two reasons, and the second is the important one:
+//   - attribution: quietly filing project B's spend under project A produces a report
+//     that looks complete and is wrong, which is worse than an error;
+//   - governance: `app` picks the config scope, so an unchecked value would let a caller
+//     borrow another app's budget and rate limit.
+//
+// Comparison is exact. No normalization (no lowercasing, no trimming beyond whitespace),
+// because "Api" and "api" would otherwise merge into one line on a cost report while
+// remaining two different scopes for the budget.
+func resolveApp(id identity, headers map[string]string, bodyApp string) (app string, refused string) {
+	want := ""
+	for k, v := range headers {
+		if strings.ToLower(k) == "x-aiplat-app" {
+			want = strings.TrimSpace(v)
+		}
+	}
+	if want == "" {
+		want = strings.TrimSpace(bodyApp)
+	}
+	if want == "" || want == id.app {
+		return id.app, ""
+	}
+	for _, a := range id.apps {
+		if a == want {
+			return want, ""
+		}
+	}
+	return id.app, want
+}
+
+// allowedApps lists what this key may name, for the error message. A caller that gets a
+// 403 needs to know what the valid values are; making them guess turns a typo into a
+// support request.
+func allowedApps(id identity) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, a := range append([]string{id.app}, id.apps...) {
+		if a != "" && !seen[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // The rate limit, budget and credit counters live in limits.go.
@@ -813,7 +953,14 @@ func buildChain(c *Config, pol routing.Policy, chosen string, route Route, shape
 	// the attempts by expected cost. An unknown price goes last (there is no way to
 	// rank it). This is what the customer asked for: a sequence from the cheapest to
 	// the next one.
-	if c.AutoCheapest {
+	//
+	// Reads pol.AutoCheapest, NOT c.AutoCheapest. They differ in exactly one case and
+	// it is the case that matters: an exceeded budget with action "degrade" forces
+	// pol.AutoCheapest = true without touching the config. Branching on the config here
+	// meant the DECISION optimized for cost while the FALLBACK CHAIN still followed the
+	// declared order — degrade applied to the first attempt and silently abandoned on
+	// every retry, which is the moment cost control matters most.
+	if pol.AutoCheapest {
 		if len(names) == 0 {
 			for m := range c.Routing {
 				names = append(names, m)
@@ -964,7 +1111,12 @@ func defaultGuardrails() *GuardrailPolicy {
 // profile as the response that was actually served — that is the only honest
 // comparison. Floor of zero: a negative saving never enters the ledger, otherwise the
 // number that backs gain-share would be lying.
-func savings(c *Config, requested, used string, res result, cost float64, now time.Time, swapClass string) (float64, string) {
+// budgetDegraded says the swap happened because the monthly budget was exceeded with
+// action "degrade" — not because the customer had opted into cost optimization. It is a
+// separate argument rather than being read off `c` because the distinction does not
+// exist in the config: degrade flips the POLICY at request time and leaves the config
+// untouched.
+func savings(c *Config, requested, used string, res result, cost float64, now time.Time, swapClass string, budgetDegraded bool) (float64, string) {
 	if used == requested || requested == "" {
 		return 0, ""
 	}
@@ -985,6 +1137,18 @@ func savings(c *Config, requested, used string, res result, cost float64, now ti
 	// ordering — what differs is that nothing about the response changed.
 	if swapClass == routing.SwapSameModel {
 		return d, routing.ReasonProviderArbitrage
+	}
+	// budget_degrade only when the DEGRADE is what turned optimization on. With
+	// auto_cheapest already enabled the swap would have happened anyway, so attributing
+	// it to the budget would overstate what the ceiling accomplished.
+	//
+	// This reason was declared in routing/savings.go and never emitted by any code path
+	// — the console already charts it (savings by reason) and the series was always
+	// empty. A customer could set action:"degrade", watch it work, and find no trace of
+	// it in the ledger: the swap was filed as "fallback", the same label a provider
+	// outage produces.
+	if budgetDegraded && !c.AutoCheapest {
+		return d, routing.ReasonBudgetDegrade
 	}
 	if c.AutoCheapest {
 		return d, "auto_cheapest"
@@ -1102,37 +1266,25 @@ func decorateSwap(m map[string]interface{}, class, servedModelID string) {
 // "fixing" an import. Deleting it is the only way not to leave that trap in the file.
 
 // indexSemantic appends (cacheKey → question vector) to the deployment's semantic index,
-// with dedup by cacheKey and a FIFO cap (semIndexCap). It reuses the vector already
-// computed on the read — no extra embedding call on the write.
+// It reuses the vector already computed on the read — no extra embedding call on the
+// write. Dedup, the FIFO cap and the concurrency control belong to the adapter.
 // Best-effort: any failure is silent (the exact cache keeps working).
 // semCtx is the fingerprint of the context (system prompt + model) that partitions the
-// index: without it, different personas and models would share a response.
-// Single-org model: org parameter removed, index is deployment-level.
-func indexSemantic(ctx context.Context, cacheKey string, vec []float32, semCtx, semNum string, ttlSeconds int) {
+// index WITHIN a tenant: without it, different personas and models would share a
+// response.
+//
+// partition is the TENANT partition (see cacheScopeOf). It used to be the literal
+// "default", which made one index serve every team; semCtx separated personas but was
+// never a tenancy control. A side benefit of partitioning: the index cap is now a
+// per-tenant budget instead of every team competing for the same slots.
+func indexSemantic(ctx context.Context, partition, cacheKey string, vec []float32, semCtx, semNum string, ttlSeconds int) {
 	// An empty semCtx means we do not know how to partition — do not index, otherwise
 	// the entry would be born unusable (which is exactly the state of the entries
 	// written before the fix).
-	if semStore == nil || len(vec) == 0 || semCtx == "" {
+	if semIndex == nil {
 		return
 	}
-	q, scale := routing.QuantizeVec(vec)
-	raw := make([]byte, len(q))
-	for i, x := range q {
-		raw[i] = byte(x)
-	}
-	entry := ddbcache.SemEntry{CacheKey: cacheKey, Q: base64.StdEncoding.EncodeToString(raw), Scale: scale, Ctx: semCtx, Num: semNum}
-	out := make([]ddbcache.SemEntry, 0, semIndexCap)
-	out = append(out, entry)
-	for _, e := range semStore.GetSemIndex(ctx, "default") {
-		if e.CacheKey == cacheKey {
-			continue
-		}
-		out = append(out, e)
-		if len(out) >= semIndexCap {
-			break
-		}
-	}
-	semStore.PutSemIndex(ctx, "default", out, ttlSeconds)
+	semIndex.Index(ctx, partition, cacheKey, vec, semCtx, semNum, ttlSeconds)
 }
 
 // hasImage detects multimodal content for the eligibility filter (Req 1.3).
@@ -1463,10 +1615,25 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		NoCache     bool     `json:"no_cache"`
 		Feature     string   `json:"feature"`
 		Stream      bool     `json:"stream"`
+		// App attributes this request to one of the key's apps. Same purpose as the
+		// x-aiplat-app header, for callers that control the body but not the headers.
+		App string `json:"app,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		emitFailure(ctx, req.RequestID, ident, "", "", "", "blocked", "invalid_body", "", int(time.Since(start).Milliseconds()))
 		return jerr(reqOrigin, 400, "invalid JSON body")
+	}
+
+	// Per-request app attribution. This runs BEFORE loadConfig on purpose: `app` is the
+	// last link of the config scope chain, so it decides which budget, rate limit,
+	// allowed-model list and guardrails apply. Resolving it afterwards would enforce one
+	// app's policy while reporting another's cost.
+	if chosenApp, refused := resolveApp(ident, req.Headers, body.App); refused != "" {
+		emitFailure(ctx, req.RequestID, ident, body.Feature, "", body.Model, "blocked", "app_not_allowed", refused, int(time.Since(start).Milliseconds()))
+		return jerr(reqOrigin, 403, "app not allowed for this API key: "+refused+" (allowed: "+allowedApps(ident)+")")
+	} else {
+		app = chosenApp
+		ident.app = chosenApp // so every telemetry path reports the app that was charged
 	}
 
 	feature := body.Feature
@@ -1634,11 +1801,17 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		})
 	}
 	// Cache key in the pure domain: it includes tools/temperature/max_tokens (defect
-	// fix) and honors the mode (exact|canonical) inherited from the config. The org is
-	// the first thing hashed — the cache never crosses orgs.
+	// fix) and honors the mode (exact|canonical) inherited from the config.
+	//
+	// TENANCY: the key also carries the caller's identity, as resolved by
+	// cacheScopeOf. The comment that used to sit here claimed "the org is the first
+	// thing hashed — the cache never crosses orgs", which was vacuously true and
+	// actively misleading: Org is the constant "default" in the single-org model, so
+	// hashing it partitioned nothing and every team shared one key space.
 	keyMode := routing.NormalizeKeyMode(c.CacheKeyMode)
+	keyTeam, keyApp, semPartition := cacheScopeOf(c, team, app)
 	ck := routing.CacheKey(routing.KeyInput{
-		Org: "default", Model: chosen,
+		Org: "default", Team: keyTeam, App: keyApp, Model: chosen,
 		Messages:    toPortsMessages(body.Messages),
 		Tools:       toPortsTools(body.Tools),
 		Temperature: body.Temperature,
@@ -1680,6 +1853,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				}
 				var sb bytes.Buffer
 				pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, text)
+				// Same aiplat block the non-streaming cache hit returns, so a streaming
+				// caller still sees cache_hit and the saved amount. Tokens are 0 on a
+				// cache hit by definition — nothing was sent to a provider.
+				sseFinal(&sb, "chatcmpl-"+ck[:12], chosen, 0, 0, cached["aiplat"].(map[string]interface{}))
 				return sresp(200, sseHeaders(reqOrigin), sb.String())
 			}
 			return jbody(reqOrigin, 200, cached)
@@ -1695,7 +1872,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	// (no duplicated embed).
 	var semQueryVec []float32
 	var semQueryCtx, semQueryNum string
-	if c.SemanticCache && !noStore && embedder != nil && semStore != nil && cacheStore.Enabled() {
+	if c.SemanticCache && !noStore && embedder != nil && semIndex != nil && semIndex.Enabled() && cacheStore.Enabled() {
 		// Only the USER turns are vectorized. Including the system prompt made the
 		// embedding represent the PROMPT and not the question: in an app with a
 		// ~930-char prompt and a ~37-char question, two unrelated questions measured
@@ -1709,20 +1886,12 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				// (measured: 0.93, above the threshold). Different numbers ⇒ never a
 				// match.
 				semQueryNum = routing.NumFingerprint(qtext)
-				entries := semStore.GetSemIndex(ctx, "default")
-				cands := make([]routing.SemCandidate, 0, len(entries))
-				for _, e := range entries {
-					raw, derr := base64.StdEncoding.DecodeString(e.Q)
-					if derr != nil {
-						continue
-					}
-					i8 := make([]int8, len(raw))
-					for i, bb := range raw {
-						i8[i] = int8(bb)
-					}
-					cands = append(cands, routing.SemCandidate{CacheKey: e.CacheKey, Vec: routing.DequantizeVec(i8, e.Scale), Ctx: e.Ctx, Num: e.Num})
-				}
-				if mt, ok := routing.BestSemanticMatch(qvec, cands, c.SemanticThreshold, semQueryCtx, semQueryNum); ok {
+				// The search now lives behind ports.SemIndex. Loading the candidates and
+				// ranking them used to be inlined here, which meant the handler owned the
+				// storage FORMAT (base64 of int8 plus a scale) — so any other backend had
+				// to reproduce DynamoDB's encoding to be substitutable at all.
+				if matchKey, score, ok := semIndex.Search(ctx, semPartition, qvec, c.SemanticThreshold, semQueryCtx, semQueryNum); ok {
+					mt := routing.SemMatch{CacheKey: matchKey, Score: score}
 					if respJSON, savedCache, hit := cacheStore.Get(ctx, mt.CacheKey); hit {
 						lat := int(time.Since(start).Milliseconds())
 						var cached map[string]interface{}
@@ -1751,6 +1920,9 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 							}
 							var sb bytes.Buffer
 							pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, text)
+							// Carries semantic_score as well, so a streaming caller can
+							// see the answer was an APPROXIMATE match and how close.
+							sseFinal(&sb, "chatcmpl-"+ck[:12], chosen, 0, 0, cached["aiplat"].(map[string]interface{}))
 							return sresp(200, sseHeaders(reqOrigin), sb.String())
 						}
 						return jbody(reqOrigin, 200, cached)
@@ -1763,31 +1935,62 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	chain := buildChain(c, pol, chosen, route, shape, now)
 
 	// --- Streaming (SSE) ---
-	// Note: API Gateway buffers the response, so the SSE frames are assembled and sent
-	// at the end (a valid format for the SDK; not incremental token by token).
+	// The producer below is INCREMENTAL: it writes frames into an io.Writer as they are
+	// produced, and with API Gateway response streaming enabled (the default) the client
+	// receives them as they are written.
+	//
+	// The work is split in two phases for a reason that does not depend on the
+	// transport: the HTTP STATUS is committed the moment this function returns, so
+	// "every provider failed → 502" has to be decided before any payload byte exists.
+	// Phase 1 resolves the fallback chain and writes nothing; phase 2 streams and
+	// accounts.
+	//
+	// Phase 2 ends with sseFinal, which emits usage + the aiplat block and then [DONE].
+	// That ordering is the reason pseudoStream and pumpOpenAICompat do not terminate the
+	// stream themselves: the cost figures do not exist yet when they finish.
 	if body.Stream {
-		var sb bytes.Buffer
 		id := "chatcmpl-" + ck[:12]
-		var content string
-		var tin, tout int
+
+		// --- Phase 1: resolve the chain, write nothing --------------------------
+		// Exactly ONE of these three is set, in decreasing order of how good the
+		// time-to-first-token is:
+		//   openResp  — an OpenAI-compatible stream, open and validated (2xx), proxied
+		//               frame by frame.
+		//   provStream — a native provider stream through ports.StreamProvider (Bedrock
+		//               ConverseStream today).
+		//   buffered  — no native streaming: the complete answer, sliced into frames
+		//               afterwards. Valid SSE, but first token arrives with the last.
+		var openResp *http.Response
+		var provStream ports.ProviderStream
+		var buffered result
 		usedName, usedProvider, usedUpstream := chosen, "", ""
 		var perr error
 		okStream := false
 		for _, s := range chain {
 			usedName, usedProvider, usedUpstream = s.name, s.r.Provider, upstreamOf(s.r)
 			if s.r.Provider == "openai_compatible" {
-				ct, ti, to, e := streamOpenAICompat(ctx, &sb, s.r.BaseURL, s.r.ProviderModelID, body.Messages, getSecret(ctx, s.r.APIKeySecret))
+				r, e := openStreamOpenAICompat(ctx, s.r.BaseURL, s.r.ProviderModelID, body.Messages, getSecret(ctx, s.r.APIKeySecret))
 				if e == nil {
-					content, tin, tout, okStream = ct, ti, to, true
+					openResp, okStream = r, true
 					break
 				}
 				perr = e
 				continue
 			}
+			// Native streaming first, and a failure here does NOT skip the route: it
+			// retries the SAME route buffered. Not every Bedrock model supports
+			// ConverseStream, and treating "this model cannot stream" as "this route is
+			// down" would fail a request that the buffered call would have served. Only
+			// if that also fails does the chain move on.
+			if st, e := openProviderStreamFn(ctx, s.r, body.Messages, body.Tools); e == nil {
+				provStream, okStream = st, true
+				break
+			} else if !errors.Is(e, errNoNativeStream) {
+				perr = e
+			}
 			res, e := callProviderFn(ctx, s.r, body.Messages, body.Tools)
 			if e == nil {
-				content, tin, tout, okStream = res.text, res.tin, res.tout, true
-				pseudoStream(&sb, id, s.name, res.text)
+				buffered, okStream = res, true
 				break
 			}
 			perr = e
@@ -1796,49 +1999,91 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			emitFailure(ctx, req.RequestID, ident, feature, usedProvider, usedName, "error", classifyProviderErr(perr), fmt.Sprint(perr), int(time.Since(start).Milliseconds()))
 			return jerr(reqOrigin, 502, "all providers failed: "+fmt.Sprint(perr))
 		}
-		if tout == 0 {
-			tout = len(content) / 4
-		}
-		if tin == 0 {
-			tin = estimateTokens(body.Messages)
-		}
-		lat := int(time.Since(start).Milliseconds())
-		usedCaps := c.Routing[usedName].Capabilities
-		streamRes := result{tin: tin, tout: tout}
-		cost, cacheSaved, pricingStatus := realizedCost(c, usedName, usedCaps, streamRes, now)
-		swapClass, servedModelID := servedSwap(c, requested, usedName)
-		saved, reason := savings(c, requested, usedName, streamRes, cost, now, swapClass)
-		if cacheSaved > 0 {
-			// Provider cache savings add to the routing savings, but the reason stays as
-			// cache when there was no model swap.
-			saved += cacheSaved
-			if reason == "" {
-				reason = "provider_prompt_cache"
+
+		// --- Phase 2: stream, then account -------------------------------------
+		return streamResp(200, sseHeaders(reqOrigin), func(w io.Writer) {
+			var content string
+			var streamRes result
+			switch {
+			case openResp != nil:
+				var tin, tout int
+				content, tin, tout = pumpOpenAICompat(w, openResp)
+				// No cache counters here, and that is a property of the transport rather
+				// than a choice: the OpenAI SSE usage frame does not carry them, so this
+				// route reports "absent" instead of claiming a zero it cannot see.
+				streamRes = result{tin: tin, tout: tout, cacheConv: ports.CacheCountersAbsent}
+			case provStream != nil:
+				// A native stream reports the same figures as the buffered call —
+				// including the prompt-cache counters — so a streaming request is priced
+				// exactly like the identical non-streaming one.
+				//
+				// This path used to discard those counters, and the effect was NOT a
+				// rounding difference. Bedrock reports inputTokens EXCLUDING cached
+				// tokens, so dropping cacheRead meant the cache read was billed as
+				// nothing at all, and routing.CacheSavings had nothing to credit either:
+				// the cost came out too low AND the prompt-cache saving was invisible in
+				// the ledger. Both wrong, in the one number this product exists to get
+				// right.
+				streamRes = fromPortsResult(pumpProviderStream(w, id, usedName, provStream))
+				content = streamRes.text
+			default:
+				content, streamRes = buffered.text, buffered
+				pseudoStream(w, id, usedName, content)
 			}
-		}
-		addSpend(ctx, c.budgetScope, cost)
-		addRateTokens(ctx, c.limitsScope, c.Limits, tin+tout)
-		addCreditSpend(ctx, usedProvider, c, dec, cost)
-		if cacheStore.Enabled() && !noStore {
-			full := map[string]interface{}{"id": id, "object": "chat.completion", "model": usedName,
-				"choices": []map[string]interface{}{{"index": 0, "message": map[string]string{"role": "assistant", "content": content}, "finish_reason": "stop"}},
-				"usage":   map[string]int{"prompt_tokens": tin, "completion_tokens": tout, "total_tokens": tin + tout}}
-			jb, _ := json.Marshal(full)
-			storeTTL := effectiveCacheTTL(c)
-			cacheStore.Put(ctx, ck, usedProvider, string(jb), cost, storeTTL)
-			// Index the question's vector (reused from the read) for the semantic cache.
-			if c.SemanticCache && len(semQueryVec) > 0 {
-				indexSemantic(ctx, ck, semQueryVec, semQueryCtx, semQueryNum, storeTTL)
+			if streamRes.tout == 0 {
+				streamRes.tout = len(content) / 4
 			}
-		}
-		rec := map[string]interface{}{"request_id": req.RequestID, "cache_key": ck, "team": team, "app_tag": app, "feature": feature, "provider": usedProvider, "upstream": usedUpstream, "model": usedName, "tokens_in": tin, "tokens_out": tout, "estimated_cost_usd": cost, "saved_usd": saved, "savings_reason": reason, "latency_ms": lat, "cache_hit": false, "status": "success", "category": "ok", "sli_eligible": true, "ts": time.Now().UTC().Format(time.RFC3339)}
-		routing.DecorateUsage(rec, dec, requested, pricingStatus, cost, streamRes.cacheRead, streamRes.cacheWrite, streamRes.cacheConv)
-		decorateSwap(rec, swapClass, servedModelID)
-		decorateCanary(rec, canaryRoute)
-		rec["price_source"] = priceSourceOf(c, usedName, now)
-		routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
-		emitUsageFn(ctx, rec)
-		return sresp(200, sseHeaders(reqOrigin), sb.String())
+			if streamRes.tin == 0 {
+				streamRes.tin = estimateTokens(body.Messages)
+			}
+			tin, tout := streamRes.tin, streamRes.tout
+			lat := int(time.Since(start).Milliseconds())
+			usedCaps := c.Routing[usedName].Capabilities
+			cost, cacheSaved, pricingStatus := realizedCost(c, usedName, usedCaps, streamRes, now)
+			swapClass, servedModelID := servedSwap(c, requested, usedName)
+			saved, reason := savings(c, requested, usedName, streamRes, cost, now, swapClass, budgetState == "exceeded_degraded")
+			if cacheSaved > 0 {
+				// Provider cache savings add to the routing savings, but the reason stays
+				// as cache when there was no model swap.
+				saved += cacheSaved
+				if reason == "" {
+					reason = "provider_prompt_cache"
+				}
+			}
+			addSpend(ctx, c.budgetScope, cost)
+			addRateTokens(ctx, c.limitsScope, c.Limits, tin+tout)
+			addCreditSpend(ctx, usedProvider, c, dec, cost)
+			if cacheStore.Enabled() && !noStore {
+				full := map[string]interface{}{"id": id, "object": "chat.completion", "model": usedName,
+					"choices": []map[string]interface{}{{"index": 0, "message": map[string]string{"role": "assistant", "content": content}, "finish_reason": "stop"}},
+					"usage":   map[string]int{"prompt_tokens": tin, "completion_tokens": tout, "total_tokens": tin + tout}}
+				jb, _ := json.Marshal(full)
+				storeTTL := effectiveCacheTTL(c)
+				cacheStore.Put(ctx, ck, usedProvider, string(jb), cost, storeTTL)
+				// Index the question's vector (reused from the read) for the semantic cache.
+				if c.SemanticCache && len(semQueryVec) > 0 {
+					indexSemantic(ctx, semPartition, ck, semQueryVec, semQueryCtx, semQueryNum, storeTTL)
+				}
+			}
+			rec := map[string]interface{}{"request_id": req.RequestID, "cache_key": ck, "team": team, "app_tag": app, "feature": feature, "provider": usedProvider, "upstream": usedUpstream, "model": usedName, "tokens_in": tin, "tokens_out": tout, "estimated_cost_usd": cost, "saved_usd": saved, "savings_reason": reason, "latency_ms": lat, "cache_hit": false, "status": "success", "category": "ok", "sli_eligible": true, "ts": time.Now().UTC().Format(time.RFC3339)}
+			routing.DecorateUsage(rec, dec, requested, pricingStatus, cost, streamRes.cacheRead, streamRes.cacheWrite, streamRes.cacheConv)
+			decorateSwap(rec, swapClass, servedModelID)
+			decorateCanary(rec, canaryRoute)
+			rec["price_source"] = priceSourceOf(c, usedName, now)
+			routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
+			emitUsageFn(ctx, rec)
+
+			// Mirrors the aiplat block of the non-streaming response, so the SAME client
+			// code reads cost, savings and the swap in both modes. Emitted here, at the
+			// end, because none of these values exist before the stream is drained: the
+			// tokens come from the provider's usage frame and everything else is derived
+			// from them. This also writes [DONE] — deliberately the last statement of the
+			// producer, since a client stops reading there.
+			streamMeta := map[string]interface{}{"team": team, "app_tag": app, "feature": feature, "provider": usedProvider, "model": usedName, "estimated_cost_usd": cost, "saved_usd": saved, "savings_reason": reason, "savings_class": routing.ClassOf(reason), "cache_hit": false, "latency_ms": lat, "auto_cheapest": c.AutoCheapest, "requested_model": requested, "budget_state": budgetState}
+			decorateSwap(streamMeta, swapClass, servedModelID)
+			decorateCanary(streamMeta, canaryRoute)
+			sseFinal(w, id, usedName, tin, tout, streamMeta)
+		})
 	}
 
 	// --- Non-streaming (JSON) ---
@@ -1871,7 +2116,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			cost = attemptCost
 		}
 		swapClass, servedModelID := servedSwap(c, requested, usedName)
-		saved, reason := savings(c, requested, usedName, res, cost, now, swapClass)
+		saved, reason := savings(c, requested, usedName, res, cost, now, swapClass, budgetState == "exceeded_degraded")
 		if cacheSaved > 0 {
 			saved += cacheSaved
 			if reason == "" {
@@ -1938,7 +2183,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			cacheStore.Put(ctx, ck, usedRoute.Provider, string(jb), cost, storeTTL)
 			// Index the question's vector (reused from the read) for the semantic cache.
 			if c.SemanticCache && len(semQueryVec) > 0 {
-				indexSemantic(ctx, ck, semQueryVec, semQueryCtx, semQueryNum, storeTTL)
+				indexSemantic(ctx, semPartition, ck, semQueryVec, semQueryCtx, semQueryNum, storeTTL)
 			}
 		}
 		rec := map[string]interface{}{"request_id": req.RequestID, "cache_key": ck, "team": team, "app_tag": app, "feature": feature, "provider": usedRoute.Provider, "upstream": upstreamOf(usedRoute), "model": usedName, "tokens_in": res.tin, "tokens_out": res.tout, "estimated_cost_usd": cost, "saved_usd": saved, "savings_reason": reason, "latency_ms": lat, "cache_hit": false, "status": "success", "category": "ok", "sli_eligible": true, "ts": time.Now().UTC().Format(time.RFC3339)}
@@ -1960,15 +2205,21 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 // that is what allows an in-memory double in the orchestration tests (R3.2) and
 // keeps this shell depending only on the boundary.
 //
-// Two fields are concrete on purpose: BedrockPool (client pooling for the
-// cross-account AssumeRole is Bedrock-specific plumbing, not a boundary) and Sem
-// (the semantic index shares the cache table and its entry format — a second port
-// over the same adapter would be indirection with no substitution to buy).
+// One field is concrete on purpose: BedrockPool (client pooling for the cross-account
+// AssumeRole is Bedrock-specific plumbing, not a boundary).
+//
+// Sem used to be concrete too, on the argument that "the semantic index shares the cache
+// table and its entry format, so a second port would be indirection with no substitution
+// to buy". That argument was wrong in one specific way: it assumed the only alternative
+// implementation would be another DynamoDB one. The interesting alternatives are stores
+// with server-side kNN, and reaching them requires the SEARCH to be behind the boundary,
+// not just the storage — which is why ports.SemIndex exposes Search rather than
+// get-a-list-of-vectors.
 type Deps struct {
 	BedrockPool *bedrock.Pool
 	Config      ports.ConfigStore
 	Cache       ports.Cache
-	Sem         *ddbcache.Store
+	Sem         ports.SemIndex
 	Embedder    ports.Embedder
 	Limits      ports.LimitsStore
 	Usage       ports.UsageSink
@@ -1992,7 +2243,7 @@ func Wire(d Deps) {
 	bedrockPool = d.BedrockPool
 	configStore = d.Config
 	cacheStore = d.Cache
-	semStore = d.Sem
+	semIndex = d.Sem
 	embedder = d.Embedder
 	limitsStore = d.Limits
 	usageSink = d.Usage

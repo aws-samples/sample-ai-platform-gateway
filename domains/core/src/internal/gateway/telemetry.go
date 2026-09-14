@@ -32,7 +32,7 @@ func emitUsage(ctx context.Context, rec map[string]interface{}) {
 	usageSink.Emit(ctx, rec)
 }
 
-// emitUsageFn is the usage EMISSION SEAM (hexagonal-refactor, task 1).
+// emitUsageFn is the usage EMISSION SEAM.
 //
 // Same pattern as callProviderFn: in production it points at emitUsage (SQS). The
 // characterization test replaces it with an in-memory collector to capture the emitted
@@ -100,6 +100,13 @@ func reasonMeta(reason string) (category string, sliEligible bool) {
 	case "invalid_body", "unknown_model":
 		return catConfig, false
 	case "model_not_allowed":
+		return catConfig, false
+	// app_not_allowed: the request named an app this API key does not carry. Same shape
+	// as model_not_allowed — the caller asked for something its credential does not
+	// reach. It lands in `config` and OUT of the SLI: the default (dependency, eligible)
+	// would count our own correct refusal as a reliability failure, so a client looping
+	// on a typo would burn the error budget.
+	case "app_not_allowed":
 		return catConfig, false
 	// policy / security: expected behavior, not a failure
 	case "rate_limit_exceeded", "budget_exceeded", "account_suspended":

@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// CHARACTERIZATION test of the alert-notifier (hexagonal-refactor, task 15.3).
+// CHARACTERIZATION test of the alert-notifier.
 //
 // Captures the CURRENT behavior of the reliability math — multi-window burn rate and
 // anomaly detection by z-score — BEFORE any move to internal/telemetry. After the

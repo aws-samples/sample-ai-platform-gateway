@@ -4,7 +4,7 @@
 // Package ddbcoststore implements ports.CostStore against the Cost_Store (DynamoDB).
 // It is the adapter that runs the Query by org partition and converts each item into
 // the domain type (telemetry.Record). Pagination (LastEvaluatedKey) lives here —
-// preserved exactly as it was in the shell (hexagonal-refactor, task 17.2).
+// preserved exactly as it was in the shell.
 package ddbcoststore
 
 import (
@@ -36,21 +36,53 @@ var _ ports.CostStore = (*Store)(nil)
 // The '~' suffix on the upper bound includes the end of the range (it is
 // greater than any digit/':' of an RFC3339 timestamp).
 func (s *Store) Query(ctx context.Context, from, to string) ([]telemetry.Record, error) {
-	pk := "USAGE"
+	return s.query(ctx, "", "USAGE", from, to)
+}
+
+// QueryApp reads one app's records through the gsi1 index, whose partition key is
+// "APP#<app>" and whose range key is the same sk as the base table.
+//
+// The index has existed and been populated since the Cost_Store was created, and until
+// now nothing read it: every per-app number in the console came from reading the whole
+// time range on the single hot "USAGE" partition and grouping in memory. That works while
+// a deployment is small and stops working exactly when per-app attribution starts to
+// matter — the read cost of one project's report grows with every other project's traffic.
+//
+// projection_type = ALL on the index is what makes this a drop-in: the items come back
+// whole, so the same conversion below serves both reads.
+func (s *Store) QueryApp(ctx context.Context, app, from, to string) ([]telemetry.Record, error) {
+	if app == "" {
+		return s.Query(ctx, from, to)
+	}
+	// "none" is what the writer stores for a record with no app, so it is a legitimate
+	// filter value and not a special case here.
+	return s.query(ctx, "gsi1", "APP#"+app, from, to)
+}
+
+// query is the shared read. index == "" means the base table; the key condition is the
+// same shape either way because gsi1 shares the base table's sort key.
+func (s *Store) query(ctx context.Context, index, pk, from, to string) ([]telemetry.Record, error) {
 	skFrom := "TS#" + from
 	skTo := "TS#" + to + "~"
+	keyExpr := "pk = :pk AND sk BETWEEN :a AND :b"
+	if index != "" {
+		keyExpr = "gsi1pk = :pk AND sk BETWEEN :a AND :b"
+	}
 	var out []telemetry.Record
 	var lek map[string]ddbtypes.AttributeValue
 	for {
 		q := &dynamodb.QueryInput{
 			TableName:              &s.table,
-			KeyConditionExpression: awsString("pk = :pk AND sk BETWEEN :a AND :b"),
+			KeyConditionExpression: awsString(keyExpr),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
 				":pk": &ddbtypes.AttributeValueMemberS{Value: pk},
 				":a":  &ddbtypes.AttributeValueMemberS{Value: skFrom},
 				":b":  &ddbtypes.AttributeValueMemberS{Value: skTo},
 			},
 			ExclusiveStartKey: lek,
+		}
+		if index != "" {
+			q.IndexName = awsString(index)
 		}
 		r, err := s.ddb.Query(ctx, q)
 		if err != nil {

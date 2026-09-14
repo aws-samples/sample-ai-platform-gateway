@@ -32,29 +32,32 @@ Specifically, before any production use:
 
 ### Known limitations
 
-- **A single request is capped at 29 seconds as shipped — and that cap is raisable.** The gateway
-  is fronted by a Regional API Gateway REST API and the Terraform sets
-  `timeout_milliseconds = 29000`, matching the default *Maximum integration timeout* service
-  quota. API Gateway returns a 504 at that point, which a long generation on a frontier model can
-  reach. It is a quota, not a hard limit: since
-  [June 2024](https://aws.amazon.com/about-aws/whats-new/2024/06/amazon-api-gateway-integration-timeout-limit-29-seconds/)
-  it is adjustable for Regional and private REST APIs, so a longer ceiling is a quota increase
-  plus a change to that value, not a redesign. Two things to keep in mind: the approved maximum is
-  granted per request, so confirm yours before designing around a number; and past 120 s the
-  router Lambda's own `timeout = 120` becomes the next limit. HTTP APIs, by contrast, keep a fixed
-  30 s that cannot be raised.
-- **Responses are buffered, not streamed to the client.** The router sets
-  `content-type: text/event-stream` and the API accepts `"stream": true`, but an API Gateway REST
-  integration buffers the Lambda response, so the caller receives it in one piece at the end.
-  Time-to-first-token is therefore the same as time-to-last-token, and this is a separate concern
-  from the time budget above: raising the integration timeout buys a longer request, not an earlier
-  first token. Upstream, the `openai_compatible` adapter does consume a real stream from the
-  provider; the others slice a buffered response into SSE events. Moving the client-facing side to
-  a Lambda Function URL with `invoke_mode = "RESPONSE_STREAM"` was tried and abandoned for two
-  concrete reasons, both documented in [domains/core/README.md](domains/core/README.md): a public
-  Function URL is refused by an account-level guardrail against public endpoints, and fronting it
-  with CloudFront + OAC/IAM makes AWS require the *client* to send `x-amz-content-sha256` on a POST
-  with a body, which breaks the drop-in-SDK promise that is the whole point of the gateway.
+- **A single request is capped at 5 minutes, and that cap is a deliberate choice rather than a
+  platform limit.** The gateway is fronted by a Regional API Gateway REST API with
+  [response streaming](https://aws.amazon.com/blogs/compute/building-responsive-apis-with-amazon-api-gateway-response-streaming/)
+  enabled, which is not bound by the *Maximum integration timeout* quota (`L-E5AE38E3`, 29000 ms
+  by default) at all and reaches 900000 ms. `integration_timeout_ms` ships at 300000 because the
+  same value sizes the router Lambda's timeout: a provider that accepts a connection and then
+  stalls is billed, and holds a concurrency slot, until it expires. Raise it if you have a
+  workload that needs more; 5 minutes is roughly 30k output tokens at the rate measured here.
+  Independently of it, API Gateway cuts a streaming response after 5 minutes of **idle** time —
+  token-by-token generation never triggers that, a long silent computation does. Turning streaming
+  off (`response_streaming = false`) puts you back under the quota and requires
+  `integration_timeout_ms = 29000` unless you have raised `L-E5AE38E3`; the provider rejects the
+  mismatched pair at plan time. HTTP APIs, by contrast, are fixed at 30 s and not adjustable.
+- **Streaming works, but it needs a Runtime API loop this repo owns, because the Go library does
+  not have one.** `"stream": true` returns `text/event-stream` frame by frame.
+  [aws-lambda-go](https://github.com/aws/aws-lambda-go) does not implement the Runtime API side of
+  response streaming — its response POST never sets
+  `Lambda-Runtime-Function-Response-Mode: streaming`, checked by reading the source through
+  v1.55.0 — and `events.APIGatewayProxyStreamingResponse` is a format helper (metadata JSON + the
+  8-null-byte delimiter), not a transport. So `cmd/router` runs its own invocation loop
+  (`internal/awslambda/runtimeapi.go`, ~150 lines, one handler shape) when streaming is enabled,
+  and drops back to `lambda.Start` when it is not. If the header lands upstream, that file gets
+  deleted and `AdaptStream` becomes the wiring. Second asymmetry worth knowing, upstream of all
+  this: `openai_compatible` consumes a real provider stream, while `bedrock`, `anthropic` and
+  `google` fetch the whole answer and then slice it into SSE events — so on those three, first
+  token still arrives at roughly last-token time.
 - **First sign-in with MFA required.** The console does not implement the Cognito `MFA_SETUP`
   challenge. With the user pool at the default `mfa_configuration = "ON"` and a user who has not
   yet enrolled a TOTP factor, sign-in fails instead of guiding enrolment. Deploy with
@@ -161,7 +164,46 @@ actually happened:
 }
 ```
 
-Streaming works the same way (`stream: true`, server-sent events).
+Streaming works the same way (`stream: true`, server-sent events). Streamed responses end with a
+final frame carrying `usage` and the same `aiplat` block, so a streaming caller does not have to
+give up the cost figures to get progressive output.
+
+### Splitting spend across several projects with one key
+
+One key can attribute each request to a different app, which is what lets a developer working
+across several local projects — or one agent driving several repositories — see the spend split per
+project without issuing a key per project.
+
+Issue the key with the apps it may charge:
+
+```bash
+curl -X POST "$KEYADMIN/admin/keys" -H "authorization: Bearer $TOKEN" \
+  -d '{"team":"platform","app":"web","apps":["api","batch","docs-bot"]}'
+```
+
+Then name one per request, by header or in the body:
+
+```python
+resp = client.chat.completions.create(
+    model="claude-sonnet",
+    messages=[...],
+    extra_headers={"x-aiplat-app": "docs-bot"},   # or extra_body={"app": "docs-bot"}
+)
+```
+
+Everything downstream follows: the usage record, the `by_app` breakdown, the `?app=` filter on
+`/usage/records`, and the App column in the CSV export.
+
+Two things are deliberate here. **The app must be one the key carries** — naming any other returns
+`403 app_not_allowed` and lists the valid values. That is not bureaucracy: `app` is the last link of
+the configuration scope chain, so it selects the budget, the rate limit, the allowed-model list and
+the guardrails. An unchecked app on the request would let a caller charge its spend to another
+project's budget and inherit its limits. **Comparison is exact**, with no case folding, because
+`Api` and `api` merging on a report while staying two separate budget scopes is worse than a 403.
+
+If you want a free-form dimension with no governance attached, that is what `feature` is for
+(`extra_body={"feature": "..."}` or `x-aiplat-feature`). It never selects a scope, so it accepts any
+label — and it is the right choice for slicing one project's traffic by task.
 
 ## How savings are counted
 

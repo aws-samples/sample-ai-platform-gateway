@@ -32,7 +32,7 @@
         }
       }
     ],
-    "id": "chatcmpl-75051b95edb8",
+    "id": "chatcmpl-949881de2728",
     "model": "m1",
     "object": "chat.completion",
     "usage": {
@@ -48,7 +48,7 @@
       "availability_degraded": false,
       "cache_counters": "absent",
       "cache_hit": false,
-      "cache_key": "75051b95edb88c90bd4635c8e8942cdf28a051a3978aa38a189d430d55b7ad9b",
+      "cache_key": "949881de2728e182669685020bf420cf69960e115daa26f787d04c3093e864ba",
       "cache_read_input_tokens": 0,
       "cache_write_input_tokens": 0,
       "cash_usd": 0.00002,

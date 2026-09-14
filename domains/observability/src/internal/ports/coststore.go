@@ -23,6 +23,13 @@ import (
 // CostStore reads persisted Usage_Records in the [from,to] range.
 // Post-refactor: no tenant parameter (pk = "USAGE") — single org per deployment.
 // DynamoDB pagination is the adapter's responsibility: the port returns the complete set.
+//
+// QueryApp is the same range restricted to ONE app. It is a separate method rather than a
+// filter argument because the two are different reads, not the same read with a predicate:
+// Query scans the whole time range and the caller narrows it in memory, while QueryApp can
+// go straight to a per-app index. Expressing it as an optional argument would hide that a
+// caller passing an app gets a fundamentally cheaper query.
 type CostStore interface {
 	Query(ctx context.Context, from, to string) ([]telemetry.Record, error)
+	QueryApp(ctx context.Context, app, from, to string) ([]telemetry.Record, error)
 }

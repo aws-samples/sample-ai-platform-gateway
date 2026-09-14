@@ -257,7 +257,7 @@ func fires(cmp string, value, threshold float64) bool {
 	return value >= threshold
 }
 
-// After Phase 3 of the hexagonal-refactor, the reliability math (SLO per tier,
+// After the hexagonal split, the reliability math (SLO per tier,
 // multi-window burn rate and anomaly by binomial z-score) lives in the PURE domain
 // internal/telemetry — testable offline, by property, with no SDK and no clock.
 // What remains here is only ALIASES stitching the functions together: the

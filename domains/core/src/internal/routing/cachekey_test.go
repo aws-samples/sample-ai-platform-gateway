@@ -26,7 +26,7 @@ func TestCanonicalizeIdempotent(t *testing.T) {
 }
 
 // Concrete cases from the HR scenario: trivial variations collide on the canonical key.
-func TestCanonicalizeColapsaVariacoes(t *testing.T) {
+func TestCanonicalizeCollapsesVariations(t *testing.T) {
 	base := Canonicalize("quantos dias de férias eu tenho?")
 	variantes := []string{
 		"Quantos dias de férias eu tenho?",
@@ -150,4 +150,51 @@ func TestCanonicalFold(t *testing.T) {
 	}
 	_ = strings.TrimSpace
 	_ = json.Marshal
+}
+
+// TENANCY: two teams asking the SAME question of the SAME model must not share a key.
+//
+// This is a regression test for a real defect, not a hypothetical. Team/App did not
+// exist in KeyInput, and the only tenancy field (Org) is the constant "default" under
+// the single-org model — so the whole deployment hashed into one key space and the
+// first team to ask paid while every other team read its response. The code comment
+// even claimed "the cache never crosses orgs", which was true and useless at the same
+// time.
+func TestKeyIsolatesTenants(t *testing.T) {
+	q := []ports.Message{msg("user", "qual o nosso runway?")}
+	mk := func(team, app string) string {
+		return CacheKey(KeyInput{Org: "default", Team: team, App: app, Model: "m", Messages: q}, KeyExact)
+	}
+
+	if mk("eng", "") == mk("finance", "") {
+		t.Error("two teams must not share a cache key")
+	}
+	if mk("eng", "web") == mk("eng", "mobile") {
+		t.Error("two apps of the same team must not share a cache key under app scope")
+	}
+	// The team must still be able to reuse its OWN entry, otherwise the cache is dead.
+	if mk("eng", "web") != mk("eng", "web") {
+		t.Error("the same tenant must reuse its own key")
+	}
+}
+
+// Opting into deployment-wide sharing must cost NO cache warm-up: an unscoped key has
+// to hash exactly as it did before Team/App existed, which is what `omitempty` on the
+// hashed material buys. If someone drops omitempty, every deployment that shares its
+// cache silently throws it away on deploy — a cost regression with no error message.
+func TestKeyUnscopedIsStable(t *testing.T) {
+	in := KeyInput{Org: "default", Model: "m", Messages: []ports.Message{msg("user", "oi")}}
+	unscoped := CacheKey(in, KeyExact)
+
+	explicitlyEmpty := in
+	explicitlyEmpty.Team, explicitlyEmpty.App = "", ""
+	if CacheKey(explicitlyEmpty, KeyExact) != unscoped {
+		t.Error("empty Team/App must not change the key")
+	}
+	// And the converse, so the test cannot pass by the fields being ignored entirely.
+	scoped := in
+	scoped.Team = "eng"
+	if CacheKey(scoped, KeyExact) == unscoped {
+		t.Error("a non-empty Team must change the key")
+	}
 }

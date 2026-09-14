@@ -8,6 +8,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"strings"
 
@@ -72,7 +73,10 @@ func allowCORS(h map[string]string, reqOrigin string) map[string]string {
 func corsHeaders(reqOrigin string) map[string]string {
 	return allowCORS(map[string]string{
 		"access-control-allow-methods": "POST,OPTIONS",
-		"access-control-allow-headers": "authorization,content-type,x-aiplat-feature,x-aiplat-key",
+		// Every custom header the gateway reads has to be listed: a browser refuses to
+		// SEND a header the preflight did not allow, so omitting x-aiplat-app here would
+		// make per-app attribution work from curl and silently not from the console.
+		"access-control-allow-headers": "authorization,content-type,x-aiplat-app,x-aiplat-feature,x-aiplat-key",
 		"access-control-max-age":       "300",
 	}, reqOrigin)
 }
@@ -87,6 +91,15 @@ type apiResp = httpapi.Response
 
 func sresp(status int, headers map[string]string, body string) (apiResp, error) {
 	return apiResp{StatusCode: status, Headers: headers, Body: body}, nil
+}
+
+// streamResp returns an INCREMENTAL response: status and headers are committed now, the
+// body is produced by fn as bytes become available.
+//
+// Anything that could still change the status has to happen BEFORE calling this — once
+// the prelude is on the wire the only way to signal a failure is an in-band frame.
+func streamResp(status int, headers map[string]string, fn func(w io.Writer)) (apiResp, error) {
+	return apiResp{StatusCode: status, Headers: headers, Stream: fn}, nil
 }
 func jbody(reqOrigin string, status int, obj interface{}) (apiResp, error) {
 	b, _ := json.Marshal(obj)

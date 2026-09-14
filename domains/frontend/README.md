@@ -11,12 +11,39 @@ Why it's a separate domain: the front-end is a **client** of every other domain 
 ```
 domains/frontend/
 ├── site/
-│   ├── app/console.html    # logged-in console (static SPA) — default_root_object
-│   └── env.js.tftpl        # endpoints injected by Terraform
-└── envs/poc/               # Terraform: S3 + CloudFront/OAC (isolated state)
+│   ├── app/
+│   │   ├── console.html        # markup only — default_root_object
+│   │   └── assets/
+│   │       ├── console.css     # theme tokens + component styles
+│   │       └── console.js      # the application
+│   ├── fonts/                  # Inter variable, latin subset (self-hosted)
+│   ├── vendor/                 # Tailwind runtime (self-hosted, version in the key)
+│   └── env.js.tftpl            # endpoints injected by Terraform
+└── envs/poc/                   # Terraform: S3 + CloudFront/OAC (isolated state)
 ```
 
 There is no `src/`/`build.sh`: the domain has no Go backend. It's just static content + IaC.
+
+**Still no build step, and the split did not introduce one.** `console.html` was a single
+6.5k-line file; it is now 1.3k lines of markup that references `assets/console.css` and
+`assets/console.js`. The browser loads three files instead of one — no bundler, no
+transpiler, no `node_modules`, nothing to run before deploying. Editing the console is still
+"open the file and save it".
+
+Two things about `assets/console.js` are load-bearing and easy to undo by accident:
+
+- It is a **classic script**, not `type="module"`, and it is not wrapped in an IIFE. The
+  markup carries ~140 inline event handlers (`onclick=`, `onchange=`) and the screenshot
+  harness calls `window.show()` from Playwright, so every top-level declaration has to stay
+  a global. Module scope is not global scope; either change breaks both at once.
+- Two small `<script>` blocks stay **inline** in `console.html` on purpose: the Tailwind
+  theme config, and the theme resolver that has to run before the first paint (otherwise the
+  console flashes dark and turns light). Externalizing those trades a cosmetic win for a
+  visible flash.
+
+Each asset is published by its own explicit `aws_s3_object` — there is no `fileset()`, so a
+new file that is not declared in `domains/frontend/tf/main.tf` never reaches the bucket and
+the page 404s at runtime with nothing in the plan to warn you.
 
 ## Inbound contracts (endpoints the console consumes)
 

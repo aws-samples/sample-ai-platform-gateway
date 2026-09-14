@@ -5,7 +5,6 @@
 // dialect (/chat/completions): OpenAI, Azure, Groq, Together, Gemini-compat and
 // self-host. It implements ports.Provider.
 //
-// Feature: hexagonal-refactor, task 3.2. The wire code was MOVED from
 // cmd/router/main.go (callOpenAICompat) without rewriting the logic. The only
 // structural change is the boundary: instead of taking []chatMsg (a handler type),
 // it takes ports.Message and REBUILDS the wire format from Raw (the original

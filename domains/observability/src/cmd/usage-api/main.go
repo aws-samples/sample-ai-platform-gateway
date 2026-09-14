@@ -7,7 +7,7 @@
 // single view per app/model/provider and over time. It is the input of the
 // differentiator (end-to-end cost per app).
 //
-// After Phase 3 of the hexagonal-refactor this is a SHELL: reading the Cost_Store comes
+// After the hexagonal split, this is a SHELL: reading the Cost_Store comes
 // from the port (ports.CostStore, adapted by ddbcoststore) and the arithmetic comes from
 // the pure domain (internal/telemetry). The handler only does auth/scoping, parsing and
 // formatting.
@@ -273,8 +273,30 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		bucket = "day"
 	}
 
+	// ?app=<name> narrows every view below to one app. This is the read side of
+	// per-request app attribution: the gateway lets one key charge different projects,
+	// and without a filter here the only way to see one project was to eyeball a slice of
+	// a doughnut chart.
+	//
+	// It is authorization-checked before it is used. An app-scoped caller asking for an
+	// app outside its claim gets 403 rather than an empty result: an empty list reads as
+	// "that project spent nothing", which is a wrong answer, not a refusal.
+	fApp := strings.TrimSpace(q["app"])
+	if fApp != "" && appScoped && !appSet[fApp] {
+		return resp(reqOrigin, 403, map[string]string{"error": "you do not have access to this app: " + fApp})
+	}
+
 	// Post-refactor: no tenant parameter — single deployment
-	recs, err := costStore.Query(ctx, from, to)
+	//
+	// With an app filter this goes through the gsi1 index (partition APP#<app>) instead of
+	// reading the whole range off the single USAGE partition and discarding most of it.
+	var recs []telemetry.Record
+	var err error
+	if fApp != "" {
+		recs, err = costStore.QueryApp(ctx, fApp, from, to)
+	} else {
+		recs, err = costStore.Query(ctx, from, to)
+	}
 	if err != nil {
 		return resp(reqOrigin, 500, map[string]string{"error": err.Error()})
 	}

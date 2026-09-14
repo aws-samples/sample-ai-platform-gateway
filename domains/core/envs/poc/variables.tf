@@ -77,11 +77,25 @@ variable "console_origin" {
 # No admin_token variable here: the keyadmin API is gated by the API Gateway
 # COGNITO_USER_POOLS authorizer, and the module no longer injects ADMIN_TOKEN.
 
-# Raised from the 29000 default because measured p95 here is 16 s and the slowest
-# observed request hit 39.7 s (4096 output tokens), which the default would have
-# cut off with a 504. Requires the L-E5AE38E3 quota increase to be APPROVED before
-# applying -- API Gateway validates this against the account quota.
+# Same as the module default. Kept explicit here because this is the value the demo is
+# sized against: measured p95 is 16 s and the slowest observed request took 39.7 s (4096
+# output tokens), all of which the old 29000 cut off with a 504.
+#
+# Reachable only because the gateway route is a STREAM integration — the L-E5AE38E3
+# account quota bounds BUFFERED integrations, and this one is not, so the pending quota
+# increase is no longer on the critical path.
 variable "integration_timeout_ms" {
   type    = number
   default = 300000
+}
+
+# Enable API Gateway response streaming on the gateway route.
+#
+# One flag drives three settings that must agree: the integration's transfer mode, the
+# integration URI, and the router's AIPLAT_RESPONSE_MODE. A mismatch does not raise an
+# error — API Gateway answers with the right status code and an empty body — so they are
+# deliberately not separately settable.
+variable "response_streaming" {
+  type    = bool
+  default = true
 }

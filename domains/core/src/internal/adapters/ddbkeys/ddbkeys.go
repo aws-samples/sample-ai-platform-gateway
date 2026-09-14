@@ -4,7 +4,6 @@
 // Package ddbkeys is the outbound adapter that resolves the API key (hash) into
 // org/team/app in the Core's API keys table. It implements ports.KeyStore.
 //
-// Feature: hexagonal-refactor, task 4.7. Code MOVED from the DynamoDB part of
 // authResolve (cmd/router/main.go) without rewriting the logic. Extracting the key
 // from the header (Bearer / x-aiplat-key) stays in the handler — that is protocol
 // shell, not table mechanics. It preserves: consistent read (a freshly issued key
@@ -70,7 +69,7 @@ func (s *Store) Resolve(ctx context.Context, key string) (ports.KeyIdentity, boo
 	}
 	// Single-org model: org is deployment-level, not key-level.
 	// Compatibility: old keys may still have tenant/org_id fields (ignored).
-	id := ports.KeyIdentity{Team: str("team_id"), App: str("app")}
+	id := ports.KeyIdentity{Team: str("team_id"), App: str("app"), Apps: strs(out.Item, "apps")}
 	if id.App == "" {
 		id.App = str("app_tag")
 	}
@@ -79,4 +78,27 @@ func (s *Store) Resolve(ctx context.Context, key string) (ports.KeyIdentity, boo
 	}
 	// Org field removed - always empty in single-org deployments
 	return id, true, nil
+}
+
+// strs reads a multi-app allowlist, accepting either a DynamoDB string set or a list.
+//
+// Both shapes are read because the two are indistinguishable to a human editing an item
+// in the console and easy to mix up in a script: keyadmin writes a string set, and a key
+// patched by hand with a list would otherwise resolve to "no extra apps allowed" — a
+// silent 403 on every request naming a project. Absent means the key is single-app,
+// which is every key issued before this existed.
+func strs(item map[string]ddbtypes.AttributeValue, k string) []string {
+	switch v := item[k].(type) {
+	case *ddbtypes.AttributeValueMemberSS:
+		return v.Value
+	case *ddbtypes.AttributeValueMemberL:
+		out := make([]string, 0, len(v.Value))
+		for _, e := range v.Value {
+			if s, ok := e.(*ddbtypes.AttributeValueMemberS); ok && s.Value != "" {
+				out = append(out, s.Value)
+			}
+		}
+		return out
+	}
+	return nil
 }

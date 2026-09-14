@@ -1,0 +1,173 @@
+/* Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. */
+/* SPDX-License-Identifier: MIT-0 */
+/* Extracted verbatim from console.html. Served from assets/console.css, which is why the
+   @font-face url is ../fonts/ — the stylesheet sits one level below the bucket root while
+   the font stays at fonts/. */
+  /* =====================================================================
+     AIPLAT THEME — canonical design system variables
+     ---------------------------------------------------------------------
+     Names come from the shadCN contract (--background, --primary, --ring…) and are NOT
+     renameable: that is what makes it possible to take a design system component's
+     specification and use it here with no translation layer.
+
+     Values in RGB CHANNELS (e.g. 34 197 94) so Tailwind can compose alpha —
+     see the comment in tailwind.config above. Always consume via rgb(var(--x)) or
+     through the token classes (bg-brand, border-line…).
+
+     The console is dark-only (<html class="dark">). The :root block below is the theme's
+     light mode — complete and valid, but NOT wired to any switcher yet.
+     It is here because the design system requires both modes and for the day the
+     toggle exists. Single source: changing a color here changes markup and charts together.
+     ===================================================================== */
+  /* Inter variable, latin subset (48 KB), served from the SAME bucket/CloudFront as the
+     site. Self-hosted instead of Google Fonts: no user IP going to a third party
+     (LGPD/GDPR), no extra DNS+TLS on the render path, and the project rule of
+     "no new CDN" stays respected. The object's cache_control is 1 year immutable,
+     so the browser downloads it once per visitor. */
+  @font-face{
+    font-family:"Inter var";
+    src:url("../fonts/inter-var-latin.woff2") format("woff2-variations");
+    font-weight:400 700; font-style:normal; font-display:swap;
+  }
+
+  :root{
+    /* ---- Core (light mode) ---- */
+    /* Slightly cool page and white card: it is the surface step that does the
+       grouping without relying on a border (see the contrast note in .dark). */
+    --background: 248 250 252;        --foreground: 11 15 23;
+    --card: 255 255 255;              --card-foreground: 11 15 23;
+    --popover: 255 255 255;           --popover-foreground: 11 15 23;
+    --primary: 21 128 61;             --primary-foreground: 255 255 255;
+    --secondary: 241 245 249;         --secondary-foreground: 11 15 23;
+    --muted: 241 245 249;             --muted-foreground: 71 85 105;
+    --accent: 241 245 249;            --accent-foreground: 11 15 23;
+    --destructive: 190 18 60;         --destructive-foreground: 255 255 255;
+    --border: 203 213 225;           /* decorative divider */
+    --input: 100 116 139;            /* INTERACTIVE boundary — 3:1 (WCAG 1.4.11) */
+    --ring: 3 105 161;
+    --switch-thumb: 255 255 255;     /* switch thumb: light in BOTH modes */
+    /* Warning (EXTENSION — the shadCN contract has no warning token, only destructive).
+       In light mode both shades collapse into amber-700 #b45309: as TEXT it gives 5.0:1 on
+       white and, as the Save button's solid background, it accepts almost-white text at 4.7:1.
+       Solid amber-500 with light text would give 2.0:1 — rejected. */
+    --warning: 180 83 9;             /* #b45309 — border, background tint, solid button */
+    --warning-fg: 180 83 9;          /* #b45309 — warning text */
+    --radius: 0.75rem;
+    /* ---- Chart (light mode) — 1..5 are the 5 savings mechanisms, in the order
+           used in ROI: cache · semantic cache · auto-cheapest · fallback · budget ---- */
+    --chart-1: 22 163 74;   --chart-2: 13 148 136;  --chart-3: 2 132 199;
+    --chart-4: 217 119 6;   --chart-5: 124 58 237;
+    --chart-6: 225 29 72;   --chart-7: 202 138 4;   --chart-8: 109 40 217;
+    /* ---- Sidebar (light mode) ---- */
+    --sidebar: 248 250 252;              --sidebar-foreground: 11 15 23;
+    --sidebar-primary: 22 163 74;        --sidebar-primary-foreground: 255 255 255;
+    --sidebar-accent: 241 245 249;       --sidebar-accent-foreground: 11 15 23;
+    --sidebar-border: 226 232 240;       --sidebar-ring: 2 132 199;
+    /* ---- Typography ---- */
+    --font-sans: "Inter var", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  .dark{
+    /* ---- Core (dark mode — this is what is live) ---- */
+    /* CONTRAST NOTE (measured, not estimated).
+       The old border (#1e2a3a on #111826) gave 1.22:1 — WCAG 1.4.11 asks for 3:1
+       on a component boundary. That is why buttons and badges had almost no
+       outline. Fixed on two fronts, because the standard treats different cases:
+        · the card goes up from #111826 to #151d2e, so the GROUPING now comes from
+          the surface step (a decorative outline is not a component for 1.4.11);
+        · --input is born as the INTERACTIVE boundary (field, button, switch track),
+          at #56698a = 3.3:1 on the field background — there the standard does apply.
+       --border stays subtle (1.5:1) and only divides; it is never the only state signal. */
+    --background: 11 15 23;          /* ink  #0b0f17 — the page */
+    --foreground: 241 245 249;       /* #f1f5f9 */
+    --card: 21 29 46;                /* #151d2e — was #111826 */
+    --card-foreground: 241 245 249;
+    --popover: 26 35 54;             /* #1a2336 — drawer above the card */
+    --popover-foreground: 241 245 249;
+    --primary: 34 197 94;            /* brand #22c55e — action, success, SAVINGS */
+    --primary-foreground: 11 15 23;  /* text on the green is ink */
+    --secondary: 30 41 63;           /* #1e293f — surface hover */
+    --secondary-foreground: 241 245 249;
+    --muted: 14 21 34;               /* #0e1522 — field background, recessed surface */
+    --muted-foreground: 148 166 187; /* #94a6bb — 7.4:1 on the new card */
+    --accent: 30 41 63;
+    --accent-foreground: 241 245 249;
+    --destructive: 251 113 133;      /* #fb7185 — lightened to pass AA as TEXT */
+    --destructive-foreground: 11 15 23;
+    --border: 43 58 82;              /* #2b3a52 — decorative divider */
+    --input: 86 105 138;             /* #56698a — interactive boundary, 3.3:1 */
+    --ring: 56 189 248;              /* brand2 #38bdf8 — focus, link, data series */
+    --switch-thumb: 241 245 249;     /* switch thumb */
+    /* Warning — values identical to before, so the dark theme does not change at all.
+       #fbbf24 as text on the card gives 10.1:1. */
+    --warning: 245 158 11;           /* #f59e0b — border and background tint */
+    --warning-fg: 251 191 36;        /* #fbbf24 — warning text */
+    --radius: 0.75rem;
+    /* ---- Chart (dark mode) ---- */
+    --chart-1: 34 197 94;   /* cache            (#22c55e) */
+    --chart-2: 20 184 166;  /* semantic cache   (#14b8a6) */
+    --chart-3: 56 189 248;  /* auto-cheapest    (#38bdf8) */
+    --chart-4: 245 158 11;  /* fallback         (#f59e0b) */
+    --chart-5: 167 139 250; /* budget degrade   (#a78bfa) */
+    --chart-6: 244 63 94;   /* doughnut extras    (#f43f5e) */
+    --chart-7: 234 179 8;   /*                    (#eab308) */
+    --chart-8: 139 92 246;  /*                    (#8b5cf6) */
+    /* ---- Sidebar (dark mode) ---- */
+    --sidebar: 14 21 34;                 /* panel2 — the sidebar is bg-panel2 */
+    --sidebar-foreground: 241 245 249;
+    --sidebar-primary: 34 197 94;        --sidebar-primary-foreground: 11 15 23;
+    --sidebar-accent: 17 24 38;          /* the active item is bg-panel */
+    --sidebar-accent-foreground: 255 255 255; /* …with text-fg */
+    --sidebar-border: 30 42 58;          --sidebar-ring: 56 189 248;
+  }
+
+  /* color-scheme follows the theme: it is what makes the native <select> widget, the
+     type=date calendar and the OS scrollbar switch along. It was pinned to dark. */
+  :root{ color-scheme: light; }
+  .dark{ color-scheme: dark; }
+
+  /* Slightly larger base font across the whole console: from Tailwind's ~14px to 15px. */
+  html { font-size: 15px; }
+  body{
+    font-family: var(--font-sans);
+    /* Tabular numbers: every digit takes the same width. In a console of metrics and
+       tables this stops the columns from dancing when the value changes. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "cv05" 1; /* l with a tail, avoids confusion with I and 1 */
+  }
+
+  /* FONT SIZE FLOOR.
+     There were ~150 uses of text-[9px]/[10px]/[11px] in ABSOLUTE px: they did not scale
+     with the 15px root nor with the user's font zoom, and they fell below the legible
+     minimum. Remapped to rem, with a 12px floor. The `body` in front of the selector
+     exists only to beat the Tailwind utility, which is injected at runtime and
+     therefore comes after this block. */
+  body .text-\[9px\],
+  body .text-\[10px\]{ font-size:.8rem;    line-height:1.15rem; }
+  body .text-\[11px\]{ font-size:.8667rem; line-height:1.25rem; }
+  /* An uppercase label needs tracking, otherwise it becomes an illegible block at the small size. */
+  .uppercase{ letter-spacing:.06em; }
+
+  ::-webkit-scrollbar{width:8px;height:8px} ::-webkit-scrollbar-thumb{background:rgb(var(--input));border-radius:8px}
+  .fade{animation:f .18s ease-out} @keyframes f{from{opacity:0;transform:translateY(3px)}to{opacity:1}}
+
+  /* Interactive boundary at 3:1 (WCAG 1.4.11). The switch is the most critical case: the
+     off state was just a dark rectangle with no outline. One rule covers the 8 static
+     switches and the JS-generated ones, without touching the toggle() helper. */
+  [role="switch"]{ border:1px solid rgb(var(--input)); }
+  /* The OFF track came from `bg-line` (decorative divider), which in the light theme
+     left a white thumb on very light gray — an invisible state. It now uses
+     --input, the interactive boundary token, which is 3:1 in both modes. !important
+     because the state is painted by a utility class in the toggle() helper. */
+  [role="switch"][aria-checked="false"]{ background-color:rgb(var(--input)) !important; }
+  /* Deliberate !important: the ~100 fields carry `border-line` in their class, which is a
+     Tailwind utility (class specificity, injected after this block) and
+     would beat any element selector. The alternative was editing the ~100 class
+     strings one by one to swap in an alias. One line solves it, and the target is only
+     input controls — the decorative divider stays on --border. */
+  input:not([type=checkbox]):not([type=radio]),select,textarea{ border-color:rgb(var(--input)) !important; }
+
+  /* Visible focus on EVERY control. The dark theme cannot depend on the browser's
+     default ring, which practically disappears on the ink background. One global rule
+     covers the 122 buttons, 52 selects and 46 inputs without touching a class per element. */
+  :focus-visible{outline:2px solid rgb(var(--ring));outline-offset:2px;border-radius:4px}

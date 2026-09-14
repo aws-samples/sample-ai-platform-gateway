@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// Content guardrails — PURE DOMAIN (hexagonal-refactor, task 5).
+// Content guardrails — PURE DOMAIN.
 //
 // PII masking and secret/injection detection are DETERMINISTIC rules. They used to live
 // in the shell (cmd/router), with no property at all testing them — exactly the kind of

@@ -3,8 +3,6 @@
 
 // Package httpapi is the Core's INBOUND PORT, neutral with respect to runtime.
 //
-// Feature: hexagonal-refactor, Requirements 1.1, 1.2.
-//
 // Request and Response carry NO Lambda type. That is what lets the Core be served
 // either by the Lambda adapter (internal/awslambda) or by a local
 // http.ListenAndServe or, in the future, by Fargate/App Runner — without rewriting
@@ -29,10 +27,28 @@ type Request struct {
 }
 
 // Response is the outbound boundary.
+//
+// A response is either COMPLETE (Body) or INCREMENTAL (Stream), never both. Keeping
+// both shapes on one type is what lets the two adapters stay symmetric: the Lambda
+// adapter can turn Stream into an io.Reader for API Gateway response streaming, and the
+// local http.Handler turns it into flushed writes. Neither the decision logic nor this
+// package needs to know which runtime is underneath.
 type Response struct {
 	StatusCode int
 	Headers    map[string]string
 	Body       string
+
+	// Stream, when non-nil, produces the body incrementally and Body is IGNORED.
+	//
+	// Contract with the writer: StatusCode and Headers are already fixed by the time
+	// Stream is invoked, because both transports commit the status line before the
+	// first payload byte. Anything that could change the status has to be decided
+	// before returning the Response — that is why the provider fallback chain is
+	// resolved up front in the streaming path.
+	//
+	// Stream must return when it is done; the adapter closes the underlying sink.
+	// A write error means the consumer went away and the function should stop.
+	Stream func(w io.Writer)
 }
 
 // HandlerFunc is the type of the Core's decision function. It depends on neither
@@ -100,7 +116,26 @@ func writeHTTPResponse(w http.ResponseWriter, resp Response) {
 		resp.StatusCode = http.StatusOK
 	}
 	w.WriteHeader(resp.StatusCode)
+	if resp.Stream != nil {
+		// Flush after every write, otherwise net/http buffers the frames and the local
+		// path would behave differently from Lambda — the exact divergence the neutral
+		// boundary exists to prevent.
+		resp.Stream(&flushWriter{w: w})
+		return
+	}
 	if resp.Body != "" {
 		io.WriteString(w, resp.Body)
 	}
+}
+
+// flushWriter pushes each write out to the client immediately. A ResponseWriter that
+// does not implement http.Flusher still works, it just buffers.
+type flushWriter struct{ w http.ResponseWriter }
+
+func (fw *flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	if f, ok := fw.w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return n, err
 }

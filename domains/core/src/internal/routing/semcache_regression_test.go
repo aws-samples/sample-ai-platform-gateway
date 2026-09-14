@@ -73,7 +73,7 @@ func TestSemQueryText_ExcluiTurnoDoAssistente(t *testing.T) {
 
 // The proof of the bug as a test: two UNRELATED questions, same system prompt. The
 // vectorized text must be DIFFERENT (it used to be practically identical).
-func TestSemQueryText_PerguntasDistintasNaoColapsam(t *testing.T) {
+func TestSemQueryText_DistinctQuestionsDoNotCollapse(t *testing.T) {
 	banco := SemQueryText(msgs("system", sysPromptLongo, "user", "qual o nome do maior banco do brasil?"))
 	futebol := SemQueryText(msgs("system", sysPromptLongo, "user", "qual o maior clube de futebol de Sao Paulo?"))
 

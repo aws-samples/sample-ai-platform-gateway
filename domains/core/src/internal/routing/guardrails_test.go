@@ -10,7 +10,7 @@ import (
 	"github.com/aiplat/core/internal/ports"
 )
 
-// --- Masking properties (hexagonal-refactor, task 5.2) ----------------------
+// --- Masking properties ----------------------
 
 // Corpus of inputs that exercise the patterns and edge cases.
 var maskCorpus = []string{
@@ -29,7 +29,7 @@ var maskCorpus = []string{
 
 // Property 1: masking twice equals masking once (idempotence).
 // That is what guarantees reprocessing a message does not corrupt the markers.
-func TestMaskPII_Idempotente(t *testing.T) {
+func TestMaskPII_Idempotent(t *testing.T) {
 	for _, s := range maskCorpus {
 		once := MaskPII(s)
 		twice := MaskPII(once)

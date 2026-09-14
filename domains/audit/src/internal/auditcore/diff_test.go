@@ -188,7 +188,7 @@ func TestRedact_PreservaOFatoDaMudanca(t *testing.T) {
 
 // Property 2: no sensitive value survives the serialized Diff+Redact pair.
 // This is the test that stops the audit from becoming a credential repository.
-func TestPropriedade_NenhumSegredoSobrevive(t *testing.T) {
+func TestProperty_NoSecretSurvives(t *testing.T) {
 	segredos := []string{"sk-super-secreto-abc", "MinhaSenh@123", "ghp_tokenzinho", "chave-privada-xyz"}
 	before := obj(`{
 	  "provider":{"api_key":"sk-super-secreto-abc","base_url":"https://x.dev"},

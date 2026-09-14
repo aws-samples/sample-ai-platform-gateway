@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// Usage_Record assembly — PURE DOMAIN (hexagonal-refactor, task 6).
+// Usage_Record assembly — PURE DOMAIN.
 //
 // Absorbs decorateUsage/decorateSavings/decorateEscalation, which used to live in the
 // shell (cmd/router). They are pure functions: they take the decision plus the numbers

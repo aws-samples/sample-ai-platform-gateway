@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// CONTRACT test for the scope chain — the CORE side (hexagonal-refactor,
+// CONTRACT test for the scope chain — the CORE side (
 // task 12, D3, R9.3/9.4, Property 5).
 //
 // It validates the Core's REAL scopeKeys (the one the gateway uses at runtime)
@@ -43,7 +43,7 @@ type scopeContractFixture struct {
 
 // From the test's folder (.../core/src/internal/adapters/ddbconfig) to the repository
 // root is 6 levels.
-const coreFixturePath = "../../../../../../testdata/contracts/hexagonal-refactor/scope-chain.json"
+const coreFixturePath = "../../../../../../testdata/contracts/config-scope/scope-chain.json"
 
 // TestScopeChainContract_Core validates the Core's own chain (chain_core), which
 // never includes an org level: single-org-per-deployment removed that dimension

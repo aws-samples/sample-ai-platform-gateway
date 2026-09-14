@@ -4,7 +4,6 @@
 // Package sqsusage is the outbound adapter that sends the Usage_Record to the
 // Observability SQS queue.
 //
-// Feature: hexagonal-refactor, task 4.5. Code MOVED from cmd/router/main.go
 // (emitUsage) without rewriting the logic. It preserves the ASYNCHRONOUS/
 // best-effort nature: the emission is fire-and-forget and the response to the
 // client never waits for it; an empty queue (queue URL not configured) is a

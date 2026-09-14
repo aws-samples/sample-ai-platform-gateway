@@ -4,7 +4,6 @@
 // Package google is the outbound adapter for Google's native API
 // (Generative Language, generateContent). It implements ports.Provider.
 //
-// Feature: hexagonal-refactor, task 3.4. Code MOVED from callGemini without
 // rewriting the logic. Content goes as the projected text (Text), the role is
 // mapped to user/model, and the system instruction goes in the systemInstruction
 // field — exactly as in the original.

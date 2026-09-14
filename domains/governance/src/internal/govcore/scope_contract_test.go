@@ -1,11 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: MIT-0
 
-// CONTRACT test for the scope chain (hexagonal-refactor, task 12, D3, R9.3/9.4,
+// CONTRACT test for the scope chain (D3, R9.3/9.4,
 // Property 5).
 //
 // Validates GOVERNANCE's govcore.ScopeKeys/ScopeKey against the shared fixture at
-// testdata/contracts/hexagonal-refactor/scope-chain.json. The SAME fixture is
+// testdata/contracts/config-scope/scope-chain.json. The SAME fixture is
 // validated, with no common library, on the Core side
 // (core/internal/adapters/ddbconfig/scope_contract_test.go). That is how the
 // legitimate duplication of the rule (D3) is protected from drift.
@@ -41,7 +41,7 @@ type scopeContractFixture struct {
 
 // fixturePath: from the test's folder (.../governance/src/internal/govcore) up to
 // the repository root is 5 levels, then the fixture's path.
-const govFixturePath = "../../../../../testdata/contracts/hexagonal-refactor/scope-chain.json"
+const govFixturePath = "../../../../../testdata/contracts/config-scope/scope-chain.json"
 
 func loadScopeFixture(t *testing.T) scopeContractFixture {
 	t.Helper()
