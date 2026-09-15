@@ -10,6 +10,47 @@ reserved for a change that breaks a caller's request or response. Changes that n
 from an *operator* — Terraform variable defaults, deployed object layout — are `MINOR` with
 an **Upgrade notes** section, which is where they are called out.
 
+## [1.1.1] - 2026-09-15
+
+A cache-tenancy fix that missed the 1.1.0 tag by twenty minutes, plus the guard that
+keeps translations from regressing.
+
+### Fixed
+
+- **`cache_scope` was silently dropped on every save from the console.** `saveConfig()`
+  writes an *allowlist* of fields back to the scope, and `cache_scope` was not in it — so
+  a value set through the API was reverted to the inherited default by the next unrelated
+  save, with no error and nothing on screen. For a field that decides whether one team can
+  be served an answer produced from another team's prompt, that is a governance decision
+  being undone quietly. Anyone on 1.1.0 has this bug; it is the reason for this release.
+- **`/vendor/*` and `/assets/*` on a second, path-routing CDN.** The helper that wires an
+  alternative console front door wrote its own bucket-policy statement for a distribution
+  that `additional_oac_distribution_arns` already authorized. Two statements for the same
+  distribution made `terraform plan` report drift on the frontend **permanently**: every
+  apply removed the duplicate and the helper put it back. The authorization is now the
+  Terraform variable's job alone, and the frontend plans clean.
+
+### Added
+
+- **Cache tenancy is now on screen**, not only in the API: a select in the Response cache
+  card (team / app / deployment), synced from the config on every render so it cannot show
+  one thing while the gateway enforces another.
+- **`scripts/i18n-check.sh` runs in CI.** It could not be enabled before for a dull reason
+  worth recording: it had unfixed findings, so it always exited non-zero — and a gate that
+  always fails is a gate nobody turns on, which is how those findings survived. It passes
+  clean at 1051/1051 keys, so a new untranslated string now fails the build instead of
+  shipping. It also parses `console.js` with `node --check`, which is the only automated
+  thing standing between a stray quote and a blank console.
+
+### Changed
+
+- Ten strings that rendered English inside a translated screen now have pt/es entries: two
+  `data-i18n` attributes, two `_t()` literals, and six backend error messages (where the Go
+  literal *is* the dictionary key, so a message with no entry stays English regardless of
+  the language picked). The Response cache description was also corrected — it claimed "the
+  key includes your org", which stopped being the whole truth once the key carried team and
+  app.
+
 ## [1.1.0] - 2026-09-14
 
 Response streaming end to end, per-app cost attribution, and the console split out of a
@@ -135,5 +176,6 @@ single file. Driven by an external code review plus [issue #3].
   deployed per domain with Terraform.
 
 [issue #3]: https://github.com/aws-samples/sample-ai-platform-gateway/issues/3
+[1.1.1]: https://github.com/aws-samples/sample-ai-platform-gateway/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/aws-samples/sample-ai-platform-gateway/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/aws-samples/sample-ai-platform-gateway/releases/tag/v1.0.0

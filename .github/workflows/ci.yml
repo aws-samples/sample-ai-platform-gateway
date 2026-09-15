@@ -45,3 +45,25 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
       - name: terraform fmt -check
         run: terraform fmt -check -recursive domains
+
+  # The console is the one part of this repo with no compiler in front of it: a stray
+  # quote in console.js is a blank page, and an untranslated string renders English
+  # inside a pt/es screen. Both fail silently, so they need a gate.
+  #
+  # This check could not be wired here before, for a boring reason worth recording: it
+  # had unfixed findings, so it always exited non-zero. A gate that always fails is a
+  # gate nobody can enable — which is exactly how the findings survived. It passes clean
+  # now, so it becomes enforcing here and any new gap fails the build instead of shipping.
+  #
+  # node is what runs `node --check` on console.js and on the inline blocks that remain
+  # in console.html; without it the syntax check silently skips.
+  console:
+    name: Console syntax & i18n
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        with:
+          node-version: '20'
+      - name: scripts/i18n-check.sh
+        run: bash scripts/i18n-check.sh
