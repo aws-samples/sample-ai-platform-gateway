@@ -12,6 +12,14 @@ Current release: **v1.1.1** — see the [CHANGELOG](CHANGELOG.md). If you are co
 before v1.1.0, read its **Upgrade notes**: that release changed two Terraform defaults and added a
 new asset prefix to the site bucket.
 
+> [!WARNING]
+> **Not for production use.** This repository is a **reference implementation** of an AI gateway
+> and cost-governance control plane. It is published for experimentation, evaluation and learning.
+> **Do not deploy it to production** without an independent security review, infrastructure
+> hardening, and testing appropriate to your workload and compliance requirements. The IAM
+> policies, Terraform defaults and `envs/poc` deployment configuration here are minimal working
+> examples — not production-ready baselines. See [Disclaimer](#disclaimer).
+
 ![The console overview](assets/screenshots/overview.png)
 
 ## Disclaimer
@@ -70,6 +78,15 @@ Specifically, before any production use:
 - **Cost attribution is per request, not a billing reconciliation.** Figures come from the prices
   you declare per model, so they track your provider invoice only as closely as those prices do.
   Until you enter a negotiated price the console uses the provider list price and says so.
+- **A discovered Bedrock model arrives without a price, and stays out of automatic routing until
+  you give it one.** `ListFoundationModels` and `ListInferenceProfiles` return which models exist,
+  never what they cost, so the console ships a small curated price/capability table and merges the
+  live list into it. Anything outside that table is listed and usable, but flagged **no price** and
+  excluded from auto-cheapest — a model priced at 0 would otherwise win every comparison. Enter the
+  price in the route list to bring it in. Note also that Bedrock has two id spaces: most current
+  models are reachable only through a cross-region *inference profile* (`us.…`, `global.…`), so
+  those ids are what the list returns and what a route must hold; the bare foundation-model id
+  returns 404 from Converse for those models.
 - **Savings are reported in two categories on purpose.** Only the verified ones are free of
   assumption — see [How savings are counted](#how-savings-are-counted) before quoting a number.
 
@@ -113,7 +130,7 @@ AIPlat puts those three concerns in the request path, so they are configuration 
 |---|---|
 | **Cost & Usage** — spend by model, feature, team and app, with the cumulative curve and a per-provider table | ![Cost & Usage](assets/screenshots/usage.png) |
 | **ROI & Savings** — savings per mechanism over time, split into verified and counterfactual | ![ROI & Savings](assets/screenshots/roi.png) |
-| **Models & Routing** — every model is an alias pointing at a provider; drag to set the fallback order, declare identity, enter your contract price | ![Models & Routing](assets/screenshots/models.png) |
+| **Models & Routing** — every model is an alias pointing at a provider; the Bedrock list is discovered live per region, drag to set the fallback order, declare identity, enter your contract price | ![Models & Routing](assets/screenshots/models.png) |
 | **Logs** — per-request inspection: which model was asked for, which one served, the swap class, cost, latency and the failure reason | ![Logs](assets/screenshots/logs.png) |
 | **Audit trail** — control-plane history with field-level before/after, including actions taken by a platform operator | ![Audit trail](assets/screenshots/audit-trail.png) |
 | **Limits & Budget** — rate limits, a monthly cap and the model allowlist, set at org, team or app scope | ![Limits & Budget](assets/screenshots/limits.png) |
@@ -401,7 +418,9 @@ controls the Terraform sets up, so you can check them against your own requireme
   an append-only audit trail with field-level diffs, including anything a platform operator does.
 - Provider credentials live in Secrets Manager and are never returned by an API or written to the
   audit trail. Bedrock can run cross-account against a role in *your* account, so the platform
-  never holds your model credentials at all.
+  never holds your model credentials at all. That role is created by you, must be named
+  `AIPlatGatewayAccess*`, is assumed with an External ID derived from your org, and needs only
+  `bedrock:InvokeModel`, `bedrock:ListFoundationModels` and `bedrock:ListInferenceProfiles`.
 - Guardrails (PII masking, secret detection, prompt-injection blocking) run before the request
   leaves the gateway.
 

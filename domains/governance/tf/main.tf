@@ -265,8 +265,11 @@ resource "aws_iam_role_policy" "config_api" {
       { Effect = "Allow", Action = ["events:PutEvents"], Resource = local.audit_bus_arn },
       # BYO Bedrock: list models in the client's account via AssumeRole.
       { Effect = "Allow", Action = ["sts:AssumeRole"], Resource = "arn:aws:iam::*:role/AIPlatGatewayAccess*" },
-      # List models in the platform account (pooled).
-      { Effect = "Allow", Action = ["bedrock:ListFoundationModels"], Resource = "*" },
+      # Model discovery. BOTH calls are required: most of the current generation is
+      # INFERENCE_PROFILE-only, so ListFoundationModels alone returns ids that are not
+      # invocable, and ListInferenceProfiles alone carries no modality metadata.
+      # Resource = "*" because neither call addresses a specific model.
+      { Effect = "Allow", Action = ["bedrock:ListFoundationModels", "bedrock:ListInferenceProfiles"], Resource = "*" },
       # X-Ray requires Resource = "*": trace segments are not addressable
       # resources, so this is the documented AWS pattern for tracing.
       { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },

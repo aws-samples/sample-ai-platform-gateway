@@ -29,6 +29,63 @@ const r6 = (v) => Number(v.toFixed(6));
 export const ORG_ID = 'acme';
 export const ORG_NAME = 'Acme Corp';
 
+// ------------------------------------------------- Bedrock model discovery
+// What GET /admin/bedrock/models answers. Shaped like the real response so the
+// offline console exercises the same merge path: cross-region inference profiles
+// (the ids that actually resolve for the current generation) plus a few bare
+// foundation models that support ON_DEMAND. Some are in the console's curated
+// price table and some deliberately are not, so the "no price" flag is visible
+// locally instead of only against a real account.
+const BEDROCK_PROFILES = [
+  ['us.anthropic.claude-opus-5', 'Claude Opus 5', 'Anthropic'],
+  ['us.anthropic.claude-sonnet-5', 'Claude Sonnet 5', 'Anthropic'],
+  ['us.anthropic.claude-haiku-4-5-20251001-v1:0', 'Claude Haiku 4.5', 'Anthropic'],
+  ['us.anthropic.claude-sonnet-4-6', 'Claude Sonnet 4.6', 'Anthropic'],
+  ['global.anthropic.claude-sonnet-5', 'Claude Sonnet 5', 'Anthropic'],
+  ['us.amazon.nova-premier-v1:0', 'Nova Premier', 'Amazon'],
+  ['us.amazon.nova-pro-v1:0', 'Nova Pro', 'Amazon'],
+  ['us.amazon.nova-lite-v1:0', 'Nova Lite', 'Amazon'],
+  ['us.amazon.nova-micro-v1:0', 'Nova Micro', 'Amazon'],
+  ['us.meta.llama4-maverick-17b-instruct-v1:0', 'Llama 4 Maverick 17B', 'Meta'],
+  ['us.meta.llama4-scout-17b-instruct-v1:0', 'Llama 4 Scout 17B', 'Meta'],
+  ['us.meta.llama3-3-70b-instruct-v1:0', 'Llama 3.3 70B', 'Meta'],
+  ['us.deepseek.r1-v1:0', 'DeepSeek-R1', 'DeepSeek'],
+  ['us.mistral.pixtral-large-2502-v1:0', 'Pixtral Large', 'Mistral AI'],
+  ['us.writer.palmyra-x5-v1:0', 'Palmyra X5', 'Writer'],
+  ['us.xai.grok-4.6', 'Grok 4.6', 'xAI'],
+];
+const BEDROCK_FOUNDATION = [
+  ['mistral.mistral-large-2407-v1:0', 'Mistral Large (24.07)', 'Mistral AI'],
+  ['mistral.mixtral-8x7b-instruct-v0:1', 'Mixtral 8x7B Instruct', 'Mistral AI'],
+  ['meta.llama3-1-70b-instruct-v1:0', 'Llama 3.1 70B Instruct', 'Meta'],
+  ['openai.gpt-oss-120b-1:0', 'gpt-oss-120b', 'OpenAI'],
+  ['qwen.qwen3-32b-v1:0', 'Qwen3 32B', 'Qwen'],
+  ['google.gemma-3-27b-it', 'Gemma 3 27B', 'Google'],
+  ['deepseek.v3-v1:0', 'DeepSeek-V3', 'DeepSeek'],
+  ['zai.glm-4.7', 'GLM-4.7', 'Z.AI'],
+];
+export function bedrockModels(region) {
+  const row = (kind) => ([id, name, provider]) => ({
+    model_id: id,
+    model_name: name,
+    provider,
+    input_modes: 'TEXT,IMAGE',
+    output_modes: 'TEXT',
+    customizable: false,
+    kind,
+    base_model_id: kind === 'inference_profile' ? id.replace(/^(us|global)\./, '') : '',
+    streaming: true,
+  });
+  const out = [
+    ...BEDROCK_PROFILES.map(row('inference_profile')),
+    ...BEDROCK_FOUNDATION.map(row('foundation_model')),
+  ];
+  // Bedrock does not offer the same set in every region, and the console re-fetches
+  // on a region change — so the fixture has to differ, otherwise that path looks
+  // like it works when it may not.
+  return region === 'us-east-1' ? out : out.filter((m) => m.model_id !== 'us.writer.palmyra-x5-v1:0');
+}
+
 // ---------------------------------------------------------------- models
 // A realistic routing table: two Bedrock routes that are the SAME model on
 // different paths (that is what lights up the identity/arbitrage badges), a

@@ -183,6 +183,14 @@ const server = createServer(async (req, res) => {
     }
     return json(res, { teams: fx.TEAMS, apps: fx.APPS });
   }
+  // Live Bedrock discovery. Without this route the offline console falls back to
+  // its curated table and shows "failed to fetch models", which is exactly the
+  // symptom the live discovery exists to remove — the local run would misrepresent
+  // the product.
+  if (p === '/admin/bedrock/models') {
+    const models = fx.bedrockModels(q.get('region') || 'us-east-1');
+    return json(res, { models, count: models.length, region: q.get('region') || 'us-east-1', byo: !!q.get('role_arn') });
+  }
   if (p === '/admin/members') return json(res, { team_tier: true, members: fx.MEMBERS });
   if (p === '/admin/credits') return json(res, { credits: fx.CREDITS });
   if (p === '/admin/audit') return json(res, { entries: fx.ADMIN_AUDIT });

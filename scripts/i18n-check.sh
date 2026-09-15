@@ -271,11 +271,25 @@ hdr "3d. Prose written to the DOM without _t()"
 # Then: take the quoted literals, drop HTML tags and entities, and only report what
 # still reads as prose (two consecutive words). A css class, an id, an option value
 # or a single word survives the strip without matching.
-RAWDOM="$(grep -nE "(\.(textContent|innerHTML) *= *|(alert|confirm|prompt)\()'" "$CONSOLE" "$CONSOLE_JS" \
+# Two shapes are matched, because the literal is not always the first thing after the `=`:
+#   a) `el.textContent = 'prose'`      — the literal opens the value;
+#   b) `el.textContent = n + 'prose'`  — the literal is CONCATENATED onto something.
+# Shape (b) is what let `msg.textContent=models.length+' modelos encontrados'` through
+# every gate. It is matched by requiring a `+` immediately before the quote rather than
+# allowing any prefix: a permissive `[^;']*'` also swallows the class names inside
+# `innerHTML = rows.map(r=>...'text-right pr-2'...)`, and two words in a Tailwind class
+# list read as prose to the filter below. `[^;']*` stops at the first quote or statement
+# end, so the `+` found is the one adjacent to THIS literal.
+RAWDOM="$(grep -nE "(\.(textContent|innerHTML) *= *([^;']*\+ *)?|(alert|confirm|prompt)\(([^;']*\+ *)?)'" "$CONSOLE" "$CONSOLE_JS" \
   | grep -v '_t(' \
   | grep -v 'data-i18n' \
   | awk '{
       line = $0
+      # A className assignment on the SAME line is not a message, and a Tailwind class
+      # list ("text-xs text-mut") reads as two words to the prose test below. The quote
+      # split takes the whole line, so the class list has to go before the split or every
+      # `el.className=...; el.textContent=n+"…"` pair reports as a finding.
+      gsub(/className *= *'"'"'[^'"'"']*'"'"'/, " ", line)
       probe = ""
       n = split(line, q, /'"'"'/)
       for (i = 2; i <= n; i += 2) probe = probe " " q[i]

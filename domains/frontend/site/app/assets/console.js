@@ -187,7 +187,7 @@ const I18N={
     'Model':'Modelo', '(real model_id)':'(model_id real)',
     'The model_id is what goes to Bedrock; the alias is what your code calls. Use a short, friendly alias (e.g. claude-sonnet) — that way you can swap the model behind it without touching your app. Prefix caching (prompt caching) is enabled per model in the route list below.':'O model_id é o que vai para o Bedrock; o apelido é o que seu código chama. Use um apelido curto e amigável (ex: claude-sonnet) — assim você pode trocar o modelo por trás sem mudar seu app. O cache de prefixo (prompt caching) você liga por modelo na lista de rotas abaixo.',
     'Step 1':'Passo 1', 'Step 2':'Passo 2',
-    '— in your own AWS account, create an IAM role (e.g. via console, CLI, or your own IaC) named AIPlatGatewayAccess* that trusts the platform account below with the External ID below, and grants bedrock:InvokeModel + bedrock:ListFoundationModels. Nothing is created in the platform account — you own and control this role end to end.':'— na sua própria conta AWS, crie uma role IAM (via console, CLI, ou seu próprio IaC) chamada AIPlatGatewayAccess* que confie na conta da plataforma abaixo com o External ID abaixo, e conceda bedrock:InvokeModel + bedrock:ListFoundationModels. Nada é criado na conta da plataforma — você cria e controla essa role do início ao fim.',
+    '— in your own AWS account, create an IAM role (e.g. via console, CLI, or your own IaC) named AIPlatGatewayAccess* that trusts the platform account below with the External ID below, and grants bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. Nothing is created in the platform account — you own and control this role end to end.':'— na sua própria conta AWS, crie uma role IAM (via console, CLI, ou seu próprio IaC) chamada AIPlatGatewayAccess* que confie na conta da plataforma abaixo com o External ID abaixo, e conceda bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. Nada é criado na conta da plataforma — você cria e controla essa role do início ao fim.',
     'Platform account':'Conta da plataforma', '(the role trusts this one)':'(a role confia nesta)',
     'Your External ID':'Seu External ID', '(fixed, derived from your org)':'(fixo, derivado da sua org)',
     'copy':'copiar',
@@ -196,7 +196,7 @@ const I18N={
     'Pick a role already configured on another model so you don\'t retype the ARN and region.':'Escolha uma role já configurada em outro modelo para não redigitar o ARN e a região.',
     '— paste the ARN of the role you created and pick the Bedrock region.':'— cole o ARN da role que você criou e escolha a região do Bedrock.',
     'Region':'Região', 'Fetch models from my account':'Buscar modelos da minha conta',
-    'In your account, create an AIPlatGatewayAccess* role trusting the AIPlat platform account shown above with that External ID and permissions bedrock:InvokeModel + bedrock:ListFoundationModels. The gateway assumes that role at runtime — nothing runs in the platform account.':'Crie na sua conta uma role AIPlatGatewayAccess* confiando na conta da plataforma AIPlat mostrada acima com esse External ID e permissão bedrock:InvokeModel + bedrock:ListFoundationModels. O gateway assume essa role em runtime — nada roda na conta da plataforma.',
+    'In your account, create an AIPlatGatewayAccess* role trusting the AIPlat platform account shown above with that External ID and permissions bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. The gateway assumes that role at runtime — nothing runs in the platform account.':'Crie na sua conta uma role AIPlatGatewayAccess* confiando na conta da plataforma AIPlat mostrada acima com esse External ID e permissão bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. O gateway assume essa role em runtime — nada roda na conta da plataforma.',
     // --- phase 3: ROI & Savings ---
     'Every request records how much it did not cost, and why. We split by strength of evidence: verified savings (the same model cost less — observable) and counterfactual (we served a different model than requested and compared against what the request would have cost). Only verified savings depend on no assumption.':'Cada requisição registra quanto deixou de custar e por quê. Separamos por força de prova: economia comprovada (mesmo modelo custou menos — observável) e contrafactual (servimos modelo diferente do pedido e comparamos com o que o pedido custaria). Só a comprovada não depende de suposição.',
     'Savings by reason':'Economia por motivo', 'Ledger detail':'Detalhe do ledger',
@@ -711,9 +711,13 @@ const I18N={
     'token exchange failed':'falha na troca de token',
     // Provider wizard / BYO Bedrock flow. These were hardcoded Portuguese in JS
     // literals with no accents, so no gate saw them — the reason check 3d exists.
-    'fetching models from your account…':'buscando modelos da sua conta…',
+    'fetching models…':'buscando modelos…',
     'failed to fetch models: ':'falha ao buscar modelos: ',
-    ' models found in your account':' modelos encontrados na sua conta',
+    'models found in your account':'modelos encontrados na sua conta',
+    'models available in':'modelos disponíveis em',
+    'paste your Role ARN to list your own account.':'cole o Role ARN da sua conta para listar a sua própria conta.',
+    'models found — pick one in the field above':'modelos encontrados — escolha um no campo acima',
+    'used by':'usada em', 'Other':'Outros',
     'enter the Role ARN':'informe o Role ARN',
     'enter the Role ARN of your account':'informe o Role ARN da sua conta',
     'Role ARN must contain "AIPlatGatewayAccess"':'Role ARN deve conter "AIPlatGatewayAccess"',
@@ -966,7 +970,7 @@ const I18N={
     'Model':'Modelo', '(real model_id)':'(model_id real)',
     'The model_id is what goes to Bedrock; the alias is what your code calls. Use a short, friendly alias (e.g. claude-sonnet) — that way you can swap the model behind it without touching your app. Prefix caching (prompt caching) is enabled per model in the route list below.':'El model_id es lo que va a Bedrock; el alias es lo que llama tu código. Usa un alias corto y amigable (ej: claude-sonnet) — así puedes cambiar el modelo detrás sin tocar tu app. La caché de prefijo (prompt caching) se activa por modelo en la lista de rutas de abajo.',
     'Step 1':'Paso 1', 'Step 2':'Paso 2',
-    '— in your own AWS account, create an IAM role (e.g. via console, CLI, or your own IaC) named AIPlatGatewayAccess* that trusts the platform account below with the External ID below, and grants bedrock:InvokeModel + bedrock:ListFoundationModels. Nothing is created in the platform account — you own and control this role end to end.':'— en tu propia cuenta AWS, crea un rol IAM (vía consola, CLI o tu propio IaC) llamado AIPlatGatewayAccess* que confíe en la cuenta de la plataforma de abajo con el External ID de abajo, y otorgue bedrock:InvokeModel + bedrock:ListFoundationModels. Nada se crea en la cuenta de la plataforma — tú creas y controlas este rol de principio a fin.',
+    '— in your own AWS account, create an IAM role (e.g. via console, CLI, or your own IaC) named AIPlatGatewayAccess* that trusts the platform account below with the External ID below, and grants bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. Nothing is created in the platform account — you own and control this role end to end.':'— en tu propia cuenta AWS, crea un rol IAM (vía consola, CLI o tu propio IaC) llamado AIPlatGatewayAccess* que confíe en la cuenta de la plataforma de abajo con el External ID de abajo, y otorgue bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. Nada se crea en la cuenta de la plataforma — tú creas y controlas este rol de principio a fin.',
     'Platform account':'Cuenta de la plataforma', '(the role trusts this one)':'(el rol confía en esta)',
     'Your External ID':'Tu External ID', '(fixed, derived from your org)':'(fijo, derivado de tu organización)',
     'copy':'copiar',
@@ -975,7 +979,7 @@ const I18N={
     'Pick a role already configured on another model so you don\'t retype the ARN and region.':'Elige un rol ya configurado en otro modelo para no volver a escribir el ARN y la región.',
     '— paste the ARN of the role you created and pick the Bedrock region.':'— pega el ARN del rol que creaste y elige la región de Bedrock.',
     'Region':'Región', 'Fetch models from my account':'Buscar modelos de mi cuenta',
-    'In your account, create an AIPlatGatewayAccess* role trusting the AIPlat platform account shown above with that External ID and permissions bedrock:InvokeModel + bedrock:ListFoundationModels. The gateway assumes that role at runtime — nothing runs in the platform account.':'En tu cuenta, crea un rol AIPlatGatewayAccess* confiando en la cuenta de la plataforma AIPlat mostrada arriba con ese External ID y permisos bedrock:InvokeModel + bedrock:ListFoundationModels. El gateway asume ese rol en runtime — nada corre en la cuenta de la plataforma.',
+    'In your account, create an AIPlatGatewayAccess* role trusting the AIPlat platform account shown above with that External ID and permissions bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. The gateway assumes that role at runtime — nothing runs in the platform account.':'En tu cuenta, crea un rol AIPlatGatewayAccess* confiando en la cuenta de la plataforma AIPlat mostrada arriba con ese External ID y permisos bedrock:InvokeModel + bedrock:ListFoundationModels + bedrock:ListInferenceProfiles. El gateway asume ese rol en runtime — nada corre en la cuenta de la plataforma.',
     // --- phase 3: ROI & Savings ---
     'Every request records how much it did not cost, and why. We split by strength of evidence: verified savings (the same model cost less — observable) and counterfactual (we served a different model than requested and compared against what the request would have cost). Only verified savings depend on no assumption.':'Cada solicitud registra cuánto dejó de costar y por qué. Separamos por fuerza de prueba: ahorro comprobado (el mismo modelo costó menos — observable) y contrafactual (servimos un modelo distinto al pedido y comparamos con lo que habría costado el pedido). Solo el comprobado no depende de suposiciones.',
     'Savings by reason':'Ahorro por motivo', 'Ledger detail':'Detalle del ledger',
@@ -1481,9 +1485,13 @@ const I18N={
     // ── Backend error messages (returned as {"error":...} by the Go domains) ──
     'token exchange failed':'falló el intercambio de token',
     // Provider wizard / BYO Bedrock flow.
-    'fetching models from your account…':'buscando modelos de tu cuenta…',
+    'fetching models…':'buscando modelos…',
     'failed to fetch models: ':'falló la búsqueda de modelos: ',
-    ' models found in your account':' modelos encontrados en tu cuenta',
+    'models found in your account':'modelos encontrados en tu cuenta',
+    'models available in':'modelos disponibles en',
+    'paste your Role ARN to list your own account.':'pega el Role ARN de tu cuenta para listar tu propia cuenta.',
+    'models found — pick one in the field above':'modelos encontrados — elige uno en el campo de arriba',
+    'used by':'usada en', 'Other':'Otros',
     'enter the Role ARN':'informa el Role ARN',
     'enter the Role ARN of your account':'informa el Role ARN de tu cuenta',
     'Role ARN must contain "AIPlatGatewayAccess"':'el Role ARN debe contener "AIPlatGatewayAccess"',
@@ -2749,6 +2757,10 @@ function buildSelectors(){
   fillProviderModels();
 }
 function fillProviderModels(){ const p=$('#mcProvider').value; if(!CATALOG[p]) return;
+  // Bedrock goes through the grouped renderer: after live discovery the list is ~90
+  // entries across a dozen vendors, and a flat select of that size is unusable. It
+  // also carries the "no price" flag, which a flat fillSelect would drop.
+  if(p==='bedrock'){ fillByoModels(CATALOG.bedrock.models); return; }
   // Shows the real model_id in the dropdown (Portkey-style); the alias is suggested and editable
   fillSelect($('#mcModel'),CATALOG[p].models,{value:m=>m.id,label:m=>m.id});
   // Auto-fills the alias from the first model
@@ -2885,22 +2897,62 @@ $('#mcModel').onchange=function(){
 // Bedrock: switches between the platform account (pooled) and the customer's account (cross-account).
 // When BYO is selected and role_arn is filled in, it fetches the models from the customer's account.
 let _byoModelsCache = null;
-async function fetchByoBedrockModels(roleArn, region) {
-  const msg = $('#mcMsg');
-  msg.className = 'text-xs text-mut'; msg.textContent = _t('fetching models from your account…');
+// The curated CATALOG.bedrock table is the ONLY source of price and capabilities:
+// Bedrock's own list APIs return neither. Live discovery is the only source of which
+// ids exist today — the hardcoded table listed 12 of the ~90 invocable targets in
+// us-west-2, so anything newer than the last edit was simply unreachable from the UI.
+// Neither half can be dropped: without a price, auto-cheapest would read the model as
+// free, and without caps it is born unable to receive `tools`. Hence a merge, with the
+// curated entries winning on price/caps and discovery adding the rest at price 0 —
+// which is exactly what #mcAdd already warns about.
+const BEDROCK_CURATED = CATALOG.bedrock.models.slice();
+function mergeBedrockCatalog(live) {
+  const byId = {};
+  BEDROCK_CURATED.forEach(m => { byId[m.id] = Object.assign({}, m); });
+  (live || []).forEach(m => {
+    const cur = byId[m.id];
+    if (cur) { cur.name = m.name || cur.name; cur.provider = m.provider || cur.provider; cur.kind = m.kind; return; }
+    byId[m.id] = { id: m.id, name: m.name || '', provider: m.provider || '', kind: m.kind, in: 0, out: 0 };
+  });
+  const merged = Object.keys(byId).map(k => byId[k]);
+  merged.sort((a, b) => (bedrockVendor(a) + '|' + a.id).localeCompare(bedrockVendor(b) + '|' + b.id));
+  CATALOG.bedrock.models = merged;   // #mcAdd looks price/caps up here by id
+  return merged;
+}
+// Grouping label. Live entries carry Bedrock's own providerName; a curated entry has
+// none, so it is derived from the id (us.anthropic.claude-sonnet-5 → Anthropic) rather
+// than dropped into an "other" bucket next to its own siblings.
+function bedrockVendor(m) {
+  if (m.provider) return m.provider;
+  const v = String(m.id || '').replace(/^(us|eu|apac|us-gov)\./, '').split('.')[0] || '';
+  return v ? v.charAt(0).toUpperCase() + v.slice(1) : _t('Other');
+}
+// Fetches the invocable Bedrock ids. With a roleArn this is the customer's own account
+// (authoritative, including their model access); without one it is the platform
+// account's catalog for that region, used to seed the dropdown before any credential
+// is typed. `el` is the status line to write into, because the two callers live in
+// different cards.
+async function fetchByoBedrockModels(roleArn, region, el) {
+  const msg = el || $('#mcMsg');
+  msg.className = 'text-xs text-mut'; msg.textContent = _t('fetching models…');
   try {
     const params = new URLSearchParams();
     if (roleArn) params.set('role_arn', roleArn);
     if (region) params.set('region', region);
-    const r = await api(API.admin, '/admin/bedrock/models?' + params.toString());
+    // API.adminApi, not API.admin: window.AIPLAT has no `admin` key, so the old call
+    // fetched the string "undefined/admin/bedrock/models" — a relative URL against the
+    // CloudFront origin, which has no such behavior. The button therefore never
+    // reached the API at all, which is the other half of why the dropdown only ever
+    // showed the hardcoded table.
+    const r = await api(API.adminApi, '/admin/bedrock/models?' + params.toString());
     if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(_terr(e,r)); }
     const d = await r.json();
-    msg.className = 'text-xs text-brand'; msg.textContent = d.count + _t(' models found in your account');
     return (d.models || []).map(m => ({
       id: m.model_id,
       name: m.model_name,
       provider: m.provider,
-      in: 0, out: 0  // price to be filled in by hand, or the default
+      kind: m.kind,
+      in: 0, out: 0  // price is not in the API — the merge fills it from the curated table
     }));
   } catch (e) {
     msg.className = 'text-xs text-amber-400'; msg.textContent = _t('failed to fetch models: ') + e.message;
@@ -2909,27 +2961,48 @@ async function fetchByoBedrockModels(roleArn, region) {
 }
 function fillByoModels(models) {
   const sel = $('#mcModel');
+  const keep = sel.value;
   sel.innerHTML = '';
   // Groups by provider to make navigation easier
   const byProvider = {};
   models.forEach(m => {
-    const p = m.provider || 'Outros';
+    const p = bedrockVendor(m);
     if (!byProvider[p]) byProvider[p] = [];
     byProvider[p].push(m);
   });
-  Object.entries(byProvider).sort().forEach(([provider, list]) => {
+  Object.keys(byProvider).sort().forEach(provider => {
     const grp = document.createElement('optgroup');
     grp.label = provider;
-    list.forEach(m => {
+    byProvider[provider].forEach(m => {
       const o = document.createElement('option');
       o.value = m.id;  // the real Bedrock model_id
-      o.textContent = m.id;  // shows the real id, not a friendly name
+      // Shows the real id, not a friendly name. A model with no price in the curated
+      // table is flagged here rather than only at Add time: picking it is the moment
+      // the customer can still choose a different one.
+      o.textContent = m.id + ((m.in && m.out) ? '' : '  · ' + _t('no price'));
       grp.appendChild(o);
     });
     sel.appendChild(grp);
   });
+  if (keep && [...sel.options].some(o => o.value === keep)) sel.value = keep;
   // Trigger alias auto-fill for first model
   $('#mcModel').dispatchEvent(new Event('change'));
+}
+// Seeds the dropdown with live ids for the selected region, before any Role ARN is
+// typed. Without this the customer's first view of Bedrock is the curated subset,
+// which is what "I only see a few models" was. Best effort: a failure leaves the
+// curated list in place and says so on the status line.
+let _bedSeededRegion = null;
+async function seedBedrockCatalog(force) {
+  const reg = ($('#bedRegion') && $('#bedRegion').value) || 'us-east-1';
+  if (!force && _bedSeededRegion === reg) return;
+  _bedSeededRegion = reg;
+  const msg = $('#bedFetchMsg'); if (!msg) return;
+  const live = await fetchByoBedrockModels('', reg, msg);
+  if (!live) { _bedSeededRegion = null; return; }
+  fillByoModels(mergeBedrockCatalog(live));
+  msg.className = 'text-xs text-mut';
+  msg.textContent = live.length + ' ' + _t('models available in') + ' ' + reg + ' — ' + _t('paste your Role ARN to list your own account.');
 }
 // Collects the DISTINCT BYO credentials (role_arn/region/external_id) already used on
 // any route of the org, so the customer can reuse them without retyping. Key = ARN
@@ -2957,7 +3030,7 @@ function refreshByoReuse(){
   if(!sel||!wrap) return;
   wrap.classList.toggle('hidden', _byoCreds.length===0);
   sel.innerHTML='<option value="">— '+esc(_t('new credential'))+' —</option>'+
-    _byoCreds.map((c,i)=>`<option value="${i}">${esc(shortArn(c.role_arn))}${c.region?' · '+esc(c.region):''} (usada em ${esc(c.model)})</option>`).join('');
+    _byoCreds.map((c,i)=>`<option value="${i}">${esc(shortArn(c.role_arn))}${c.region?' · '+esc(c.region):''} (${esc(_t('used by'))} ${esc(c.model)})</option>`).join('');
 }
 $('#bedReuse')&&($('#bedReuse').onchange=()=>{
   const v=$('#bedReuse').value;
@@ -2988,7 +3061,11 @@ function setupBedrockByo(){
   // model; reusing a saved credential or editing an existing route still
   // overwrites this with the stored value (see the #bedReuse/edit handlers).
   const ext=$('#bedExt'); if(ext&&!ext.value&&auth.org) ext.value='aiplat-'+auth.org;
+  seedBedrockCatalog(); // live ids for the selected region, before any credential is typed
 }
+// The model list is per region: Bedrock does not offer the same set everywhere, so a
+// region change invalidates the dropdown.
+$('#bedRegion')&&($('#bedRegion').addEventListener('change',()=>seedBedrockCatalog()));
 // Button that fetches the BYO models
 $('#bedFetchModels')&&($('#bedFetchModels').onclick=async ()=>{
   const arn = $('#bedRole').value.trim();
@@ -2996,12 +3073,12 @@ $('#bedFetchModels')&&($('#bedFetchModels').onclick=async ()=>{
   const msg = $('#bedFetchMsg');
   if (!arn) { msg.className='text-xs text-amber-400'; msg.textContent=_t('enter the Role ARN'); return; }
   if (!arn.includes('AIPlatGatewayAccess')) { msg.className='text-xs text-amber-400'; msg.textContent=_t('Role ARN must contain "AIPlatGatewayAccess"'); return; }
-  const models = await fetchByoBedrockModels(arn, region);
-  if (models && models.length) { 
-    _byoModelsCache = models; 
-    fillByoModels(models); 
-    msg.className='text-xs text-brand'; 
-    msg.textContent=models.length + ' modelos encontrados'; 
+  const models = await fetchByoBedrockModels(arn, region, msg);
+  if (models && models.length) {
+    _byoModelsCache = models;
+    fillByoModels(mergeBedrockCatalog(models));
+    msg.className='text-xs text-brand';
+    msg.textContent=models.length + ' ' + _t('models found in your account');
   }
 });
 $('#mcAdd').onclick=()=>{
@@ -3664,7 +3741,7 @@ $('#wzFetch')&&($('#wzFetch').onclick=async()=>{
     if(!ids.length){ m.className='text-[11px] text-amber-400'; m.textContent=_t('no model returned — type the id manually'); return; }
     $('#wzModelOpts').innerHTML=ids.map(x=>`<option value="${x}">`).join('');
     $('#wzModel').value=ids[0]; $('#wzModel').dispatchEvent(new Event('input'));
-    m.className='text-[11px] text-brand'; m.textContent=ids.length+' modelos encontrados — escolha no campo acima';
+    m.className='text-[11px] text-brand'; m.textContent=ids.length+' '+_t('models found — pick one in the field above');
   }catch(e){ m.className='text-[11px] text-amber-400'; m.textContent=_t('failed to list: ')+e.message; }
 });
 $('#wzSaveKey')&&($('#wzSaveKey').onclick=async()=>{

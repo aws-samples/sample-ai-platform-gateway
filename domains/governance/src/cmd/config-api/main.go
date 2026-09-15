@@ -46,6 +46,7 @@ import (
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/bedrock"
+	bedrocktypes "github.com/aws/aws-sdk-go-v2/service/bedrock/types"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -1085,7 +1086,11 @@ func putSecretRaw(ctx context.Context, name, apiKey string) (string, error) {
 	return secrets.Put(ctx, name, apiKey)
 }
 
-// bedrockModel represents a model returned by the ListFoundationModels API.
+// bedrockModel is one INVOCABLE Bedrock target. ModelID is the string that goes
+// into the route's provider_model_id, so it is either a cross-region inference
+// profile id (us.anthropic.claude-sonnet-5) or a bare foundation model id
+// (mistral.mistral-7b-instruct-v0:2) — see listBedrockModels for why both spaces
+// have to be listed together.
 type bedrockModel struct {
 	ModelID      string `json:"model_id"`
 	ModelName    string `json:"model_name"`
@@ -1093,6 +1098,59 @@ type bedrockModel struct {
 	InputModes   string `json:"input_modes"`
 	OutputModes  string `json:"output_modes"`
 	Customizable bool   `json:"customizable"`
+	// Kind tells the console which ID space this came from: "inference_profile"
+	// or "foundation_model". Without it the two are indistinguishable in the
+	// dropdown, and picking the wrong one fails only at invocation time.
+	Kind string `json:"kind"`
+	// BaseModelID is the foundation model behind an inference profile (empty for
+	// a foundation model). It is what a price table keyed on the bare id matches on.
+	BaseModelID string `json:"base_model_id,omitempty"`
+	// Streaming mirrors responseStreamingSupported on the foundation model.
+	Streaming bool `json:"streaming"`
+}
+
+// modelModes joins a modality list into a comma-separated string.
+func modelModes[T ~string](in []T) string {
+	if len(in) == 0 {
+		return ""
+	}
+	out := make([]string, 0, len(in))
+	for _, m := range in {
+		out = append(out, string(m))
+	}
+	return strings.Join(out, ",")
+}
+
+// baseModelFromARN reduces a foundation-model ARN to its bare model id.
+// arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-5 → anthropic.claude-sonnet-5
+func baseModelFromARN(arn string) string {
+	if i := strings.Index(arn, "/"); i >= 0 {
+		return arn[i+1:]
+	}
+	return arn
+}
+
+// vendorFromModelID derives the vendor from the id, for the models that have an
+// inference profile but are NOT returned by ListFoundationModels at all (measured:
+// 7 in us-west-2, including Nova Premier). Those carry no providerName, and an empty
+// vendor puts a first-party model in an "other" bucket next to its own siblings.
+// us.amazon.nova-premier-v1:0 → Amazon.
+func vendorFromModelID(id string) string {
+	s := id
+	for _, p := range []string{"us-gov.", "us.", "eu.", "apac.", "global."} {
+		if strings.HasPrefix(s, p) {
+			s = strings.TrimPrefix(s, p)
+			break
+		}
+	}
+	v := s
+	if i := strings.Index(v, "."); i >= 0 {
+		v = v[:i]
+	}
+	if v == "" {
+		return ""
+	}
+	return strings.ToUpper(v[:1]) + v[1:]
 }
 
 // listProviderModels lists an external/self-hosted provider's models using the org's
@@ -1163,8 +1221,28 @@ func listProviderModels(ctx context.Context, adapter, baseURL, key string) ([]st
 	return ids, nil
 }
 
-// listBedrockModels lists Bedrock models in the customer's account via AssumeRole.
-// When roleARN is empty, it uses the platform account (pooled).
+// listBedrockModels lists the Bedrock targets that can actually be invoked in the
+// customer's account via AssumeRole. When roleARN is empty it uses the platform
+// account.
+//
+// Two APIs, because Bedrock has TWO ID spaces and neither one alone is the answer:
+//
+//   - ListFoundationModels returns bare ids (anthropic.claude-sonnet-5). Most of the
+//     current generation is INFERENCE_PROFILE-only, so the bare id is NOT invocable —
+//     Converse answers 404 / "end of life". Measured in us-west-2: 43 of 108 models
+//     are in that state, and they are the interesting ones (every Claude, Nova Pro,
+//     Llama 3.3/4, DeepSeek R1, Pixtral).
+//   - ListInferenceProfiles returns the cross-region ids (us.anthropic.claude-sonnet-5)
+//     that DO resolve, but carries no modality or streaming metadata.
+//
+// So: index every foundation model (no filter — the index is metadata, not the
+// answer), emit one entry per ACTIVE SYSTEM_DEFINED profile enriched from that index,
+// then add the foundation models that support ON_DEMAND and are not already covered
+// by a profile. Listing only one space is what made the console show ~12 models.
+//
+// A missing ListInferenceProfiles permission is NOT fatal: an older cross-account
+// role granted before this change would otherwise stop listing anything at all, so
+// the profile half degrades to empty and the foundation-model half still answers.
 func listBedrockModels(ctx context.Context, roleARN, externalID, region string) ([]bedrockModel, error) {
 	if region == "" {
 		region = "us-east-1"
@@ -1199,50 +1277,125 @@ func listBedrockModels(ctx context.Context, roleARN, externalID, region string) 
 		return nil, err
 	}
 
-	var models []bedrockModel
+	// Index by bare model id. Deliberately unfiltered: this is the metadata source
+	// for the profile half, and an INFERENCE_PROFILE-only model has to be findable
+	// here precisely because it is not invocable on its own.
+	type fmEntry struct {
+		name, provider, in, out string
+		customizable, streaming bool
+		onDemand                bool
+	}
+	index := make(map[string]fmEntry, len(out.ModelSummaries))
 	for _, m := range out.ModelSummaries {
-		// Keep only models that support inference (not just fine-tuning)
-		if m.InferenceTypesSupported == nil || len(m.InferenceTypesSupported) == 0 {
-			continue
+		e := fmEntry{
+			name:         aws.ToString(m.ModelName),
+			provider:     aws.ToString(m.ProviderName),
+			in:           modelModes(m.InputModalities),
+			out:          modelModes(m.OutputModalities),
+			customizable: len(m.CustomizationsSupported) > 0,
+			streaming:    aws.ToBool(m.ResponseStreamingSupported),
 		}
-		hasOnDemand := false
 		for _, t := range m.InferenceTypesSupported {
-			if t == "ON_DEMAND" {
-				hasOnDemand = true
-				break
+			if t == bedrocktypes.InferenceTypeOnDemand {
+				e.onDemand = true
 			}
 		}
-		if !hasOnDemand {
+		index[aws.ToString(m.ModelId)] = e
+	}
+
+	// textOnly keeps the dropdown to what this gateway can actually route. It is a
+	// chat/completions gateway, so an embedding or image model is noise the customer
+	// would have to recognise and skip. An UNDECLARED modality passes: refusing it
+	// would silently hide a brand-new model, which is the failure we are fixing.
+	textOnly := func(modes string) bool {
+		return modes == "" || strings.Contains(modes, "TEXT")
+	}
+
+	var models []bedrockModel
+	covered := map[string]bool{} // bare ids already reachable through a profile
+
+	// ---- Half 1: cross-region inference profiles (the invocable ids) ----
+	var token *string
+	for page := 0; page < 20; page++ { // bounded: a runaway NextToken must not hang the request
+		in := &bedrock.ListInferenceProfilesInput{
+			TypeEquals: bedrocktypes.InferenceProfileTypeSystemDefined,
+			MaxResults: aws.Int32(100),
+			NextToken:  token,
+		}
+		pr, perr := client.ListInferenceProfiles(ctx, in)
+		if perr != nil {
+			// Degrade instead of failing the whole listing (see the doc comment).
+			os.Stderr.WriteString(`{"level":"warn","msg":"list inference profiles failed","err":"` + perr.Error() + `"}` + "\n")
+			break
+		}
+		for _, p := range pr.InferenceProfileSummaries {
+			if p.Status != bedrocktypes.InferenceProfileStatusActive {
+				continue
+			}
+			id := aws.ToString(p.InferenceProfileId)
+			if id == "" {
+				continue
+			}
+			base := ""
+			if len(p.Models) > 0 {
+				base = baseModelFromARN(aws.ToString(p.Models[0].ModelArn))
+			}
+			meta := index[base]
+			if !textOnly(meta.out) {
+				continue
+			}
+			covered[base] = true
+			name := meta.name
+			if name == "" {
+				name = aws.ToString(p.InferenceProfileName)
+			}
+			provider := meta.provider
+			if provider == "" {
+				provider = vendorFromModelID(id)
+			}
+			models = append(models, bedrockModel{
+				ModelID:      id,
+				ModelName:    name,
+				Provider:     provider,
+				InputModes:   meta.in,
+				OutputModes:  meta.out,
+				Customizable: meta.customizable,
+				Kind:         "inference_profile",
+				BaseModelID:  base,
+				Streaming:    meta.streaming,
+			})
+		}
+		token = pr.NextToken
+		if token == nil {
+			break
+		}
+	}
+
+	// ---- Half 2: foundation models invocable directly (ON_DEMAND) ----
+	for id, e := range index {
+		if !e.onDemand || covered[id] || !textOnly(e.out) {
 			continue
 		}
-
-		im := ""
-		if m.InputModalities != nil {
-			var modes []string
-			for _, mo := range m.InputModalities {
-				modes = append(modes, string(mo))
-			}
-			im = strings.Join(modes, ",")
-		}
-		om := ""
-		if m.OutputModalities != nil {
-			var modes []string
-			for _, mo := range m.OutputModalities {
-				modes = append(modes, string(mo))
-			}
-			om = strings.Join(modes, ",")
-		}
-
 		models = append(models, bedrockModel{
-			ModelID:      aws.ToString(m.ModelId),
-			ModelName:    aws.ToString(m.ModelName),
-			Provider:     aws.ToString(m.ProviderName),
-			InputModes:   im,
-			OutputModes:  om,
-			Customizable: m.CustomizationsSupported != nil && len(m.CustomizationsSupported) > 0,
+			ModelID:      id,
+			ModelName:    e.name,
+			Provider:     e.provider,
+			InputModes:   e.in,
+			OutputModes:  e.out,
+			Customizable: e.customizable,
+			Kind:         "foundation_model",
+			Streaming:    e.streaming,
 		})
 	}
 
+	// Stable order: the map iteration above is random, and an unstable dropdown
+	// looks like the list changed between two fetches.
+	sort.Slice(models, func(i, j int) bool {
+		if models[i].Provider != models[j].Provider {
+			return models[i].Provider < models[j].Provider
+		}
+		return models[i].ModelID < models[j].ModelID
+	})
 	return models, nil
 }
 

@@ -10,6 +10,50 @@ reserved for a change that breaks a caller's request or response. Changes that n
 from an *operator* — Terraform variable defaults, deployed object layout — are `MINOR` with
 an **Upgrade notes** section, which is where they are called out.
 
+## [Unreleased]
+
+### Fixed
+
+- **Bedrock model discovery listed ~12 of the ~103 models you can actually invoke.**
+  Two independent defects added up to that number. The console's Bedrock dropdown was a
+  hardcoded table in `console.js`, so it only ever showed what someone last typed into it.
+  And the live "fetch models from my account" path called `ListFoundationModels` alone,
+  which returns *bare* model ids — but most of the current generation is
+  **INFERENCE_PROFILE-only**, so the bare id is not invocable and Converse answers 404.
+  Measured in `us-west-2`: 43 of 108 foundation models are in that state, and they are the
+  ones that matter (every Claude, Nova Pro/Micro, Llama 3.3/4, DeepSeek R1, Pixtral). The
+  two halves also disagreed about which ID SPACE the form field held: the hardcoded table
+  used `us.`-prefixed profile ids while discovery returned bare ids, in the same input.
+
+  `/admin/bedrock/models` now queries `ListInferenceProfiles` **and**
+  `ListFoundationModels` and returns only invocable targets: one entry per ACTIVE
+  `SYSTEM_DEFINED` profile, plus the foundation models that support `ON_DEMAND` and are not
+  already reachable through a profile. Each entry carries a `kind`
+  (`inference_profile` / `foundation_model`), the `base_model_id` behind a profile, and
+  `streaming`. Non-text models are filtered out; an *undeclared* modality is kept, because
+  refusing it is how a brand-new model would silently disappear again.
+
+  The console merges that live list with the curated table instead of replacing it: price
+  and capabilities exist nowhere in Bedrock's APIs, and without a price `auto-cheapest`
+  reads a model as free. Curated entries keep their price and caps, discovered ones are
+  added at price 0 and flagged **no price** in the dropdown as well as at Add time. The
+  list is seeded per region as soon as the Bedrock card opens, before any Role ARN is
+  typed, and re-fetched from the customer's own account when one is supplied.
+
+  **Upgrade note:** the cross-account role in the customer's account now needs
+  `bedrock:ListInferenceProfiles` alongside `bedrock:InvokeModel` and
+  `bedrock:ListFoundationModels`. A role that has not been updated still works — the
+  profile half degrades to empty rather than failing the whole listing — but it will keep
+  showing only the directly-invocable subset.
+- **Three Portuguese strings shipped in the English console** (`' modelos encontrados'` in
+  the BYO Bedrock fetch and the provider wizard, `usada em` in the credential-reuse list).
+  All three escaped every gate: no accents to trip the heuristic, and not inside `_t()`.
+- **`scripts/i18n-check.sh` check 3d only saw a literal that opened the value.**
+  `el.textContent = 'prose'` was matched; `el.textContent = n + 'prose'` was not — which is
+  exactly the shape of the strings above. It now matches a literal concatenated onto
+  something, and strips same-line `className=` assignments first so a Tailwind class list
+  is not mistaken for a sentence.
+
 ## [1.1.1] - 2026-09-15
 
 A cache-tenancy fix that missed the 1.1.0 tag by twenty minutes, plus the guard that
