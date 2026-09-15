@@ -8,6 +8,10 @@ cost and who spent it.
 100% serverless: Go on AWS Lambda (ARM64), API Gateway, DynamoDB, SQS, EventBridge, Cognito and
 Amazon Bedrock. Deployed per domain with Terraform, each domain holding its own state.
 
+Current release: **v1.1.0** — see the [CHANGELOG](CHANGELOG.md). If you are upgrading an existing
+deployment, read its **Upgrade notes**: this release changes two Terraform defaults and adds a new
+asset prefix to the site bucket.
+
 ![The console overview](assets/screenshots/overview.png)
 
 ## Disclaimer
