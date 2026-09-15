@@ -852,7 +852,7 @@
               <label for="rCache" class="text-sm font-medium" data-i18n="Response cache">Response cache</label>
               <button type="button" id="rCache" role="switch" aria-checked="false" aria-label="Enable response cache" data-i18n-al="Enable response cache" class="relative w-11 h-6 rounded-full bg-line transition shrink-0"><span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-knob transition"></span></button>
             </div>
-            <div class="text-[11px] text-mut mb-2" data-i18n="An identical prompt on the same model returns the stored answer (verified saving). The key includes your org.">An identical prompt on the same model returns the stored answer (verified saving). The key includes your org.</div>
+            <div class="text-[11px] text-mut mb-2" data-i18n="An identical prompt on the same model returns the stored answer (verified saving). Who may reuse it is set below.">An identical prompt on the same model returns the stored answer (verified saving). Who may reuse it is set below.</div>
             <label for="rTtl" class="block text-[11px] text-mut mb-1" data-i18n="Retention">Retention</label>
             <select id="rTtl" class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm disabled:opacity-50">
               <option value="300" data-i18n="5 minutes">5 minutes</option>
@@ -860,6 +860,16 @@
               <option value="86400" data-i18n="24 hours">24 hours</option>
               <option value="604800" data-i18n="7 days">7 days</option>
             </select>
+            <!-- Cache tenancy. Exposed here because it is a governance decision, not a
+                 tuning knob: it decides whether one team can be served an answer produced
+                 from another team's prompt. Default is `team` (fail closed). -->
+            <label for="rScope" class="block text-[11px] text-mut mb-1 mt-3" data-i18n="Who may reuse a cached answer">Who may reuse a cached answer</label>
+            <select id="rScope" class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm disabled:opacity-50">
+              <option value="team" data-i18n="the same team (default)">the same team (default)</option>
+              <option value="app" data-i18n="only the same app (strictest)">only the same app (strictest)</option>
+              <option value="deployment" data-i18n="anyone in this deployment (highest hit rate)">anyone in this deployment (highest hit rate)</option>
+            </select>
+            <div class="text-[11px] text-mut mt-1" data-i18n="Changing this changes the cache key: the existing cache stops being reachable and the hit rate drops until it refills. Nothing is lost — it is regenerated on demand.">Changing this changes the cache key: the existing cache stops being reachable and the hit rate drops until it refills. Nothing is lost — it is regenerated on demand.</div>
           </div>
           <div class="bg-panel border border-line rounded-xl p-4">
             <div class="flex items-center justify-between mb-1">

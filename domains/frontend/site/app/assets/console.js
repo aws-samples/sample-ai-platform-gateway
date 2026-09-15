@@ -254,6 +254,27 @@ const I18N={
     // treats a tagged string with no dictionary key as a translation gap, and without
     // them a real omission elsewhere would be lost in the noise of these two.
     'App':'App', 'app':'app',
+    // cache tenancy (cache_scope)
+    'An identical prompt on the same model returns the stored answer (verified saving). Who may reuse it is set below.':'Um prompt idêntico no mesmo modelo devolve a resposta armazenada (economia comprovada). Quem pode reaproveitá-la é definido abaixo.',
+    'Who may reuse a cached answer':'Quem pode reaproveitar uma resposta em cache',
+    'the same team (default)':'o mesmo time (padrão)',
+    'only the same app (strictest)':'só o mesmo app (mais restrito)',
+    'anyone in this deployment (highest hit rate)':'qualquer um neste deployment (maior taxa de acerto)',
+    'Changing this changes the cache key: the existing cache stops being reachable and the hit rate drops until it refills. Nothing is lost — it is regenerated on demand.':'Mudar isto muda a chave do cache: o cache atual deixa de ser alcançável e a taxa de acerto cai até reencher. Nada é perdido — é regenerado sob demanda.',
+    // strings that were tagged/wrapped but never had an entry, so they rendered in
+    // English inside a pt/es screen
+    'the organization':'a organização',
+    'The trail is <b>read-only</b>: there is no way to edit or delete a record.':'A trilha é <b>somente leitura</b>: não há como editar nem apagar um registro.',
+    'Each member joins a team and inherits its access group (models and budget), which flows down to the team apps.':'Cada membro entra em um time e herda o grupo de acesso dele (modelos e budget), que desce para os apps do time.',
+    'Every action you take is recorded in the audit trail.':'Toda ação que você faz é registrada na trilha de auditoria.',
+    // backend error messages: the Go literal IS the key, so these are what _terr() looks
+    // up when an API answers {"error":"..."}
+    'access denied':'acesso negado',
+    'app not found':'app não encontrado',
+    'rate limit exceeded':'rate limit excedido',
+    'team not found':'time não encontrado',
+    'validation failed':'a validação falhou',
+    'your role cannot query the audit trail (owner/admin only)':'seu papel não pode consultar a trilha de auditoria (somente owner/admin)',
     '{n} alert(s) fired and were not delivered in this period. The cooldown is daily per rule, so they will not be resent — check the webhook URL under Alerts.':'{n} alerta(s) dispararam e não foram entregues no período. O cooldown é diário por regra, então eles não serão reenviados — confira a URL do webhook em Alertas.',
     '<b>Payment and contract</b> area under evaluation (<b>preview</b>). Automatic charging is not wired up yet — nothing here is charged or saved. The metering above is real.':'Área de <b>pagamento e contrato</b> em avaliação (<b>preview</b>). A cobrança automática ainda não está ligada — nada aqui é cobrado nem salvo. A medição acima é real.',
     '<b>What each role can do:</b> <b class="text-slate-200">Owner</b> does everything, including deleting the organization. <b class="text-slate-200">Admin</b> configures the gateway and manages members. <b class="text-slate-200">Billing</b> sees plan and invoices. <b class="text-slate-200">Developer</b> uses the gateway and observes cost/usage, but changes neither policy nor members.':'<b>O que cada papel pode:</b> <b class="text-slate-200">Owner</b> faz tudo, inclusive apagar a organização. <b class="text-slate-200">Admin</b> configura o gateway e gerencia membros. <b class="text-slate-200">Faturamento</b> vê plano e faturas. <b class="text-slate-200">Desenvolvedor</b> usa o gateway e observa custo/uso, mas não muda política nem membros.',
@@ -288,7 +309,7 @@ const I18N={
     'Amount':'Valor',
     'An aggregator routes internally to varying upstreams and may serve a different version or quantization between requests. It never joins an identity group, because the no-quality-risk promise would be false there.':'Um agregador roteia internamente para upstreams variáveis e pode servir outra versão ou quantização entre requisições. Ele nunca entra num grupo de identidade, porque a promessa de "sem risco de qualidade" seria falsa ali.',
     'An extra code from your authenticator app (Google Authenticator, 1Password, Authy) on every login.':'Um código extra do seu app autenticador (Google Authenticator, 1Password, Authy) a cada login.',
-    'An identical prompt on the same model returns the stored answer (verified saving). The key includes your org.':'Prompt idêntico no mesmo modelo devolve a resposta guardada (economia comprovada). A chave inclui a sua org.',
+
     'Annual':'Anual', 'Annual (2 months free)':'Anual (2 meses grátis)',
     'Any OpenAI-compatible endpoint (vLLM, Ollama, TGI, Azure). Address and secret name are free text because they are <b>yours</b> — there is no way to enumerate them.':'Qualquer endpoint compatível com OpenAI (vLLM, Ollama, TGI, Azure). Endereço e nome do segredo são livres porque são <b>seus</b> — não há como enumerar.',
     'app name too long':'nome do app longo demais',
@@ -1009,6 +1030,25 @@ const I18N={
     '(no content)':'(sin contenido)',
     'first token':'primer token',
     'App':'App', 'app':'app',
+    // cache tenancy (cache_scope)
+    'An identical prompt on the same model returns the stored answer (verified saving). Who may reuse it is set below.':'Un prompt idéntico en el mismo modelo devuelve la respuesta almacenada (ahorro comprobado). Quién puede reutilizarla se define abajo.',
+    'Who may reuse a cached answer':'Quién puede reutilizar una respuesta en cache',
+    'the same team (default)':'el mismo equipo (predeterminado)',
+    'only the same app (strictest)':'solo la misma app (más estricto)',
+    'anyone in this deployment (highest hit rate)':'cualquiera en este deployment (mayor tasa de acierto)',
+    'Changing this changes the cache key: the existing cache stops being reachable and the hit rate drops until it refills. Nothing is lost — it is regenerated on demand.':'Cambiar esto cambia la clave del cache: el cache actual deja de ser alcanzable y la tasa de acierto baja hasta rellenarse. Nada se pierde — se regenera bajo demanda.',
+    // strings that were tagged/wrapped but never had an entry
+    'the organization':'la organización',
+    'The trail is <b>read-only</b>: there is no way to edit or delete a record.':'La traza es <b>solo lectura</b>: no hay forma de editar ni borrar un registro.',
+    'Each member joins a team and inherits its access group (models and budget), which flows down to the team apps.':'Cada miembro entra en un equipo y hereda su grupo de acceso (modelos y budget), que baja a las apps del equipo.',
+    'Every action you take is recorded in the audit trail.':'Toda acción que realices queda registrada en la traza de auditoría.',
+    // backend error messages
+    'access denied':'acceso denegado',
+    'app not found':'app no encontrada',
+    'rate limit exceeded':'rate limit excedido',
+    'team not found':'equipo no encontrado',
+    'validation failed':'la validación falló',
+    'your role cannot query the audit trail (owner/admin only)':'tu rol no puede consultar la traza de auditoría (solo owner/admin)',
     '{n} alert(s) fired and were not delivered in this period. The cooldown is daily per rule, so they will not be resent — check the webhook URL under Alerts.':'{n} alerta(s) se dispararon y no se entregaron en el período. El cooldown es diario por regla, así que no se reenviarán — revisa la URL del webhook en Alertas.',
     '<b>Payment and contract</b> area under evaluation (<b>preview</b>). Automatic charging is not wired up yet — nothing here is charged or saved. The metering above is real.':'Área de <b>pago y contrato</b> en evaluación (<b>preview</b>). El cobro automático aún no está conectado — nada aquí se cobra ni se guarda. La medición de arriba es real.',
     '<b>What each role can do:</b> <b class="text-slate-200">Owner</b> does everything, including deleting the organization. <b class="text-slate-200">Admin</b> configures the gateway and manages members. <b class="text-slate-200">Billing</b> sees plan and invoices. <b class="text-slate-200">Developer</b> uses the gateway and observes cost/usage, but changes neither policy nor members.':'<b>Qué puede cada rol:</b> <b class="text-slate-200">Owner</b> hace todo, incluso eliminar la organización. <b class="text-slate-200">Admin</b> configura el gateway y gestiona miembros. <b class="text-slate-200">Facturación</b> ve plan y facturas. <b class="text-slate-200">Desarrollador</b> usa el gateway y observa costo/uso, pero no cambia política ni miembros.',
@@ -1043,7 +1083,7 @@ const I18N={
     'Amount':'Monto',
     'An aggregator routes internally to varying upstreams and may serve a different version or quantization between requests. It never joins an identity group, because the no-quality-risk promise would be false there.':'Un agregador enruta internamente a upstreams variables y puede servir otra versión o cuantización entre solicitudes. Nunca entra en un grupo de identidad, porque ahí la promesa de "sin riesgo de calidad" sería falsa.',
     'An extra code from your authenticator app (Google Authenticator, 1Password, Authy) on every login.':'Un código extra de tu app de autenticación (Google Authenticator, 1Password, Authy) en cada inicio de sesión.',
-    'An identical prompt on the same model returns the stored answer (verified saving). The key includes your org.':'Un prompt idéntico en el mismo modelo devuelve la respuesta guardada (ahorro comprobado). La clave incluye tu organización.',
+
     'Annual':'Anual', 'Annual (2 months free)':'Anual (2 meses gratis)',
     'Any OpenAI-compatible endpoint (vLLM, Ollama, TGI, Azure). Address and secret name are free text because they are <b>yours</b> — there is no way to enumerate them.':'Cualquier endpoint compatible con OpenAI (vLLM, Ollama, TGI, Azure). La dirección y el nombre del secreto son texto libre porque son <b>tuyos</b> — no hay forma de enumerarlos.',
     'app name too long':'nombre de app demasiado largo',
@@ -3113,6 +3153,14 @@ function syncConfigToggles(){
   if($('#rTtl')){ const ttl=String(ttlN>0?ttlN:3600);
     if([...$('#rTtl').options].some(o=>o.value===ttl)) $('#rTtl').value=ttl;
     $('#rTtl').disabled=!rCacheOn; }
+  // Cache tenancy. Defaults to `team` when the config says nothing, matching the
+  // gateway's own default — showing `deployment` here while the gateway partitions by
+  // team would be a screen that lies about who can read whose answers.
+  if($('#rScope')){
+    const sc=String(CFG.cache_scope||'team');
+    if([...$('#rScope').options].some(o=>o.value===sc)) $('#rScope').value=sc;
+    $('#rScope').disabled=!rCacheOn;
+  }
   rSemOn=!!CFG.semantic_cache; if($('#rSemantic')) toggle($('#rSemantic'),rSemOn);
   if($('#rSemThreshold')){ const th=String(CFG.semantic_threshold||0.92);
     if([...$('#rSemThreshold').options].some(o=>o.value===th)) $('#rSemThreshold').value=th; }
@@ -3541,10 +3589,18 @@ $('#mSave').onclick=()=>{
   CFG.cache_ttl=rCacheOn?Number($('#rTtl').value):0;
   CFG.semantic_cache=rSemOn;
   CFG.semantic_threshold=Number($('#rSemThreshold').value);
+  if($('#rScope')) CFG.cache_scope=$('#rScope').value;
   CFG.model_order=curOrder().slice();
   // routing/pricing go in, but saveConfig writes only CFG_RAW (what is
   // declared in THIS scope) — never the effective value merged from the scopes above.
-  saveConfig($('#mMsg'),['auto_cheapest','cache_ttl','semantic_cache','semantic_threshold','model_order','allowed_models','routing','pricing','bundles','feature_policy']);
+  //
+  // cache_scope has to be in this list even though the screen now shows it. The list is
+  // an allowlist of what gets written back, so a field missing from it is silently
+  // DROPPED to the inherited default on every save — which is what happened before: the
+  // value could be set through the API and the next unrelated save reverted it, with no
+  // error and nothing on screen. For a field that decides whether one team can read
+  // another team's cached answer, that is a governance decision being undone quietly.
+  saveConfig($('#mMsg'),['auto_cheapest','cache_ttl','cache_scope','semantic_cache','semantic_threshold','model_order','allowed_models','routing','pricing','bundles','feature_policy']);
 };
 
 // ---- Wizard: connect an external provider (catalog of known providers) ----
@@ -3653,8 +3709,12 @@ $('#rAuto').onclick=()=>{ rAutoOn=!rAutoOn; toggle($('#rAuto'),rAutoOn);
 let rCacheOn=false;
 $('#rCache')&&($('#rCache').onclick=()=>{ rCacheOn=!rCacheOn; toggle($('#rCache'),rCacheOn);
   $('#rTtl').disabled=!rCacheOn;
+  if($('#rScope')) $('#rScope').disabled=!rCacheOn;
   if(CFG) CFG.cache_ttl = rCacheOn ? Number($('#rTtl').value) : 0; });
 $('#rTtl')&&($('#rTtl').onchange=()=>{ if(CFG && rCacheOn) CFG.cache_ttl=Number($('#rTtl').value); });
+// Written into CFG on change, like the others: the model list re-renders on any toggle
+// and reads CFG back, which would discard an unsaved selection.
+$('#rScope')&&($('#rScope').onchange=()=>{ if(CFG) CFG.cache_scope=$('#rScope').value; });
 
 // =================== write config (PUT on the scope) ===================
 // PUT writes the whole scope; so as not to lose the rest, we send the scope's raw
