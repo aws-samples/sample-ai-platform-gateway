@@ -718,6 +718,31 @@ const I18N={
     'paste your Role ARN to list your own account.':'cole o Role ARN da sua conta para listar a sua própria conta.',
     'models found — pick one in the field above':'modelos encontrados — escolha um no campo acima',
     'used by':'usada em', 'Other':'Outros',
+    // --- Model access matrix (Limits & Budget) ---
+    'Model access by scope':'Acesso a modelos por escopo',
+    'Which models each team and app is actually served. A scope either follows the level above or decides for itself: there is one list per scope, so that choice belongs to the row, not to a single model.':'Quais modelos cada time e app realmente recebe. Um escopo ou segue o nível acima ou decide por si: existe uma única lista por escopo, então essa escolha é da linha, não de um modelo isolado.',
+    'Rate limit and budget only — model access is set in the matrix above.':'Só rate limit e budget — o acesso a modelos é definido na matriz acima.',
+    'reload':'recarregar', 'Save model access':'Salvar acesso a modelos', 'discard changes':'descartar alterações',
+    'allowed here':'permitido aqui', 'inherited':'herdado', 'denied here':'negado aqui',
+    'forbidden by the parent — not clickable':'proibido pelo nível acima — não clicável',
+    'declared but denied above — not served':'declarado mas negado acima — não é servido',
+    'declared here but denied above — not served. Click to remove.':'declarado aqui mas negado acima — não é servido. Clique para remover.',
+    'removed — the leftover declaration is gone. It was not being served.':'removido — a declaração residual saiu. Ela não estava sendo servida.',
+    '{n} scope(s) declare models the level above denies — those are not served':'{n} escopo(s) declaram modelos que o nível acima nega — esses não são servidos',
+    'declares':'declara',
+    'no restriction':'sem restrição', 'own list':'lista própria',
+    'Which models each team and app is actually served. A scope either follows the level above or decides for itself: there is one list per scope, so that choice belongs to the row, not to a single model. The level above is a ceiling — a scope can narrow it, never widen it.':'Quais modelos cada time e app realmente recebe. Um escopo ou segue o nível acima ou decide por si: existe uma única lista por escopo, então essa escolha é da linha, não de um modelo isolado. O nível acima é um teto — um escopo pode estreitar, nunca ampliar.',
+    '“{scope}” now pins its own list — it started from the whole catalog, so a model added later will not be served until you allow it.':'“{scope}” agora fixa a própria lista — começou a partir de todo o catálogo, então um modelo adicionado depois não será servido até você permitir.',
+    'organization':'organização', 'ceiling':'teto', 'served':'recebe', 'scopes read':'escopos lidos',
+    'row mode':'modo da linha', 'unsaved':'não salvo',
+    'follows the level above':'segue o nível acima', 'back to inherit':'voltar a herdar',
+    'no change to save':'nada para salvar', 'saved — the gateway applies it in ~15s.':'salvo — o gateway aplica em ~15s.',
+    'A scope cannot allow a model its parent denies.':'Um escopo não pode permitir um modelo que o nível acima nega.',
+    '“{scope}” now decides for itself — it started from what the level above allows.':'“{scope}” agora decide por si — começou a partir do que o nível acima permite.',
+    '“{scope}” would be left with no model. The gateway reads an empty list as NO RESTRICTION, so that would grant everything — the opposite of what it looks like. Leave at least one model on, or archive the scope instead.':'“{scope}” ficaria sem nenhum modelo. O gateway lê uma lista vazia como SEM RESTRIÇÃO, então isso liberaria tudo — o oposto do que parece. Deixe pelo menos um modelo ligado, ou arquive o escopo.',
+    '{n} scope(s) grant more than the parent allows':'{n} escopo(s) concedem mais do que o nível acima permite',
+    'adds':'adiciona',
+    'The matrix is truncated: this org has more scopes than one request can read.':'A matriz está truncada: esta org tem mais escopos do que uma requisição consegue ler.',
     'enter the Role ARN':'informe o Role ARN',
     'enter the Role ARN of your account':'informe o Role ARN da sua conta',
     'Role ARN must contain "AIPlatGatewayAccess"':'Role ARN deve conter "AIPlatGatewayAccess"',
@@ -1492,6 +1517,31 @@ const I18N={
     'paste your Role ARN to list your own account.':'pega el Role ARN de tu cuenta para listar tu propia cuenta.',
     'models found — pick one in the field above':'modelos encontrados — elige uno en el campo de arriba',
     'used by':'usada en', 'Other':'Otros',
+    // --- Model access matrix (Limits & Budget) ---
+    'Model access by scope':'Acceso a modelos por ámbito',
+    'Which models each team and app is actually served. A scope either follows the level above or decides for itself: there is one list per scope, so that choice belongs to the row, not to a single model.':'Qué modelos recibe realmente cada equipo y app. Un ámbito sigue al nivel superior o decide por sí mismo: hay una sola lista por ámbito, así que esa elección es de la fila, no de un modelo aislado.',
+    'Rate limit and budget only — model access is set in the matrix above.':'Solo rate limit y budget — el acceso a modelos se define en la matriz de arriba.',
+    'reload':'recargar', 'Save model access':'Guardar acceso a modelos', 'discard changes':'descartar cambios',
+    'allowed here':'permitido aquí', 'inherited':'heredado', 'denied here':'negado aquí',
+    'forbidden by the parent — not clickable':'prohibido por el nivel superior — no clicable',
+    'declared but denied above — not served':'declarado pero negado arriba — no se sirve',
+    'declared here but denied above — not served. Click to remove.':'declarado aquí pero negado arriba — no se sirve. Clic para quitar.',
+    'removed — the leftover declaration is gone. It was not being served.':'quitado — la declaración residual se fue. No estaba siendo servida.',
+    '{n} scope(s) declare models the level above denies — those are not served':'{n} ámbito(s) declaran modelos que el nivel superior niega — esos no se sirven',
+    'declares':'declara',
+    'no restriction':'sin restricción', 'own list':'lista propia',
+    'Which models each team and app is actually served. A scope either follows the level above or decides for itself: there is one list per scope, so that choice belongs to the row, not to a single model. The level above is a ceiling — a scope can narrow it, never widen it.':'Qué modelos recibe realmente cada equipo y app. Un ámbito sigue al nivel superior o decide por sí mismo: hay una sola lista por ámbito, así que esa elección es de la fila, no de un modelo aislado. El nivel superior es un techo — un ámbito puede estrechar, nunca ampliar.',
+    '“{scope}” now pins its own list — it started from the whole catalog, so a model added later will not be served until you allow it.':'“{scope}” ahora fija su propia lista — partió de todo el catálogo, así que un modelo agregado después no se servirá hasta que lo permitas.',
+    'organization':'organización', 'ceiling':'techo', 'served':'recibe', 'scopes read':'ámbitos leídos',
+    'row mode':'modo de la fila', 'unsaved':'sin guardar',
+    'follows the level above':'sigue el nivel superior', 'back to inherit':'volver a heredar',
+    'no change to save':'nada para guardar', 'saved — the gateway applies it in ~15s.':'guardado — el gateway lo aplica en ~15s.',
+    'A scope cannot allow a model its parent denies.':'Un ámbito no puede permitir un modelo que el nivel superior niega.',
+    '“{scope}” now decides for itself — it started from what the level above allows.':'“{scope}” ahora decide por sí mismo — partió de lo que permite el nivel superior.',
+    '“{scope}” would be left with no model. The gateway reads an empty list as NO RESTRICTION, so that would grant everything — the opposite of what it looks like. Leave at least one model on, or archive the scope instead.':'“{scope}” quedaría sin ningún modelo. El gateway lee una lista vacía como SIN RESTRICCIÓN, así que eso liberaría todo — lo opuesto de lo que parece. Deja al menos un modelo activo, o archiva el ámbito.',
+    '{n} scope(s) grant more than the parent allows':'{n} ámbito(s) conceden más de lo que permite el nivel superior',
+    'adds':'añade',
+    'The matrix is truncated: this org has more scopes than one request can read.':'La matriz está truncada: esta organización tiene más ámbitos de los que una solicitud puede leer.',
     'enter the Role ARN':'informa el Role ARN',
     'enter the Role ARN of your account':'informa el Role ARN de tu cuenta',
     'Role ARN must contain "AIPlatGatewayAccess"':'el Role ARN debe contener "AIPlatGatewayAccess"',
@@ -3840,23 +3890,28 @@ function lScopeQ(){
   if(sc==='app'){ const ap=$('#lApp').value; if(ap) q+='&app='+encodeURIComponent(ap); }
   return q;
 }
-let _lRaw={}, _lEff={};
+// Only the RAW config of the selected scope is needed now. The second fetch
+// (?effective=1) existed to label the allowed-models pills with what they
+// inherited; the matrix answers that for every scope in one request, so switching
+// scope here costs one call instead of two.
+let _lRaw={};
 async function syncScopeInputs(){
   const sc=$('#lScope').value;
   $('#lTeamWrap').classList.toggle('hidden',sc==='org');
   $('#lAppWrap').classList.toggle('hidden',sc!=='app');
   if(sc!=='org') fillSelect($('#lTeam'),teamsFromConfig(),{keep:true});
-  if(sc==='app') fillSelect($('#lApp'),appsFromConfig(),{keep:true});
+  // Only the SELECTED team's apps — see appsForTeam for the scope key this stops
+  // anyone from writing to.
+  if(sc==='app') fillSelect($('#lApp'),appsForTeam($('#lTeam').value),{keep:true});
   $('#lInherit').textContent = sc==='org' ? '' : _t('blank values inherit from the level above');
 
-  // Fetch THIS scope's own config (raw) and the effective one (for the
-  // "inherited" hints) — not just the org's effective values, otherwise
-  // switching scope never changed what the fields showed.
+  // Fetch THIS scope's own config, so the fields reflect what is set at this
+  // level — blank/"inherit" when the scope has nothing of its own.
   const q=lScopeQ();
-  _lRaw={}; _lEff={};
+  _lRaw={};
   try{
-    const [rr,re]=await Promise.all([api(API.adminApi,'/admin/config'+q), api(API.adminApi,'/admin/config'+q+'&effective=1')]);
-    if(rr.ok) _lRaw=await rr.json(); if(re.ok) _lEff=await re.json();
+    const rr=await api(API.adminApi,'/admin/config'+q);
+    if(rr.ok) _lRaw=await rr.json();
   }catch(e){}
 
   const rawRL=(_lRaw.rate_limits&&typeof _lRaw.rate_limits==='object')?_lRaw.rate_limits:null;
@@ -3868,45 +3923,284 @@ async function syncScopeInputs(){
   setOpt('#lBudget', rawBudget?Number(rawBudget.limit_usd||rawBudget.monthly_usd||0):0);
   $('#lAction').value = rawBudget?(rawBudget.action||'alert'):'alert';
   syncActionHint();
-  renderModelToggles();
 }
 function syncActionHint(){ const a=$('#lAction').value;
   $('#lActionHint').textContent = a==='alert'?_t('Only flags the state (budget_state) and keeps serving.')
     : a==='degrade'?_t('Starts routing to the cheapest allowed model until the month rolls over.')
     : _t('New requests get 429 insufficient_quota until the month rolls over.'); }
-// Allowed-models toggles: the catalog always comes from the ORG's effective
-// routing (a team/app can only restrict what the org already has, never add
-// a model of its own — same rule as the org-level Models & Routing tab).
-function renderModelToggles(){
-  const box=$('#lModels'); if(!box) return;
-  const models=Object.keys((CFG&&CFG.routing)||{}).sort();
-  const sc=$('#lScope').value;
-  const effAllowed=Array.isArray(_lEff.allowed_models)?_lEff.allowed_models:null;
-  $('#lModelsInherit').textContent = sc==='org' ? '' : (effAllowed? (_t('inherited: ')+effAllowed.join(', ')) : _t('(all on = inherits / no restriction)'));
-  const rawAllowed=Array.isArray(_lRaw.allowed_models)?_lRaw.allowed_models:null;
-  box.innerHTML = models.length ? models.map(m=>{
-    const on = rawAllowed===null ? true : rawAllowed.includes(m);
-    return `<button type="button" data-lm-model="${esc(m)}" data-on="${on?1:0}" aria-pressed="${on}" class="text-[11px] px-2.5 py-1 rounded-full border ${on?'border-brand text-brand':'border-line text-mut'}">${esc(m)}</button>`;
-  }).join(' ') : '<span class="text-[11px] text-mut">'+esc(_t('No model configured in the org yet (add one under Models & Routing).'))+'</span>';
-  box.querySelectorAll('[data-lm-model]').forEach(b=>b.onclick=()=>{
-    const on=b.dataset.on==='1'; b.dataset.on=on?'0':'1';
-    b.setAttribute('aria-pressed', String(!on));
-    b.className='text-[11px] px-2.5 py-1 rounded-full border '+(!on?'border-brand text-brand':'border-line text-mut');
+// =================== MODEL ACCESS MATRIX ===================
+// Replaces the per-scope "Allowed models" pill row, which had three defects that
+// only a whole-hierarchy view can close:
+//
+//  1. With one scope on screen and no list of its own, EVERY pill rendered as on —
+//     including models the parent team had denied. Turning one off then wrote the
+//     rest as an explicit list, GRANTING what the team refused. Two clicks.
+//  2. "All on" was overloaded: it meant both "I inherit" and "I allow everything",
+//     and the save collapsed the second into the first.
+//  3. Turning every pill off wrote allowed_models: [] — and the gateway reads an
+//     empty list as NO RESTRICTION (core internal/gateway.Config.allowed). Denying
+//     everything granted everything. Guarded below, with the reason on screen.
+//
+// The state model follows the STORE, not a wish: there is one allowed_models list
+// per scope and DeepMerge makes lists replace, so "inherits" is a property of the
+// ROW. A row either follows the level above or decides for itself. Clicking a cell
+// in an inheriting row therefore materialises the whole row from the parent's
+// ceiling — announced, never silent.
+let _am=null;      // last payload from GET /admin/access/matrix
+let _amEdit={};    // scope_key -> {mode:'inherit'|'override', allow:[...]}  (local, unsaved)
+
+async function loadAccessMatrix(){
+  const wrap=$('#amWrap'); if(!wrap) return;
+  wrap.innerHTML='<div class="text-[11px] text-mut">'+esc(_t('loading…'))+'</div>';
+  try{
+    const r=await api(API.adminApi,'/admin/access/matrix?org='+encodeURIComponent(orgParam()));
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(_terr(d,r));
+    _am=d; _amEdit={};
+    renderAccessMatrix();
+  }catch(e){
+    _am=null;
+    wrap.innerHTML='<div class="text-[11px] text-amber-400">'+esc(_t('failed: ')+e.message)+'</div>';
+  }
+}
+// The state a row is in RIGHT NOW, server value plus any unsaved edit.
+function amState(row){
+  const e=_amEdit[row.scope_key];
+  if(e) return {mode:e.mode, allow:e.allow.slice(), dirty:true};
+  return {mode: row.has_own?'override':'inherit', allow:(row.own||[]).slice(), dirty:false};
+}
+// One of: allow · open · over · inherit · deny · blocked.
+//
+// `blocked` is the guard: a model the parent does not serve cannot be switched on
+// here, so the escalation path is absent rather than merely discouraged.
+//
+// `over` is a model this scope DECLARES that the level above refuses. The chain now
+// resolves allowed_models by intersection, so it is NOT served — the ceiling wins.
+// It is an inert leftover: a list written before the ceiling tightened, or through
+// the API. Kept as its own state rather than flattened into `blocked` because the
+// operator has something to do about it, and clicking only ever REMOVES — once off it
+// becomes `blocked`, so the cleanup is one-way.
+//
+// It renders as a DENIAL with a warning, not as access. An earlier version drew it as
+// an amber check, which was true while a child could widen its parent and became a
+// lie the moment the ceiling started being enforced.
+//
+// The ORG row is the top, so `inherit` never applies to it: there is nothing above
+// it a customer can see or set. (It does merge on top of `global`, but that scope is
+// platform-only and by design never carries allowed_models, so an inherit arrow
+// pointed the operator at a level that will never have a value.) When the org
+// declares no list every model IS served, so the cell is plain `allow`.
+//
+// An earlier attempt gave that case its own dashed glyph, to distinguish "served
+// but not pinned" from "explicitly allowed". That was a mistake for the reason this
+// screen is built on: pinned-or-not is a property of the ROW, not of a model, and
+// encoding it in five identical circles contradicts the model while forcing the
+// operator into the legend. It lives in the row's mode column instead.
+function amCell(row, model){
+  const inCeiling=(row.parent_effective||[]).includes(model);
+  const st=amState(row);
+  if(st.mode==='inherit') return row.kind==='org' ? 'allow' : (inCeiling?'inherit':'blocked');
+  if(st.allow.includes(model)) return inCeiling?'allow':'over';
+  return inCeiling?'deny':'blocked';
+}
+const AM_GLYPH={allow:'✓', over:'✕', inherit:'↑', deny:'✕', blocked:'–'};
+const AM_CLASS={
+  allow:  'bg-brand text-ink font-semibold',
+  over:   'bg-amber-500/15 border border-amber-500 text-amber-400 font-semibold',
+  inherit:'border border-line text-mut',
+  deny:   'border border-rose-400 text-rose-400',
+  blocked:'bg-panel2 border border-line text-mut cursor-not-allowed opacity-70',
+};
+function amStateLabel(s){
+  return s==='allow'?_t('allowed here')
+    :s==='over'?_t('declared here but denied above — not served. Click to remove.')
+    :s==='inherit'?_t('inherited')
+    :s==='deny'?_t('denied here')
+    :_t('forbidden by the parent — not clickable');
+}
+// What this scope is actually SERVED: its declaration intersected with the ceiling.
+// Counting the declaration alone would restate the old behaviour and disagree with
+// the cells — a row declaring three models under a ceiling of one is served one.
+function amServed(row, st){
+  const ceiling=row.parent_effective||[];
+  if(st.mode!=='override') return ceiling.length;
+  return st.allow.filter(m=>ceiling.indexOf(m)>=0).length;
+}
+function renderAccessMatrix(){
+  const wrap=$('#amWrap'); if(!wrap||!_am) return;
+  const models=_am.models||[], rows=_am.rows||[];
+  $('#amScopes').textContent = (_am.scopes_read||0)+' '+_t('scopes read');
+  if(!models.length){
+    wrap.innerHTML='<div class="text-[11px] text-mut">'+esc(_t('No model configured in the org yet (add one under Models & Routing).'))+'</div>';
+    $('#amDrift').classList.add('hidden');
+    return;
+  }
+  // A real <table> with header cells, so a screen reader announces
+  // "app web · claude-sonnet · inherited" instead of a wall of buttons.
+  let h='<table class="w-full text-left border-collapse"><thead><tr>'+
+    '<th scope="col" class="text-[10px] uppercase tracking-wide text-mut font-normal pb-2 pr-4">'+esc(_t('Scope'))+'</th>';
+  models.forEach(m=>{ h+='<th scope="col" class="text-[10px] font-mono text-fg font-normal pb-2 px-2 text-center whitespace-nowrap">'+esc(m)+'</th>'; });
+  h+='<th scope="col" class="text-[10px] uppercase tracking-wide text-mut font-normal pb-2 pl-4 text-center">'+esc(_t('served'))+'</th>'+
+     '<th scope="col" class="pb-2 pl-3"><span class="sr-only">'+esc(_t('row mode'))+'</span></th></tr></thead><tbody>';
+
+  rows.forEach(row=>{
+    const st=amState(row);
+    const isOrg=row.kind==='org', isApp=row.kind==='app';
+    const kindLabel = isOrg?_t('organization'):(isApp?_t('app'):_t('team'));
+    const served=amServed(row,st);
+    // data-am-key is round-tripped through dataset into the edit map, so it is
+    // deliberately NOT escaped here beyond the attribute quoting.
+    h+='<tr class="border-t border-line/60'+(st.dirty?' bg-brand2/5':'')+'">'+
+      '<th scope="row" class="py-2 pr-4 font-normal align-middle whitespace-nowrap">'+
+        (isApp?'<span class="text-mut mr-1">└</span>':'')+
+        '<span class="text-[10px] text-mut mr-1">'+esc(kindLabel)+'</span>'+
+        '<span class="text-xs font-mono '+(isOrg?'text-fg font-semibold':'text-fg')+'">'+esc(row.label||row.id)+'</span>'+
+        (isOrg?'<span class="text-[10px] text-mut ml-2">'+esc(_t('ceiling'))+'</span>':'')+
+        (row.status==='archived'?'<span class="text-[10px] text-mut ml-2">'+esc(_t('archived'))+'</span>':'')+
+        (st.dirty?'<span class="text-[10px] text-brand2 ml-2">'+esc(_t('unsaved'))+'</span>':'')+
+      '</th>';
+    models.forEach(m=>{
+      const s=amCell(row,m);
+      const label=(row.label||row.id)+' · '+m+' · '+amStateLabel(s);
+      h+='<td class="py-1.5 px-2 text-center">'+
+        '<button type="button" data-am-key="'+esc(row.scope_key)+'" data-am-model="'+esc(m)+'"'+
+        (s==='blocked'?' disabled':'')+' title="'+esc(label)+'" aria-label="'+esc(label)+'"'+
+        ' class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[11px] '+AM_CLASS[s]+'">'+
+        AM_GLYPH[s]+'</button></td>';
+    });
+    h+='<td class="py-1.5 pl-4 text-center text-[11px] font-mono '+(st.mode==='override'?'text-fg':'text-mut')+'">'+
+        served+' / '+models.length+'</td>'+
+      // Mode column — the ROW-level state, which is the only place pinned-or-not
+      // belongs. `back to inherit` is suppressed on the org row (nothing above it to
+      // fall back to), but the cell must speak in BOTH cases: with the cells now
+      // identically green, this label is what separates "no list, so a model added
+      // later is served immediately" from "own list, so it is not".
+      '<td class="py-1.5 pl-3 text-right whitespace-nowrap">'+
+        (isOrg
+          ? '<span class="text-[10px] text-mut">'+esc(st.mode==='override'?_t('own list'):_t('no restriction'))+'</span>'
+          : (st.mode==='override'
+            ? '<button type="button" data-am-inherit="'+esc(row.scope_key)+'" class="text-[10px] text-brand2 hover:underline">'+esc(_t('back to inherit'))+'</button>'
+            : '<span class="text-[10px] text-mut">'+esc(_t('follows the level above'))+'</span>'))+
+      '</td></tr>';
   });
+  h+='</tbody></table>';
+  if(_am.truncated) h+='<div class="mt-2 text-[11px] text-amber-400">'+esc(_t('The matrix is truncated: this org has more scopes than one request can read.'))+'</div>';
+  wrap.innerHTML=h;
+
+  wrap.querySelectorAll('[data-am-model]').forEach(b=>b.onclick=()=>amToggle(b.dataset.amKey,b.dataset.amModel));
+  wrap.querySelectorAll('[data-am-inherit]').forEach(b=>b.onclick=()=>{
+    const key=b.dataset.amInherit, row=(_am.rows||[]).find(r=>r.scope_key===key); if(!row) return;
+    if(row.has_own) _amEdit[key]={mode:'inherit',allow:[]}; else delete _amEdit[key];
+    amMsg(''); renderAccessMatrix();
+  });
+  renderAccessDrift();
+}
+// Leftover declarations: models a scope names that the level above refuses. They are
+// NOT served — the chain intersects — so this strip is a cleanup list, not a warning
+// about live access. It said the opposite while a child could widen its parent.
+function renderAccessDrift(){
+  const el=$('#amDrift'); if(!el||!_am) return;
+  const d=_am.drift||[];
+  if(!d.length){ el.classList.add('hidden'); el.textContent=''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML='⚠ '+esc(_t('{n} scope(s) declare models the level above denies — those are not served').replace('{n}',d.length))+' — '+
+    d.map(r=>'<span class="font-mono">'+esc(r.kind+' '+r.id)+'</span> '+esc(_t('declares'))+' <span class="font-mono">'+esc((r.over_parent||[]).join(', '))+'</span>').join('; ')+'.';
+}
+function amMsg(text,cls){ const m=$('#amMsg'); if(!m) return; m.className='text-xs '+(cls||'text-mut'); m.textContent=text; }
+function amToggle(key,model){
+  const row=(_am.rows||[]).find(r=>r.scope_key===key); if(!row) return;
+  const st0=amState(row);
+  const inCeiling=(row.parent_effective||[]).includes(model);
+  // Outside the ceiling the only legal move is REMOVAL of an existing grant
+  // (state `over`). Anything else would be the escalation this screen exists to
+  // remove, so it is refused with the reason rather than silently ignored.
+  if(!inCeiling){
+    if(st0.mode==='override' && st0.allow.includes(model)){
+      _amEdit[key]={mode:'override',allow:st0.allow.filter(m=>m!==model)};
+      amMsg(_t('removed — the leftover declaration is gone. It was not being served.'),'text-xs text-brand');
+      renderAccessMatrix(); return;
+    }
+    amMsg(_t('A scope cannot allow a model its parent denies.'),'text-xs text-amber-400'); return;
+  }
+  const st=st0;
+  if(st.mode==='inherit'){
+    // Materialise the row from the parent's ceiling, then apply the click. Said
+    // out loud: the row stops following the level above from here on.
+    const allow=(row.parent_effective||[]).filter(m=>m!==model);
+    _amEdit[key]={mode:'override',allow:allow};
+    // The org has no level above, so the generic wording would repeat the very
+    // confusion the `open` state exists to remove. What it starts from is the
+    // catalog, and pinning it means a model added later is NOT served here.
+    amMsg((row.kind==='org'
+        ? _t('“{scope}” now pins its own list — it started from the whole catalog, so a model added later will not be served until you allow it.')
+        : _t('“{scope}” now decides for itself — it started from what the level above allows.')
+      ).replace('{scope}',row.label||row.id),'text-xs text-brand2');
+  }else{
+    const allow=st.allow.includes(model)?st.allow.filter(m=>m!==model):st.allow.concat([model]);
+    _amEdit[key]={mode:'override',allow:allow};
+    amMsg('');
+  }
+  renderAccessMatrix();
+}
+$('#amReload')&&($('#amReload').onclick=()=>{ amMsg(''); loadAccessMatrix(); });
+$('#amReset')&&($('#amReset').onclick=()=>{ _amEdit={}; amMsg(''); renderAccessMatrix(); });
+$('#amSave')&&($('#amSave').onclick=async()=>{
+  if(!_am) return;
+  const keys=Object.keys(_amEdit);
+  if(!keys.length){ amMsg(_t('no change to save')); return; }
+  // Guard the inversion: an empty list is NO RESTRICTION to the gateway, so
+  // "deny everything" would grant everything. Refuse and say why — this is the
+  // one place the UI must not simply pass the operator's input through.
+  for(const k of keys){
+    if(_amEdit[k].mode==='override' && _amEdit[k].allow.length===0){
+      const row=(_am.rows||[]).find(r=>r.scope_key===k)||{};
+      amMsg(_t('“{scope}” would be left with no model. The gateway reads an empty list as NO RESTRICTION, so that would grant everything — the opposite of what it looks like. Leave at least one model on, or archive the scope instead.').replace('{scope}',row.label||row.id),'text-xs text-amber-400');
+      return;
+    }
+  }
+  amMsg(_t('saving…'));
+  try{
+    for(const k of keys){
+      const row=(_am.rows||[]).find(r=>r.scope_key===k); if(!row) continue;
+      // PUT overwrites the scope item, so read-modify-write: keep whatever else
+      // lives at this scope (budget, rate_limits, guardrails…).
+      let q='?org='+encodeURIComponent(orgParam());
+      if(row.kind!=='org'){ q+='&team='+encodeURIComponent(row.kind==='app'?row.team:row.id); }
+      if(row.kind==='app'){ q+='&app='+encodeURIComponent(row.id); }
+      const rr=await api(API.adminApi,'/admin/config'+q);
+      const base=rr.ok?await rr.json():{};
+      Object.keys(base).forEach(x=>{ if(x.indexOf('_')===0) delete base[x]; });
+      if(_amEdit[k].mode==='inherit') delete base.allowed_models;
+      else base.allowed_models=_amEdit[k].allow.slice().sort();
+      const w=await api(API.adminApi,'/admin/config'+q,{method:'PUT',body:JSON.stringify(base)});
+      if(!w.ok){ const e=await w.json().catch(()=>({})); throw new Error(_terr(e,w)); }
+    }
+    amMsg('✓ '+_t('saved — the gateway applies it in ~15s.'),'text-xs text-brand');
+    invalidate(); await loadConfig(true); await loadAccessMatrix();
+  }catch(e){ amMsg(_t('failed: ')+e.message,'text-xs text-amber-400'); }
+});
+// Apps belong to exactly one team. Offering the whole org's apps under any team
+// let a save land on ORG#…#TEAM#a#APP#b — a scope key no API key ever resolves,
+// so it reported success and did nothing, for ever.
+function appsForTeam(team){
+  const rows=(_am&&_am.rows)||[];
+  const own=rows.filter(r=>r.kind==='app'&&r.team===team).map(r=>r.id);
+  if(own.length) return own;
+  return rows.some(r=>r.kind==='app') ? [] : appsFromConfig();
 }
 $('#lScope').onchange=syncScopeInputs; $('#lTeam').onchange=syncScopeInputs; $('#lApp').onchange=syncScopeInputs;
 $('#lAction').onchange=syncActionHint;
 RENDER.limits=async function(){
   await loadConfig();
   await loadTeamsApps(); // populates window._teams/_apps so the Team/App selects have options
+  // Before syncScopeInputs: it reads the matrix rows to filter the App select by team.
+  await loadAccessMatrix();
   await syncScopeInputs();
 };
 $('#lSave').onclick=async()=>{
   const msg=$('#lMsg'); const sc=$('#lScope').value;
   const rpm=Number($('#lRpm').value), tpm=Number($('#lTpm').value);
   const budget=Number($('#lBudget').value), action=$('#lAction').value;
-  const models=Object.keys((CFG&&CFG.routing)||{});
-  const on=[...($('#lModels').querySelectorAll('[data-lm-model]'))].filter(x=>x.dataset.on==='1').map(x=>x.dataset.lmModel);
   const scopeQ=lScopeQ();
   msg.className='text-xs text-mut'; msg.textContent=_t('saving…');
   try{
@@ -3915,8 +4209,10 @@ $('#lSave').onclick=async()=>{
     const base=Object.assign({},_lRaw); delete base._scope; delete base._effective;
     if(rpm||tpm) base.rate_limits={requests_per_minute:rpm,tokens_per_minute:tpm}; else delete base.rate_limits;
     if(budget) base.budget={limit_usd:budget,action}; else delete base.budget;
-    if(!models.length || on.length===models.length) delete base.allowed_models; // all on = inherits
-    else base.allowed_models=on;
+    // allowed_models is DELIBERATELY untouched here: the matrix owns it. `base` is
+    // a copy of this scope's raw config, so an existing list round-trips intact.
+    // Writing it from this form as well is how a model-access decision used to be
+    // reverted by an unrelated budget save (the same class of bug as cache_scope).
     const r=await api(API.adminApi,'/admin/config'+scopeQ,{method:'PUT',body:JSON.stringify(base)});
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(_terr(e,r)); }
     msg.className='text-xs text-brand'; msg.textContent='✓ '+_t('saved in scope')+' '+sc+' — '+_t('applies in ~15s.');

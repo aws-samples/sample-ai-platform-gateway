@@ -12,8 +12,79 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-16
+
+Model access became a real hierarchy: the level above is now a **ceiling** that a team or
+app can narrow but never widen, and there is a screen that shows every scope at once
+instead of one at a time. Plus the Bedrock catalog stopped being a hardcoded list.
+
+### Upgrade notes
+
+Read these two before deploying — both change behaviour on data you already have.
+
+- **`allowed_models` now resolves by INTERSECTION down the scope chain, not by
+  replacement.** Before, a list at a more specific scope replaced its parent's, so an app
+  allowing `[a,b,c]` under a team allowing `[a]` really was served `b` and `c`. Now the
+  ceiling wins and that app is served `[a]` only. **Any scope currently configured to widen
+  its parent will lose the extra models.** The console lists exactly those scopes in the
+  warning strip above the matrix, so the set is finite and reviewable before you deploy;
+  measured on the reference deployment it was empty. The rule is applied in the Core
+  (`ddbconfig`) and mirrored in Governance, with both sides verified against the shared
+  fixture `testdata/contracts/config-scope/scope-chain.json`.
+- **A DECLARED empty `allowed_models` now denies everything. It used to allow
+  everything.** `Config.allowed` tested `len(list) == 0`, so writing an empty list — which
+  is what turning every model off in the old console did — granted the entire catalog: the
+  exact opposite of the intent. An *absent* key still means "no restriction"; only a
+  present-but-empty list is a denial. This distinction is required by the intersection
+  rule, which legitimately produces the empty set when two scopes declare disjoint lists,
+  and reading that as "unrestricted" would turn two restrictions into full access. Scan for
+  affected scopes before deploying: any config item whose `allowed_models` is `[]` flips
+  from allow-all to deny-all. On the reference deployment there were none.
+
+### Added
+
+- **A model access matrix: every scope in one request.** `GET /admin/access/matrix` returns
+  the served model set for the org, every team and every app, together with each scope's own
+  declaration, its ceiling, and the models it declares that the ceiling refuses. The console
+  renders it as a grid in **Limits & Budget**, replacing the per-scope pill row that could
+  only answer "what does THIS scope get?" — answering "where do our teams and apps differ?"
+  used to cost 2×N round trips and had no screen at all. Reads run in three parallel waves
+  (org → teams → apps), reusing each parent's merge, so it costs `2 + teams + apps`
+  GetItems; past 400 scopes it answers `truncated: true` rather than timing out.
+- **The parent's ceiling is visible and unclickable.** A model the level above denies cannot
+  be switched on in a child scope, so the escalation path is absent rather than discouraged.
+  The states are distinct on shape as well as colour: allowed here, inherited, denied here,
+  forbidden above, and *declared here but denied above* — that last one is a leftover
+  declaration which is **not** served and can be removed in one click.
+- **Guard against writing an empty allowlist.** Saving a scope with every model off is
+  refused, with the reason on screen: the gateway reads an empty list as no restriction, so
+  it would grant everything.
+
 ### Fixed
 
+- **The matrix read the org's own config from the wrong key.** The org's ancestry was taken
+  from `govcore.ScopeKeys(org,"","")`, which appends `ORG#<org>#TEAM#default` — a *sibling*
+  of the other teams, not an ancestor of the org. Reading that tail as "the org's own
+  config" made the org's `allowed_models` invisible (`has_own: false` with the list plainly
+  stored) and made `orgEff` fall back to the whole catalog, so **every team was shown a
+  ceiling more permissive than the org's real one** — the one guarantee the screen exists to
+  provide. Covered by a test that fails against the previous code.
+- **`?effective=1` reset the ceiling halfway down the chain.** The accumulated ceiling was
+  read back out of the merged map each round, where the resolved value is a `[]string` while
+  a freshly decoded document holds `[]interface{}`; the type assertion failed silently and
+  the ceiling collapsed to the last level that declared one. Found by probing the live API —
+  the contract test drives the pure rule and never crosses a map, so it could not see this.
+- **A stale alias no longer produces a warning with nothing to click.** An alias removed
+  from Models & Routing but still named in a scope's list has no column in the matrix, since
+  columns come from the catalog. Lists are now clipped to the catalog, which is accurate: a
+  model with no route cannot be served whatever any list says.
+- **`allowed_models` had two owners in the console and the wrong one could win.** The
+  Limits & Budget form wrote it alongside rate limit and budget, so an unrelated budget save
+  could revert a model-access decision — the same class of bug as the `cache_scope` drop in
+  1.1.1. The matrix is now its only owner; the limits form round-trips the field untouched.
+- **The app selector offered every app in the org under any team**, so a save could land on
+  `ORG#o#TEAM#a#APP#b` — a scope key no API key ever resolves. It reported success and did
+  nothing, permanently. The selector is now filtered to the selected team's apps.
 - **Bedrock model discovery listed ~12 of the ~103 models you can actually invoke.**
   Two independent defects added up to that number. The console's Bedrock dropdown was a
   hardcoded table in `console.js`, so it only ever showed what someone last typed into it.

@@ -448,6 +448,68 @@ export const APPS = [
   { id: 'internal-tools', team: 'support', display_name: 'Internal tools', status: 'active' },
 ];
 
+// ------------------------------------------------- model access matrix
+// What GET /admin/access/matrix answers. Built with the SAME rules the Go side
+// applies (access_matrix.go), so the offline console exercises the real states:
+//
+//   · a scope with no list of its own INHERITS (has_own false) — the state the old
+//     pill row used to draw as "everything allowed here";
+//   · parent_effective is the ceiling, and any model outside it renders as
+//     forbidden and unclickable;
+//   · one app deliberately grants MORE than its team, so the drift strip and the
+//     over_parent field are visible without a real misconfigured org.
+export function ACCESS_MATRIX() {
+  const catalog = MODEL_ORDER.slice().sort();
+  const orgEff = catalog;
+  const rows = [
+    { kind: 'org', id: ORG_ID, label: ORG_NAME, scope_key: `ORG#${ORG_ID}`,
+      has_own: false, own: [], effective: orgEff, parent_effective: catalog, over_parent: [] },
+  ];
+  // team -> its own list (null = inherits), then its apps
+  const shape = [
+    ['platform', 'Platform', 'active', null, [
+      ['web', 'Web', 'active', null],
+      ['batch-jobs', 'Batch jobs', 'active', ['nova-lite', 'llama-scout']],
+    ]],
+    ['growth', 'Growth', 'active', ['claude-sonnet', 'nova-lite', 'llama-scout'], [
+      ['mobile', 'Mobile', 'active', ['nova-lite']],
+    ]],
+    ['support', 'Support', 'active', ['nova-lite'], [
+      // Grants a model the team denies — legal today (lists replace on merge),
+      // and exactly what the drift strip is for.
+      ['internal-tools', 'Internal tools', 'active', ['nova-lite', 'claude-sonnet']],
+    ]],
+  ];
+  // Mirrors the real resolution rule (govcore.IntersectAllowed / ddbconfig): the
+  // level above is a CEILING, so a scope's own list is INTERSECTED with it, never
+  // substituted for it. A fixture that kept the old replace rule would make the
+  // offline console show access the gateway no longer grants.
+  const inter = (parent, own) => (own === null ? parent.slice() : own.filter((m) => parent.includes(m)));
+  // Computed against OWN, not against effective: after intersection nothing can
+  // exceed the ceiling, so comparing the effective set would always be empty and the
+  // leftover declaration would never be reported.
+  const over = (own, parent) => (own === null ? [] : own.filter((m) => !parent.includes(m)));
+  for (const [tid, tname, tstatus, tOwn, apps] of shape) {
+    const tEff = inter(orgEff, tOwn);
+    rows.push({ kind: 'team', id: tid, label: tname, status: tstatus,
+      scope_key: `ORG#${ORG_ID}#TEAM#${tid}`,
+      has_own: !!tOwn, own: tOwn || [], effective: tEff,
+      parent_effective: orgEff, over_parent: over(tOwn, orgEff) });
+    for (const [aid, aname, astatus, aOwn] of apps) {
+      const aEff = inter(tEff, aOwn);
+      rows.push({ kind: 'app', id: aid, team: tid, label: aname, status: astatus,
+        scope_key: `ORG#${ORG_ID}#TEAM#${tid}#APP#${aid}`,
+        has_own: !!aOwn, own: aOwn || [], effective: aEff,
+        parent_effective: tEff, over_parent: over(aOwn, tEff) });
+    }
+  }
+  return {
+    org: ORG_ID, models: catalog, rows,
+    drift: rows.filter((r) => r.over_parent.length),
+    truncated: false, scopes_read: 2 + shape.length + shape.reduce((n, s) => n + s[4].length, 0),
+  };
+}
+
 export const MEMBERS = [
   { email: 'dana@acme.example', role: 'owner', team: 'platform', apps: ['web'], status: 'CONFIRMED', enabled: true },
   { email: 'ravi@acme.example', role: 'admin', team: 'platform', apps: ['web', 'batch-jobs'], status: 'CONFIRMED', enabled: true },

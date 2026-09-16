@@ -454,8 +454,14 @@ func TestAllowed(t *testing.T) {
 		model string
 		want  bool
 	}{
-		{"an empty list allows everything", nil, "qualquer", true},
-		{"an explicit empty list allows everything", []string{}, "qualquer", true},
+		{"never declared (nil) allows everything", nil, "qualquer", true},
+		// CHANGED, deliberately. This case used to expect true, characterising the
+		// behaviour that made "deny everything" mean "allow everything": the chain now
+		// resolves allowed_models by INTERSECTION, so a team allowing [a] under an app
+		// allowing [b] produces a declared EMPTY list. Reading that as "allowed" turned
+		// two restrictions into access to the whole catalog. nil (absent) still means
+		// unrestricted; declared-empty is a denial.
+		{"a DECLARED empty list denies everything", []string{}, "qualquer", false},
 		{"present in the list", []string{"a", "b"}, "a", true},
 		{"absent from the list", []string{"a", "b"}, "c", false},
 	}

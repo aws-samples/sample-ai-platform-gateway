@@ -903,8 +903,39 @@
       <div class="max-w-full space-y-4">
         <div class="text-xs text-mut" data-i18n="Guardrails that keep the invoice free of surprises and stop one noisy team from hurting the others. The gateway applies them within ~15s.">Guardrails that keep the invoice free of surprises and stop one noisy team from hurting the others. The gateway applies them within ~15s.</div>
 
+        <!-- MODEL ACCESS MATRIX — every scope at once.
+             This card is the ONLY owner of allowed_models. The "Where to apply"
+             selector below governs the rate limit and the budget, and nothing else:
+             two forms writing the same field is how a governance decision gets
+             silently reverted by an unrelated save. -->
         <div class="bg-panel border border-line rounded-xl p-5">
-          <div class="text-xs uppercase tracking-wide text-mut mb-3" data-i18n="Where to apply">Where to apply</div>
+          <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+            <div class="text-xs uppercase tracking-wide text-mut" data-i18n="Model access by scope">Model access by scope</div>
+            <div class="flex items-center gap-3">
+              <span id="amScopes" class="text-[10px] text-mut"></span>
+              <button id="amReload" class="text-[11px] text-brand2 hover:underline" data-i18n="reload">reload</button>
+            </div>
+          </div>
+          <div class="text-[11px] text-mut mb-3" data-i18n="Which models each team and app is actually served. A scope either follows the level above or decides for itself: there is one list per scope, so that choice belongs to the row, not to a single model. The level above is a ceiling — a scope can narrow it, never widen it.">Which models each team and app is actually served. A scope either follows the level above or decides for itself: there is one list per scope, so that choice belongs to the row, not to a single model. The level above is a ceiling — a scope can narrow it, never widen it.</div>
+          <div id="amDrift" class="hidden mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-400"></div>
+          <div id="amWrap" class="overflow-x-auto"></div>
+          <div class="flex flex-wrap items-center gap-x-5 gap-y-2 mt-4 text-[10px] text-mut">
+            <span><span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand text-ink font-semibold" aria-hidden="true">✓</span> <span data-i18n="allowed here">allowed here</span></span>
+            <span><span class="inline-flex items-center justify-center w-5 h-5 rounded-full border border-line text-mut" aria-hidden="true">↑</span> <span data-i18n="inherited">inherited</span></span>
+            <span><span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500/15 border border-amber-500 text-amber-400" aria-hidden="true">✕</span> <span data-i18n="declared but denied above — not served">declared but denied above — not served</span></span>
+            <span><span class="inline-flex items-center justify-center w-5 h-5 rounded-full border border-rose-400 text-rose-400" aria-hidden="true">✕</span> <span data-i18n="denied here">denied here</span></span>
+            <span><span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-panel2 border border-line text-mut" aria-hidden="true">–</span> <span data-i18n="forbidden by the parent — not clickable">forbidden by the parent — not clickable</span></span>
+          </div>
+          <div class="flex items-center gap-3 mt-4">
+            <button id="amSave" class="px-4 py-2 rounded-lg bg-brand text-ink font-semibold text-sm hover:brightness-110" data-i18n="Save model access">Save model access</button>
+            <button id="amReset" class="px-3 py-2 rounded-lg border border-line text-sm text-mut hover:bg-panel2" data-i18n="discard changes">discard changes</button>
+            <span id="amMsg" class="text-xs"></span>
+          </div>
+        </div>
+
+        <div class="bg-panel border border-line rounded-xl p-5">
+          <div class="text-xs uppercase tracking-wide text-mut mb-1" data-i18n="Where to apply">Where to apply</div>
+          <div class="text-[11px] text-mut mb-3" data-i18n="Rate limit and budget only — model access is set in the matrix above.">Rate limit and budget only — model access is set in the matrix above.</div>
           <div class="flex flex-wrap items-end gap-3">
             <div>
               <label for="lScope" class="block text-[11px] text-mut mb-1" data-i18n="Scope">Scope</label>
@@ -972,15 +1003,6 @@
             </div>
           </div>
           <div id="lActionHint" class="text-[11px] text-mut mt-3"></div>
-        </div>
-
-        <div class="bg-panel border border-line rounded-xl p-5">
-          <div class="flex items-center justify-between mb-1">
-            <div class="text-xs uppercase tracking-wide text-mut" data-i18n="Allowed models">Allowed models</div>
-            <span id="lModelsInherit" class="text-[10px] text-mut"></span>
-          </div>
-          <div class="text-[11px] text-mut mb-3 opacity-80" data-i18n="(all on = inherits / no restriction)">(all on = inherits / no restriction)</div>
-          <div id="lModels" class="flex flex-wrap gap-1.5"></div>
         </div>
 
         <div class="flex items-center gap-3">

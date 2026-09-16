@@ -199,7 +199,9 @@ func classify(d Decision, requested Candidate, hasRequested bool, served Candida
 
 // ineligible applies layer (a). Returns (reason, false) when it discards.
 func ineligible(c Candidate, pol Policy, req RequestShape, id Identity) (string, bool) {
-	if !allowedIn(pol.AllowedModels, c.Model) {
+	// modelAllowedIn, not allowedIn: an empty allowed_models is a DECLARED denial
+	// coming out of the ceiling intersection, not "no restriction". See its doc.
+	if !modelAllowedIn(pol.AllowedModels, c.Model) {
 		return DiscardNotAllowed, false
 	}
 	if !tierAllowed(c, pol, id) {

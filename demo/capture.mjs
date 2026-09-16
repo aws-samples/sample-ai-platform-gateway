@@ -60,7 +60,7 @@ const SHOTS = [
     },
   },
   { name: 'guardrails', view: 'guardrails', wait: '#grList [data-gr]', h: 700 },
-  { name: 'limits', view: 'limits', wait: '#lModels [data-lm-model]', h: 860 },
+  { name: 'limits', view: 'limits', wait: '#amWrap [data-am-model]', h: 940 },
   { name: 'teams', view: 'teams', wait: '#tGrid .rounded-xl', full: true },
   { name: 'keys', view: 'keys', wait: '#kRows tr', h: 800 },
   { name: 'alerts', view: 'alerts', wait: '#alList [data-al]', full: true },

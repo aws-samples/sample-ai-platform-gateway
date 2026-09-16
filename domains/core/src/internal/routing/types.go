@@ -238,10 +238,36 @@ type Decision struct {
 	ServedModelID string
 }
 
-// allowedIn tells whether model is in the list; an empty list allows everything,
-// preserving the semantics the router already uses in Config.allowed().
+// allowedIn tells whether model is in the list; an empty list allows everything.
+//
+// Used for FeatureTiers, where "no tiers declared" genuinely means "no tier
+// restriction". Do NOT use it for allowed_models — see modelAllowedIn.
 func allowedIn(list []string, model string) bool {
 	if len(list) == 0 {
+		return true
+	}
+	for _, m := range list {
+		if m == model {
+			return true
+		}
+	}
+	return false
+}
+
+// modelAllowedIn is allowedIn's stricter sibling, for allowed_models ONLY.
+//
+// The difference is what an EMPTY list means, and it matters because the scope
+// chain resolves allowed_models by INTERSECTION (ddbconfig.intersectAllowed): a
+// team allowing [a] under an app allowing [b] produces the empty set. Reading that
+// as "allow everything" would turn two restrictions into full catalog access.
+//
+//	nil            → never declared anywhere in the chain, so no restriction;
+//	declared empty → a denial, produced by disjoint ceilings; nothing is served.
+//
+// Kept separate from allowedIn on purpose: FeatureTiers shares that helper and an
+// empty tier list there is a legitimate "no restriction".
+func modelAllowedIn(list []string, model string) bool {
+	if list == nil {
 		return true
 	}
 	for _, m := range list {

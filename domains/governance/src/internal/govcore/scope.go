@@ -62,8 +62,62 @@ func ScopeKeys(org, team, app string) []string {
 	return keys
 }
 
+// IntersectAllowed resolves a parent ceiling against a child declaration of
+// `allowed_models`, which is the ONE config key that does NOT follow DeepMerge's
+// replace rule — a parent has to be a ceiling, not merely a default.
+//
+// nil means "never declared"; a non-nil empty slice means "declared, and it denies
+// everything". That distinction is the whole design:
+//
+//	both nil       → nil: no restriction anywhere in the chain;
+//	parent nil     → the child's list stands (nothing above to narrow it);
+//	child nil      → the parent's ceiling is inherited unchanged;
+//	both declared  → set intersection, in the CHILD's order.
+//
+// Disjoint declarations therefore produce a non-nil EMPTY slice, and the gateway
+// reads that as "deny everything" (core internal/gateway.Config.allowed). Reading it
+// as "allow everything" — which is what the predicate did before this rule existed —
+// turned two restrictions into access to the entire catalog.
+//
+// Duplicated on purpose in the Core (ddbconfig.intersectAllowed): no shared library
+// across domains (D3). The contract that keeps the two from drifting is the fixture
+// at testdata/contracts/config-scope/scope-chain.json, verified by both sides.
+//
+// Always allocates: callers cache merged maps by reference, so filtering in place
+// would corrupt a value someone else still holds.
+func IntersectAllowed(parent, child []string) []string {
+	switch {
+	case parent == nil && child == nil:
+		return nil
+	case parent == nil:
+		out := make([]string, len(child))
+		copy(out, child)
+		return out
+	case child == nil:
+		out := make([]string, len(parent))
+		copy(out, parent)
+		return out
+	}
+	in := make(map[string]bool, len(parent))
+	for _, m := range parent {
+		in[m] = true
+	}
+	out := make([]string, 0, len(child))
+	for _, m := range child {
+		if in[m] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // DeepMerge overlays src onto dst: maps merge by key; scalars and lists replace.
 // It is what allows an org to add a model without repeating the whole catalog.
+//
+// `allowed_models` is the single exception and is NOT handled here: it resolves by
+// intersection (IntersectAllowed), folded by the caller. Making this function
+// generically list-intersecting would break model_order, feature_policy.models and
+// the bundle layers, which all depend on replace.
 func DeepMerge(dst, src map[string]interface{}) {
 	for k, v := range src {
 		if sv, ok := v.(map[string]interface{}); ok {

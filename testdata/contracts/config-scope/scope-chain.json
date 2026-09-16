@@ -48,5 +48,56 @@
       "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#default", "ORG#acme#TEAM#default#APP#web"],
       "scope_key_core": "global"
     }
+  ],
+
+  "allowed_models_note": "allowed_models is the ONE config key that does NOT follow the replace rule the rest of the merge uses: a parent scope must be a CEILING, not a default. Before this, a child's list replaced its parent's, so an app could be served models its team denied. Both domains resolve it by intersection and both are verified against these cases with no shared code (D3): the Core folds them with ddbconfig.foldAllowed, Governance with govcore.IntersectAllowed. `levels` is the chain from least to most specific; a level with no `allowed_models` key declares nothing. The nil/empty distinction is load-bearing — `expect_declared:false` means the key is ABSENT from the effective config (no restriction), while `expect_declared:true` with `expect:[]` means DECLARED EMPTY, which denies everything. Reading a declared-empty list as 'allow everything' is what turned two restrictions into full catalog access.",
+  "allowed_models_cases": [
+    {
+      "name": "nobody declares: no restriction",
+      "levels": [{}, {}, {}, {}],
+      "expect_declared": false
+    },
+    {
+      "name": "only the org declares: that list is the ceiling all the way down",
+      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {}, {}],
+      "expect_declared": true,
+      "expect": ["a", "b", "c"]
+    },
+    {
+      "name": "a child narrows its parent",
+      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {"allowed_models": ["a", "b"]}, {"allowed_models": ["a"]}],
+      "expect_declared": true,
+      "expect": ["a"]
+    },
+    {
+      "name": "a child CANNOT widen its parent: the extra models are dropped",
+      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {"allowed_models": ["a"]}, {"allowed_models": ["a", "b", "c"]}],
+      "expect_declared": true,
+      "expect": ["a"]
+    },
+    {
+      "name": "an app declaring ONLY models its team denies is served nothing, not everything",
+      "levels": [{}, {}, {"allowed_models": ["a"]}, {"allowed_models": ["b"]}],
+      "expect_declared": true,
+      "expect": []
+    },
+    {
+      "name": "a declared empty list anywhere denies everything below it",
+      "levels": [{}, {"allowed_models": ["a", "b"]}, {"allowed_models": []}, {}],
+      "expect_declared": true,
+      "expect": []
+    },
+    {
+      "name": "the child's order is preserved, not the parent's",
+      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {}, {"allowed_models": ["c", "a"]}],
+      "expect_declared": true,
+      "expect": ["c", "a"]
+    },
+    {
+      "name": "a level below an undeclared one still narrows what came above it",
+      "levels": [{"allowed_models": ["a", "b", "c"]}, {}, {}, {"allowed_models": ["b"]}],
+      "expect_declared": true,
+      "expect": ["b"]
+    }
   ]
 }

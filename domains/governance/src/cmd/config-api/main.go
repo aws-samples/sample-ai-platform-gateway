@@ -1489,10 +1489,32 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if q["effective"] == "1" || q["effective"] == "true" {
 			chain := scopeKeys(gorg, effTeam(q["team"]), q["app"])
 			merged := map[string]interface{}{}
+			// allowed_models resolves by INTERSECTION, not replacement, so it is
+			// folded separately — deepMerge would let a child widen its parent here
+			// while the gateway (which intersects) refuses the extra models, and this
+			// endpoint's whole contract is to be "what the Core applies at runtime".
+			//
+			// The ceiling is carried in a LOCAL accumulator instead of being read back
+			// out of `merged` each round. Round-tripping it through the map looks
+			// equivalent and is not: the resolved value is a []string while a
+			// freshly-decoded document holds []interface{}, so the next read's type
+			// assertion failed and the ceiling silently reset to the last level that
+			// declared one. Measured against the live API, not caught by the contract
+			// test — which drives the pure rule and never touches this plumbing.
+			var allowedAcc []string
 			for _, k := range chain {
 				if m := readScope(ctx, k); m != nil {
+					child := allowedFrom(m)
 					deepMerge(merged, m)
+					allowedAcc = govcore.IntersectAllowed(allowedAcc, child)
 				}
+			}
+			// deepMerge left the last declaring level's raw list in place; replace it
+			// with the resolved ceiling, or drop the key when nothing declared one.
+			if allowedAcc != nil {
+				merged["allowed_models"] = allowedAcc
+			} else {
+				delete(merged, "allowed_models")
 			}
 			merged["_scope"] = chain
 			merged["_effective"] = true
@@ -1619,6 +1641,34 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			}
 		}
 		return resp(200, map[string]string{"status": "saved", "scope": key}, origin)
+
+	// GET /admin/access/matrix?org= — the served model set for EVERY scope of the
+	// org in ONE request (see access_matrix.go for why it exists and what it must
+	// respect). Read-only: it aggregates exactly what GET /admin/config already
+	// returns per scope, so it carries the same authorization as that endpoint —
+	// any authenticated caller reads its own org, and a team-scoped caller is
+	// filtered to its own team. Gating this on canAdmin would be stricter than the
+	// endpoint it aggregates, which would only push the console back to N calls.
+	case strings.HasSuffix(path, "/admin/access/matrix") && method == "GET":
+		org, okScope := forceOrg(req.QueryStringParameters["org"])
+		if !okScope || org == "" {
+			return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
+		}
+		if !authCtx.CanAccessOrg(org) {
+			writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role,
+				"unauthorized_access_attempt", fmt.Sprintf("org:%s", org), "")
+			return resp(403, map[string]string{"error": "access denied"}, origin)
+		}
+		// A team-scoped caller must not read another team's policy. Without this
+		// filter the aggregation would hand a dev pinned to team A the whole org's
+		// configuration in a single call — the very leak the per-scope endpoint
+		// avoids by forcing effTeam.
+		matrixTeam := ""
+		if teamScoped {
+			matrixTeam = claimTeam
+		}
+		mx := buildAccessMatrix(ctx, readScope, org, readOrgTree(ctx, org), matrixTeam)
+		return resp(200, mx, origin)
 
 	// Provider credit (AWS Activate, Google Cloud credits, etc.).
 	//

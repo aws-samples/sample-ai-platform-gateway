@@ -191,6 +191,10 @@ const server = createServer(async (req, res) => {
     const models = fx.bedrockModels(q.get('region') || 'us-east-1');
     return json(res, { models, count: models.length, region: q.get('region') || 'us-east-1', byo: !!q.get('role_arn') });
   }
+  // The whole-hierarchy model access view. Without this route the Limits panel
+  // renders an error where the matrix belongs, which is worse than the defect it
+  // replaces — the local run has to show the real states.
+  if (p === '/admin/access/matrix') return json(res, fx.ACCESS_MATRIX());
   if (p === '/admin/members') return json(res, { team_tier: true, members: fx.MEMBERS });
   if (p === '/admin/credits') return json(res, { credits: fx.CREDITS });
   if (p === '/admin/audit') return json(res, { entries: fx.ADMIN_AUDIT });

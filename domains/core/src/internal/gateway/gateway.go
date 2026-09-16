@@ -212,10 +212,19 @@ type CreditDecl struct {
 	ExpiresAt    string  `json:"expires_at,omitempty"` // YYYY-MM-DD
 }
 
-// allowed says whether the model is permitted in the effective scope (an empty
-// list means everything is allowed).
+// allowed says whether the model is permitted in the effective scope.
+//
+//	nil            → allowed_models was never declared in the chain: no restriction;
+//	declared empty → a denial. The chain resolves allowed_models by INTERSECTION
+//	                 (ddbconfig.intersectAllowed), so a team allowing [a] with an
+//	                 app allowing [b] yields the empty set. This used to test
+//	                 len==0 and answered "allowed" there, which turned two
+//	                 restrictions into access to the whole catalog.
+//
+// A JSON `[]` decodes to a non-nil empty slice and an absent key to nil, so the
+// two cases survive the map→Config round trip in loadConfig.
 func (c *Config) allowed(model string) bool {
-	if len(c.AllowedModels) == 0 {
+	if c.AllowedModels == nil {
 		return true
 	}
 	for _, m := range c.AllowedModels {
