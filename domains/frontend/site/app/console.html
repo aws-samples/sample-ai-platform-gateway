@@ -889,6 +889,52 @@
             </select>
           </div>
         </div>
+        <!-- LONG ANSWERS. Both fields belong on this screen rather than in an API-only
+             config, because both are already visible as an incident: a reasoning model
+             that thinks for minutes looks like a hung request, and a request that runs
+             to the runtime's limit looks like a dropped one. -->
+        <div class="grid md:grid-cols-2 gap-3">
+          <div class="bg-panel border border-line rounded-xl p-4">
+            <div class="text-sm font-medium mb-1" data-i18n="Long answers">Long answers</div>
+            <div class="text-[11px] text-mut mb-2" data-i18n="A reasoning model can think for minutes before its first token. Idle timeouts count &lt;b&gt;bytes, not progress&lt;/b&gt;, so a proxy closes the connection on a request that was working. A keepalive signal is sent during the silence — it is a comment frame, ignored by clients, never billed and never counted as content.">A reasoning model can think for minutes before its first token. Idle timeouts count <b>bytes, not progress</b>, so a proxy closes the connection on a request that was working. A keepalive signal is sent during the silence — it is a comment frame, ignored by clients, never billed and never counted as content.</div>
+            <label for="rKeepalive" class="block text-[11px] text-mut mb-1" data-i18n="Keepalive during silence">Keepalive during silence</label>
+            <select id="rKeepalive" class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm">
+              <option value="0" data-i18n="every 15s (default)">every 15s (default)</option>
+              <option value="10" data-i18n="every 10s — behind a stricter proxy">every 10s — behind a stricter proxy</option>
+              <option value="30" data-i18n="every 30s">every 30s</option>
+              <option value="-1" data-i18n="off — only if a client rejects comment frames">off — only if a client rejects comment frames</option>
+            </select>
+          </div>
+          <div class="bg-panel border border-line rounded-xl p-4">
+            <div class="text-sm font-medium mb-1" data-i18n="Generation time limit">Generation time limit</div>
+            <div class="text-[11px] text-mut mb-2" data-i18n="Stops generation early enough to still send the closing frames and record the cost. Without it a request that hits the platform limit is cut mid-answer and the tokens the provider already billed are never accounted for. This can only &lt;b&gt;shorten&lt;/b&gt; the platform limit, never extend it.">Stops generation early enough to still send the closing frames and record the cost. Without it a request that hits the platform limit is cut mid-answer and the tokens the provider already billed are never accounted for. This can only <b>shorten</b> the platform limit, never extend it.</div>
+            <label for="rReqTimeout" class="block text-[11px] text-mut mb-1" data-i18n="Stop generating after">Stop generating after</label>
+            <select id="rReqTimeout" class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm">
+              <option value="0" data-i18n="the platform limit (default)">the platform limit (default)</option>
+              <option value="30000" data-i18n="30 seconds">30 seconds</option>
+              <option value="60000" data-i18n="60 seconds">60 seconds</option>
+              <option value="120000" data-i18n="2 minutes">2 minutes</option>
+              <option value="300000" data-i18n="5 minutes">5 minutes</option>
+            </select>
+          </div>
+        </div>
+        <!-- THINKING BUDGET CEILING. This is a cost control, not a tuning knob: a caller
+             sending reasoning_effort:"high" is making a client-side decision with a
+             provider-side price, since thinking tokens are billed as output tokens. -->
+        <div class="grid md:grid-cols-2 gap-3">
+          <div class="bg-panel border border-line rounded-xl p-4">
+            <div class="text-sm font-medium mb-1" data-i18n="Thinking budget ceiling">Thinking budget ceiling</div>
+            <div class="text-[11px] text-mut mb-2" data-i18n="A client asks how hard to think (&lt;code&gt;reasoning_effort&lt;/code&gt;) and thinking is billed as &lt;b&gt;output tokens&lt;/b&gt;, so without a ceiling one caller can multiply what every request costs you without anything changing on your side. Requests above this are served with the budget reduced to it, and the reduction is recorded in the ledger — never silently. Only models you marked as reasoning-capable on the Models tab receive these requests.">A client asks how hard to think (<code>reasoning_effort</code>) and thinking is billed as <b>output tokens</b>, so without a ceiling one caller can multiply what every request costs you without anything changing on your side. Requests above this are served with the budget reduced to it, and the reduction is recorded in the ledger — never silently. Only models you marked as reasoning-capable on the Models tab receive these requests.</div>
+            <label for="rThinkMax" class="block text-[11px] text-mut mb-1" data-i18n="Most thinking one request may buy">Most thinking one request may buy</label>
+            <select id="rThinkMax" class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm">
+              <option value="0" data-i18n="8k tokens (default)">8k tokens (default)</option>
+              <option value="1024" data-i18n="1k tokens — low effort only">1k tokens — low effort only</option>
+              <option value="4096" data-i18n="4k tokens — up to medium effort">4k tokens — up to medium effort</option>
+              <option value="16384" data-i18n="16k tokens — full high effort">16k tokens — full high effort</option>
+              <option value="32768" data-i18n="32k tokens — the maximum allowed">32k tokens — the maximum allowed</option>
+            </select>
+          </div>
+        </div>
         </div><!-- /Settings tab -->
 
         <div class="mt-4 flex items-center gap-3">

@@ -131,7 +131,82 @@ var _ ports.Provider = (*Adapter)(nil) // compile-time assertion
 
 func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Result, error) {
 	cli := a.Pool.ClientFor(ctx, a.Route)
-	return callBedrock(ctx, cli, a.ModelID, in.Messages, in.Tools, a.CachePrefix)
+	return callBedrock(ctx, cli, a.ModelID, in, a.CachePrefix)
+}
+
+// converseAPI is the narrow slice of the Bedrock client the buffered path needs, so the
+// request it BUILDS can be inspected without a live client.
+//
+// The streaming path already had this seam (converseStreamAPI) and the buffered one did not,
+// which is not a cosmetic asymmetry: it meant no test could see what callBedrock actually put
+// on the wire. Reintroducing "drop every inference parameter here" as an experiment left the
+// suite green, because the only coverage was of the helper and never of the call site. Same
+// structural gap that let the reasoning block go unhandled in this file for as long as it did.
+type converseAPI interface {
+	Converse(ctx context.Context, params *bedrockruntime.ConverseInput, optFns ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
+}
+
+// applyInference fills Converse's InferenceConfig and AdditionalModelRequestFields from
+// the request.
+//
+// Written once and used by BOTH the buffered and the streaming input, because the two
+// structs are separate types with identical members: the previous shape (each path
+// building its own literal) is exactly how the two paths drift, and the half that drifts
+// silently is the one nobody tests.
+//
+// EVERY field is conditional. Sending a zero we invented is not a neutral act — a
+// temperature of 0 makes the model deterministic and a max_tokens of 0 is rejected — so
+// "the client said nothing" has to reach the provider as an absent field, letting the
+// model's own default stand.
+func applyInference(in ports.InvokeInput) (*btypes.InferenceConfiguration, document.Interface) {
+	var cfg *btypes.InferenceConfiguration
+	ensure := func() *btypes.InferenceConfiguration {
+		if cfg == nil {
+			cfg = &btypes.InferenceConfiguration{}
+		}
+		return cfg
+	}
+	if in.MaxOutputTokens > 0 {
+		ensure().MaxTokens = aws.Int32(int32(in.MaxOutputTokens))
+	}
+	if t := in.Inference.Temperature; t != nil {
+		ensure().Temperature = aws.Float32(float32(*t))
+	}
+	if p := in.Inference.TopP; p != nil {
+		ensure().TopP = aws.Float32(float32(*p))
+	}
+	if len(in.Inference.Stop) > 0 {
+		ensure().StopSequences = in.Inference.Stop
+	}
+
+	// Extended thinking is not part of Converse's typed surface: it travels in
+	// additionalModelRequestFields, which is a free-form document. That is precisely why
+	// the gateway resolves and clamps the budget BEFORE here — this function must never be
+	// the place that decides how much thinking a customer may buy, and it must never pass
+	// through a value it did not construct itself.
+	r := in.Inference.Reasoning
+	if r == nil {
+		return cfg, nil
+	}
+	if r.Disabled {
+		// An explicit "do not think". Bedrock has no "off" switch for a model that reasons
+		// intrinsically (DeepSeek-R1 always thinks), so this only silences the models that
+		// treat thinking as opt-in — which is honest: we send what the provider accepts and
+		// never pretend to have disabled something we cannot.
+		return cfg, nil
+	}
+	if r.BudgetTokens <= 0 {
+		return cfg, nil
+	}
+	// Anthropic on Bedrock requires max_tokens > budget_tokens. The gateway guarantees the
+	// invariant and records any clamp in the ledger; asserting it again here would either
+	// duplicate that logic or disagree with it.
+	return cfg, toSmithyDocument(map[string]interface{}{
+		"thinking": map[string]interface{}{
+			"type":          "enabled",
+			"budget_tokens": r.BudgetTokens,
+		},
+	})
 }
 
 // ConvertToolsToBedrockConfig converts tools from the boundary format into
@@ -284,8 +359,8 @@ func convertMessages(msgs []ports.Message) (system []btypes.SystemContentBlock, 
 	return system, conv
 }
 
-func callBedrock(ctx context.Context, cli *bedrockruntime.Client, modelID string, msgs []ports.Message, tools []ports.ToolDef, cachePrefix bool) (ports.Result, error) {
-	system, conv := convertMessages(msgs)
+func callBedrock(ctx context.Context, cli converseAPI, modelID string, in ports.InvokeInput, cachePrefix bool) (ports.Result, error) {
+	system, conv := convertMessages(in.Messages)
 
 	// Prompt caching (per-route opt-in): marks the end of system with a cache point.
 	// Bedrock caches the stable prefix (system) and charges a cheap cache-read on
@@ -300,13 +375,30 @@ func callBedrock(ctx context.Context, cli *bedrockruntime.Client, modelID string
 	if len(system) > 0 {
 		input.System = system
 	}
-	if tc := ConvertToolsToBedrockConfig(tools); tc != nil {
+	if tc := ConvertToolsToBedrockConfig(in.Tools); tc != nil {
 		input.ToolConfig = tc
+	}
+	if cfg, extra := applyInference(in); cfg != nil || extra != nil {
+		input.InferenceConfig = cfg
+		input.AdditionalModelRequestFields = extra
 	}
 
 	out, err := cli.Converse(ctx, input)
 	if err != nil {
 		return ports.Result{}, err
+	}
+	return parseConverseOutput(out)
+}
+
+// parseConverseOutput turns a buffered Converse response into a ports.Result.
+//
+// Split out of callBedrock so it can be tested at all: the parsing used to sit inline,
+// one statement after a live cli.Converse call, which meant the only way to exercise it
+// was to call Bedrock for real. That is exactly how the reasoning block went unhandled
+// here for as long as it did — there was no seam at which to notice.
+func parseConverseOutput(out *bedrockruntime.ConverseOutput) (ports.Result, error) {
+	if out == nil {
+		return ports.Result{}, fmt.Errorf("empty bedrock output")
 	}
 	msg, ok := out.Output.(*btypes.ConverseOutputMemberMessage)
 	if !ok || len(msg.Value.Content) == 0 {
@@ -319,11 +411,33 @@ func callBedrock(ctx context.Context, cli *bedrockruntime.Client, modelID string
 	if out.StopReason != "" {
 		stopReason = string(out.StopReason)
 	}
+	reasoning, reasoningSig := "", ""
+	reasoningRedacted := false
 
 	for _, block := range msg.Value.Content {
 		switch b := block.(type) {
 		case *btypes.ContentBlockMemberText:
 			txt = b.Value
+		case *btypes.ContentBlockMemberReasoningContent:
+			// Same defect as the streaming switch had: a thinking model returns its chain
+			// of thought as its OWN content block, and a switch that only knows text and
+			// toolUse drops it. Buffered mode hid it better than streaming did — the answer
+			// still arrived, so nothing looked broken, while the signature that lets the
+			// chain continue on the next turn was thrown away every time.
+			switch r := b.Value.(type) {
+			case *btypes.ReasoningContentBlockMemberReasoningText:
+				reasoning += aws.ToString(r.Value.Text)
+				// The signature is opaque metadata, never content. It is also the only
+				// thing that makes this reasoning reusable in a later turn, which is why
+				// it is kept even though nothing renders it.
+				if sig := aws.ToString(r.Value.Signature); sig != "" {
+					reasoningSig = sig
+				}
+			case *btypes.ReasoningContentBlockMemberRedactedContent:
+				// The model thought and the provider encrypted it. Recorded so that
+				// "did not think" stays distinguishable from "not shown to us".
+				reasoningRedacted = true
+			}
 		case *btypes.ContentBlockMemberToolUse:
 			var argsMap interface{}
 			if b.Value.Input != nil {
@@ -361,5 +475,7 @@ func callBedrock(ctx context.Context, cli *bedrockruntime.Client, modelID string
 	return ports.Result{
 		Text: txt, InputTokens: tin, OutputTokens: tout, ToolCalls: toolCalls, StopReason: stopReason,
 		CacheReadInputTokens: cacheRead, CacheWriteInputTokens: cacheWrite, CacheCounters: cacheConv,
+		Reasoning: reasoning, ReasoningChars: len(reasoning),
+		ReasoningSignature: reasoningSig, ReasoningRedacted: reasoningRedacted,
 	}, nil
 }

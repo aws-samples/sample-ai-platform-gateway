@@ -85,6 +85,13 @@ domains/frontend/midway-edge/
 # normalmente; o plano em si, não.
 .kiro/specs/
 
+# Kiro skills — workflows de auditoria/verificação do autor. Mesma categoria do
+# steering e dos specs: processo de engenharia, não produto. Este em particular
+# NÃO pode ser versionado: cita caminhos e nomes de infraestrutura interna
+# (midway-edge, branch de release), o que violaria a regra de "zero referência
+# interna em arquivo rastreado" e quebraria o git grep do checklist de release.
+.kiro/skills/
+
 # Artefatos de processo interno do autor (auditoria pessoal, planejamento da
 # transformação para open-source, scripts com paths absolutos do Mac do autor).
 # Nada disso é consumido pelo produto nem por um usuário externo do repositório.

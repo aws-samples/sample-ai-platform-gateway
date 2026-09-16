@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -32,7 +33,10 @@ import (
 	"github.com/aiplat/core/internal/ports"
 )
 
-var _ ports.StreamProvider = (*Adapter)(nil) // compile-time assertion
+var (
+	_ ports.StreamProvider  = (*Adapter)(nil)  // compile-time assertion
+	_ ports.ReasoningStream = (*brStream)(nil) // this adapter does expose chain of thought
+)
 
 // converseStreamAPI is the narrow slice of the Bedrock client this file needs, so the
 // open-and-validate step can be driven without a real client.
@@ -64,11 +68,11 @@ func (a *Adapter) OpenStream(ctx context.Context, in ports.InvokeInput) (ports.P
 	if a.Pool == nil {
 		return nil, fmt.Errorf("bedrock: no client pool configured")
 	}
-	return openStream(ctx, a.Pool.ClientFor(ctx, a.Route), a.ModelID, in.Messages, in.Tools, a.CachePrefix)
+	return openStream(ctx, a.Pool.ClientFor(ctx, a.Route), a.ModelID, in, a.CachePrefix)
 }
 
-func openStream(ctx context.Context, cli converseStreamAPI, modelID string, msgs []ports.Message, tools []ports.ToolDef, cachePrefix bool) (ports.ProviderStream, error) {
-	system, conv := convertMessages(msgs)
+func openStream(ctx context.Context, cli converseStreamAPI, modelID string, in ports.InvokeInput, cachePrefix bool) (ports.ProviderStream, error) {
+	system, conv := convertMessages(in.Messages)
 	if cachePrefix && len(system) > 0 {
 		system = append(system, &btypes.SystemContentBlockMemberCachePoint{
 			Value: btypes.CachePointBlock{Type: btypes.CachePointTypeDefault},
@@ -78,8 +82,15 @@ func openStream(ctx context.Context, cli converseStreamAPI, modelID string, msgs
 	if len(system) > 0 {
 		input.System = system
 	}
-	if tc := ConvertToolsToBedrockConfig(tools); tc != nil {
+	if tc := ConvertToolsToBedrockConfig(in.Tools); tc != nil {
 		input.ToolConfig = tc
+	}
+	// Same helper as the buffered path, on purpose: ConverseInput and ConverseStreamInput
+	// are distinct types with identical members, so two literals would drift and the
+	// drifting half would be whichever one has less coverage.
+	if cfg, extra := applyInference(in); cfg != nil || extra != nil {
+		input.InferenceConfig = cfg
+		input.AdditionalModelRequestFields = extra
 	}
 
 	// This call returns once the response headers are in, BEFORE the model has produced
@@ -105,6 +116,10 @@ type brStream struct {
 	res  ports.Result
 	done bool
 
+	// warnedUnknown keeps the unrecognised-delta warning to one line per stream: the
+	// point is to make a new SDK member visible, not to emit a log per token.
+	warnedUnknown bool
+
 	// Tool calls arrive as a start event (id + name) followed by input JSON in
 	// fragments, keyed by content block index. They are accumulated per index and
 	// assembled when the stream ends, because a fragment on its own is not valid JSON.
@@ -117,14 +132,34 @@ type toolAccum struct {
 	args     []byte
 }
 
-// Recv drains events until it has text to return, the stream ends, or it breaks.
+// Recv drains events until it has ANSWER text to return, the stream ends, or it breaks.
 //
-// Non-text events (message start/stop, block start/stop, metadata, tool input fragments)
-// are consumed silently and update the accumulated Result — returning "" for them would
-// make the caller spin.
+// Reasoning is skipped here rather than returned, because a caller reading through Recv
+// expects answer content and would print the chain of thought into the answer. Callers that
+// want it use RecvChunk (ports.ReasoningStream); either way the reasoning is accumulated
+// into Result.
 func (s *brStream) Recv() (string, error) {
+	for {
+		c, err := s.RecvChunk()
+		if c.Text != "" || err != nil {
+			return c.Text, err
+		}
+	}
+}
+
+// RecvChunk implements ports.ReasoningStream: it drains events until it has SOMETHING for
+// the caller — answer text, reasoning text, or a signature — or the stream ends.
+//
+// KNOWN BUG this fixes: the delta type switch handled Text and ToolUse and had no default,
+// so `reasoningContent` was discarded silently. An extended-thinking model streams its chain
+// of thought during the think phase, which means Bedrock WAS sending bytes the whole time and
+// this adapter was throwing them away. The visible symptom was the opposite of the cause:
+// "the model goes quiet for minutes" looked like a provider or transport problem, while the
+// silence was manufactured here. The signature was dropped with it, which would have made a
+// reasoning chain impossible to continue across turns later.
+func (s *brStream) RecvChunk() (ports.Chunk, error) {
 	if s.done {
-		return "", io.EOF
+		return ports.Chunk{}, io.EOF
 	}
 	for ev := range s.events {
 		switch e := ev.(type) {
@@ -133,11 +168,43 @@ func (s *brStream) Recv() (string, error) {
 			case *btypes.ContentBlockDeltaMemberText:
 				if d.Value != "" {
 					s.res.Text += d.Value
-					return d.Value, nil
+					return ports.Chunk{Text: d.Value}, nil
+				}
+			case *btypes.ContentBlockDeltaMemberReasoningContent:
+				switch r := d.Value.(type) {
+				case *btypes.ReasoningContentBlockDeltaMemberText:
+					if r.Value != "" {
+						s.res.Reasoning += r.Value
+						s.res.ReasoningChars += len(r.Value)
+						return ports.Chunk{Reasoning: r.Value}, nil
+					}
+				case *btypes.ReasoningContentBlockDeltaMemberSignature:
+					// Not forwarded as content — it is opaque metadata. Kept because it
+					// is the only thing that lets a later turn resume this reasoning.
+					if r.Value != "" {
+						s.res.ReasoningSignature = r.Value
+						return ports.Chunk{Signature: r.Value}, nil
+					}
+				case *btypes.ReasoningContentBlockDeltaMemberRedactedContent:
+					// Encrypted thinking: there IS reasoning, we just cannot read it.
+					// Recorded so "did not think" stays distinguishable from "not shown".
+					s.res.ReasoningRedacted = true
+					return ports.Chunk{Redacted: true}, nil
 				}
 			case *btypes.ContentBlockDeltaMemberToolUse:
 				if acc := s.accFor(e.Value.ContentBlockIndex); acc != nil {
 					acc.args = append(acc.args, aws.ToString(d.Value.Input)...)
+				}
+			default:
+				// The SDK defines six delta members and this switch acts on four. A
+				// missing default is what made reasoningContent vanish without a trace,
+				// so anything unrecognised is now logged ONCE per stream instead of
+				// disappearing — the next member the SDK adds shows up as a log line
+				// rather than as a user reporting silence.
+				if !s.warnedUnknown {
+					s.warnedUnknown = true
+					fmt.Fprintf(os.Stderr,
+						`{"lvl":"warn","evt":"bedrock_stream_unknown_delta","type":"%T"}`+"\n", d)
 				}
 			}
 
@@ -178,9 +245,9 @@ func (s *brStream) Recv() (string, error) {
 	s.done = true
 	s.finish()
 	if err := s.es.Err(); err != nil {
-		return "", err
+		return ports.Chunk{}, err
 	}
-	return "", io.EOF
+	return ports.Chunk{}, io.EOF
 }
 
 func (s *brStream) accFor(idx *int32) *toolAccum {

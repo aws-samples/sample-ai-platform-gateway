@@ -91,7 +91,7 @@ func TestE2E_CacheHit(t *testing.T) {
 
 	// Fake auth + usage collector; the provider must NOT be called on a cache hit.
 	providerCalled := false
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		providerCalled = true
 		return result{}, nil
 	})

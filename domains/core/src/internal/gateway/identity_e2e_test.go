@@ -63,7 +63,7 @@ func TestE2E_ProviderArbitrage(t *testing.T) {
 	}`)
 	configStore = &fakeConfig{extra: map[string]interface{}{"auto_cheapest": true}}
 
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		return result{text: "ok", tin: 1000, tout: 200}, nil
 	})
 
@@ -139,7 +139,7 @@ func TestE2E_SwapNotAllowed(t *testing.T) {
 	}}
 
 	providerCalled := false
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		providerCalled = true
 		return result{text: "ok", tin: 10, tout: 5}, nil
 	})

@@ -190,6 +190,89 @@ Streaming works the same way (`stream: true`, server-sent events). Streamed resp
 final frame carrying `usage` and the same `aiplat` block, so a streaming caller does not have to
 give up the cost figures to get progressive output.
 
+### Tools and images on every provider
+
+Function calling and multimodal input work on all four adapters, each in its own dialect: the
+OpenAI-dialect `tools` you send become Bedrock `toolConfig`, Anthropic `input_schema`
+declarations or Gemini `functionDeclarations`, and an `image_url` data URL becomes Bedrock image
+bytes, an Anthropic base64 `image` block or a Gemini `inlineData` part. Tool results travel back
+the same way, including the two shapes that differ structurally: Anthropic and Bedrock require
+every `tool_result` of a turn grouped in one message, and Gemini identifies a function response
+by name rather than by call id.
+
+Two provider quirks are absorbed rather than passed to you. Gemini rejects JSON Schema keywords
+the others accept (`$schema`, `additionalProperties`, `$ref`), so those are stripped from tool
+schemas on that route — otherwise a schema your tooling generated comes back as a 400 naming a
+field you never wrote. And Gemini returns no id for a function call, so one is synthesized from
+the tool name and position, because the OpenAI dialect requires it and your client echoes it
+back.
+
+An image in a format a provider does not accept is dropped rather than sent: these APIs reject
+the whole request over one bad part, and losing an image beats losing the answer.
+
+### Sampling parameters
+
+`max_tokens`, `temperature`, `top_p` and `stop` are forwarded to every provider, translated
+into each one's dialect (`stop` becomes `stop_sequences` on Anthropic and `stopSequences`
+inside `generationConfig` on Gemini). A parameter you do not send is not sent: an absent field
+leaves the model's own default in place, because a zero we invented would not be neutral —
+`temperature: 0` is a request for determinism, not an unset value.
+
+All four also take part in the cache key. A parameter that changes the answer without changing
+the key would let a `top_p: 0.1` request be served the answer generated at `top_p: 1.0`.
+
+### Reasoning models
+
+Ask for thinking with `reasoning_effort`: `none`, `low`, `medium` or `high` (the OpenAI
+dialect). The gateway resolves the word into the token budget each provider needs — Bedrock and
+Anthropic take `thinking.budget_tokens`, Gemini takes `thinkingConfig`, and an
+OpenAI-compatible upstream gets the word passed straight through. That translation lives in one
+place on purpose: four adapters each deciding what "high" means would be four different
+products under one name.
+
+A request that asks to think is **routed to a model that can think**. Reasoning is a declared
+capability per model (`capabilities.reasoning`, a toggle on the Models tab), and an undeclared
+model is treated as incapable — the same rule tool use follows, because asking a model that
+cannot think to think is a provider rejection rather than a soft failure. If the model you
+named cannot reason and another one in your catalog can, the request is served there and the
+substitution is recorded as a swap like any other.
+
+The chain of thought comes back as `reasoning_content` — a **separate** field from `content`,
+on the streaming delta and on the buffered message. It is separate on purpose: every OpenAI SDK
+concatenates `delta.content`, so merging the two would print the model's private reasoning
+inside the answer an end user reads. A client that does not know the field ignores it and
+behaves exactly as before.
+
+**Thinking costs output tokens**, so `reasoning_effort` is a client-side decision with a
+provider-side price. `max_thinking_tokens` is the operator's ceiling on what one request may
+buy (default 8k, hard maximum 32k). A request above it is served with the budget reduced and
+the reduction recorded as `reasoning_clamped` — never silently, because a customer who asked
+for high effort and quietly got less has no way to find out. The same field records the two
+other reconciliations: a budget cut to leave room for the answer under an explicit
+`max_tokens`, and thinking dropped entirely when `max_tokens` is too small for any valid
+budget.
+
+Two things follow from thinking taking time and producing tokens:
+
+- **The silence is covered.** Idle timeouts count bytes, not progress — a proxy in front of your
+  client commonly closes an idle connection at 60 s, and API Gateway cuts an idle streaming
+  response at 5 minutes. So an SSE comment frame is sent during silence (every 15 s by default,
+  configurable per scope with `sse_keepalive_seconds`; a negative value turns it off). The SSE spec
+  tells clients to ignore comment frames, so this is inert for every consumer, and it is excluded
+  from the frame counters — a keepalive is not a token and never appears as cost.
+- **The thinking is in the ledger, without being double-counted.** Bedrock reports
+  input/output/total tokens only, so reasoning tokens are already inside `tokens_out` — already
+  billed, already attributed. What the usage record adds is the split: `reasoning_chars`, present
+  only when the model actually reasoned. Characters, not tokens, because the provider does not
+  report a reasoning token count and deriving one would be a guess printed as a measurement.
+  `reasoning_redacted: true` marks reasoning the provider encrypted, so "did not think" stays
+  distinguishable from "not shown to us".
+
+Per scope, `request_timeout_ms` stops generation early enough to still send the closing frames and
+write the usage record. It only ever **narrows** the deployment's own limit — it cannot raise it —
+and without it a request that runs to the platform ceiling is cut mid-answer, losing the accounting
+for tokens the provider already charged for.
+
 ### Splitting spend across several projects with one key
 
 One key can attribute each request to a different app, which is what lets a developer working

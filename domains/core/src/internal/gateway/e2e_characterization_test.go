@@ -78,7 +78,7 @@ func fakeAuth(_ context.Context, _ map[string]string) (identity, bool, error) {
 
 // installSeams installs the fake provider, fake auth and usage collector, restoring the
 // defaults at the end of the test. It returns the pointer to the collected records.
-func installSeams(t *testing.T, provider func(context.Context, Route, []chatMsg, []toolDef) (result, error)) *[]map[string]interface{} {
+func installSeams(t *testing.T, provider func(context.Context, Route, []chatMsg, []toolDef, invocation) (result, error)) *[]map[string]interface{} {
 	t.Helper()
 	prevAuth, prevProv, prevEmit := authResolveFn, callProviderFn, emitUsageFn
 	prevStream := openProviderStreamFn
@@ -91,7 +91,7 @@ func installSeams(t *testing.T, provider func(context.Context, Route, []chatMsg,
 	// producer goroutine. Default is "no native stream", which routes every existing
 	// scenario down the buffered path it was written against. A test that wants the
 	// native path installs its own with installStreamSeam.
-	openProviderStreamFn = func(context.Context, Route, []chatMsg, []toolDef) (ports.ProviderStream, error) {
+	openProviderStreamFn = func(context.Context, Route, []chatMsg, []toolDef, invocation) (ports.ProviderStream, error) {
 		return nil, errNoNativeStream
 	}
 	emitUsageFn = func(_ context.Context, rec map[string]interface{}) {
@@ -107,7 +107,7 @@ func installSeams(t *testing.T, provider func(context.Context, Route, []chatMsg,
 
 // installStreamSeam points the native-streaming path at a fake. Call it AFTER
 // installSeams, which resets the seam to "no native stream".
-func installStreamSeam(t *testing.T, open func(context.Context, Route, []chatMsg, []toolDef) (ports.ProviderStream, error)) {
+func installStreamSeam(t *testing.T, open func(context.Context, Route, []chatMsg, []toolDef, invocation) (ports.ProviderStream, error)) {
 	t.Helper()
 	prev := openProviderStreamFn
 	openProviderStreamFn = open
@@ -228,7 +228,7 @@ func TestE2E_ServedOK(t *testing.T) {
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tool_use":true,"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
 
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		return result{text: "olá do provedor falso", tin: 10, tout: 5, cacheConv: ports.CacheCountersAbsent}, nil
 	})
 
@@ -262,7 +262,7 @@ func TestE2E_NoEligibleModel(t *testing.T) {
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
 
 	called := false
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		called = true
 		return result{}, nil
 	})
@@ -295,7 +295,7 @@ func TestE2E_AllProvidersFail(t *testing.T) {
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tool_use":true,"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
 
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		return result{}, fmt.Errorf("provider down: connection refused")
 	})
 

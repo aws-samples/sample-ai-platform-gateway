@@ -16,7 +16,7 @@
         },
         {
           "image_url": {
-            "url": "data:x"
+            "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
           },
           "type": "image_url"
         }
@@ -44,5 +44,27 @@
       "tool_call_id": "call_1"
     }
   ],
-  "model": "gpt-x"
+  "model": "gpt-x",
+  "tools": [
+    {
+      "function": {
+        "description": "current weather for a city",
+        "name": "get_weather",
+        "parameters": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
 }

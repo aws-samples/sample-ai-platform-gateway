@@ -84,7 +84,7 @@ func TestRequestAppReachesTheUsageRecord(t *testing.T) {
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
 
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		return result{text: "ok", tin: 4, tout: 2}, nil
 	})
 	// fakeAuth resolves app "apptest"; widen it so "proj-b" is reachable.
@@ -130,7 +130,7 @@ func TestRequestUnknownAppIsRefused(t *testing.T) {
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
 
 	providerCalled := false
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		providerCalled = true
 		return result{text: "ok"}, nil
 	})

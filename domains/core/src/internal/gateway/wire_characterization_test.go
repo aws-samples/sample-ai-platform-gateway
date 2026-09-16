@@ -40,7 +40,11 @@ func wireMsgs() []chatMsg {
 	return []chatMsg{
 		{Role: "system", Content: json.RawMessage(`"você é um assistente"`)},
 		{Role: "user", Content: json.RawMessage(`"olá"`)},
-		{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"o que é isto?"},{"type":"image_url","image_url":{"url":"data:x"}}]`)},
+		// A REAL data URL (1x1 PNG), not a placeholder. It used to be `data:x`, which cannot
+		// be decoded — so `Images` came out empty and the golden proved nothing about the
+		// image path. That mattered: two adapters were dropping images entirely and the
+		// golden they were compared against could not have caught it.
+		{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"o que é isto?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="}}]`)},
 		{
 			Role:    "assistant",
 			Content: json.RawMessage(`null`),
@@ -57,6 +61,30 @@ func wireMsgs() []chatMsg {
 	}
 }
 
+// wireTools is the tool declaration the goldens send.
+//
+// The goldens used to pass NO tools, which left every adapter's tool call site uncovered:
+// deleting the line that sends `tools` kept the suite green on both HTTP adapters. Unit tests
+// on the conversion helpers cannot catch that — the helper is correct and simply never called.
+//
+// The schema deliberately carries `$schema` and `additionalProperties`: Gemini REJECTS those
+// keywords, so the gemini golden is also what proves they are stripped on the way out and left
+// alone for the providers that accept them.
+func wireTools() []toolDef {
+	var t toolDef
+	t.Type = "function"
+	t.Function.Name = "get_weather"
+	t.Function.Description = "current weather for a city"
+	t.Function.Parameters = map[string]interface{}{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties":           map[string]interface{}{"city": map[string]interface{}{"type": "string"}},
+		"required":             []interface{}{"city"},
+	}
+	return []toolDef{t}
+}
+
 // captureBody spins up an httptest server, points the route at it, calls callProvider
 // and returns the raw body the provider received.
 func captureBody(t *testing.T, r Route, cannedResp string) []byte {
@@ -70,7 +98,11 @@ func captureBody(t *testing.T, r Route, cannedResp string) []byte {
 	t.Cleanup(srv.Close)
 	r.BaseURL = srv.URL
 
-	_, err := callProvider(context.Background(), r, wireMsgs(), nil)
+	// An EMPTY invocation on purpose: the golden asserts the bytes a request that names no
+	// inference parameter puts on the wire. Every parameter is conditional in the adapters,
+	// so this staying byte-identical is the proof that forwarding them did not change the
+	// request shape for callers that send none.
+	_, err := callProvider(context.Background(), r, wireMsgs(), wireTools(), invocation{})
 	if err != nil {
 		t.Fatalf("callProvider(%s): %v", r.Provider, err)
 	}

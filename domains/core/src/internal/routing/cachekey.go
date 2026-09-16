@@ -76,6 +76,17 @@ type KeyInput struct {
 	Tools       []ports.ToolDef
 	Temperature *float64 // pointer: "not informed" ≠ "0" (deterministic)
 	MaxTokens   *int
+	// TopP and Stop change the response exactly as much as Temperature does, and were
+	// missing here only because the gateway did not accept them yet. Adding the parameter
+	// without adding it to the key is the defect this struct's doc comment describes: a
+	// top_p=0.1 request would be served the answer generated at top_p=1.0.
+	TopP *float64
+	Stop []string
+	// ReasoningEffort partitions a thinking request from a non-thinking one. Without it,
+	// the first caller to ask a question without reasoning would poison the entry for
+	// every later caller who paid for reasoning — same prompt, same model, different
+	// product, one cache slot.
+	ReasoningEffort string
 }
 
 // keyMsg is the projection of the message that enters the hash material. Content is
@@ -116,6 +127,12 @@ type keyMaterial struct {
 	Tools    []keyTool `json:"tools,omitempty"`
 	Temp     *float64  `json:"temperature,omitempty"`
 	MaxTok   *int      `json:"max_tokens,omitempty"`
+	// omitempty for the same reason Team/App carry it: a request that sends none of these
+	// must hash to the bytes it hashed before the fields existed, so no deployment loses
+	// its warm cache to this change.
+	TopP   *float64 `json:"top_p,omitempty"`
+	Stop   []string `json:"stop,omitempty"`
+	Reason string   `json:"reasoning_effort,omitempty"`
 }
 
 // CacheKey returns the cache key for the request, in the given mode.
@@ -124,6 +141,7 @@ func CacheKey(in KeyInput, mode KeyMode) string {
 	m := keyMaterial{
 		Mode: string(mode), Org: in.Org, Team: in.Team, App: in.App, Model: in.Model,
 		Temp: in.Temperature, MaxTok: in.MaxTokens,
+		TopP: in.TopP, Stop: in.Stop, Reason: in.ReasoningEffort,
 	}
 	m.Messages = make([]keyMsg, len(in.Messages))
 	for i, msg := range in.Messages {

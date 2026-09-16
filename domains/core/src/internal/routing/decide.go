@@ -215,6 +215,12 @@ func ineligible(c Candidate, pol Policy, req RequestShape, id Identity) (string,
 	if req.HasImage && !c.Caps.Multimodal {
 		return DiscardNotMultimodal, false
 	}
+	// Same rule as tool use: an absent capability is FALSE. Asking a model that cannot
+	// think to think is a provider-level rejection, not a graceful degradation, so the
+	// request is routed to a model that can instead.
+	if req.WantsReasoning && !c.Caps.Reasoning {
+		return DiscardNoReasoning, false
+	}
 	// A ContextWindow of zero means UNKNOWN and does not discard (Req 1.4).
 	//
 	// When the client does not inform `max_tokens`, assuming ZERO output would
@@ -228,6 +234,13 @@ func ineligible(c Candidate, pol Policy, req RequestShape, id Identity) (string,
 			if out <= 0 {
 				out = 512
 			}
+		}
+		// Thinking tokens ARE output tokens — the provider counts them there and bills
+		// them there. A budget the client asked for on top of an explicit max_tokens has
+		// to be added here, or a request that fits the window on paper is discarded by
+		// the provider instead, which reads to the customer as the gateway routing badly.
+		if req.ThinkingBudget > 0 && req.MaxOutputTokens > 0 {
+			out += req.ThinkingBudget
 		}
 		if req.InputTokens+out > c.Caps.ContextWindow {
 			return DiscardContextTooSmall, false

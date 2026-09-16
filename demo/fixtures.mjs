@@ -97,7 +97,7 @@ export const ROUTING = {
     model_id: 'us.anthropic.claude-sonnet-5',
     region: 'us-west-2',
     prompt_cache: true,
-    capabilities: { tool_use: true, multimodal: true, context_window_tokens: 200000, tier: 'frontier' },
+    capabilities: { tool_use: true, multimodal: true, context_window_tokens: 200000, tier: 'frontier', reasoning: true },
   },
   'claude-sonnet-byo': {
     provider: 'bedrock',
@@ -106,7 +106,7 @@ export const ROUTING = {
     role_arn: 'arn:aws:iam::111122223333:role/AIPlatGatewayAccess',
     region: 'us-east-1',
     prompt_cache: true,
-    capabilities: { tool_use: true, multimodal: true, context_window_tokens: 200000, tier: 'frontier' },
+    capabilities: { tool_use: true, multimodal: true, context_window_tokens: 200000, tier: 'frontier', reasoning: true },
   },
   'nova-lite': {
     provider: 'bedrock',

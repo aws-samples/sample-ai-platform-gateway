@@ -87,7 +87,7 @@ func TestStreamEndsWithMetadataThenDone(t *testing.T) {
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":1,"output":2}}`)
 
-	installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		return result{text: "hello there", tin: 11, tout: 7}, nil
 	})
 
@@ -165,7 +165,7 @@ func TestStreamNativeProviderPath(t *testing.T) {
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":10,"output":10,"cache_read":1}}`)
 
 	called := false
-	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	recs := installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		called = true
 		return result{text: "buffered fallback"}, nil
 	})
@@ -177,7 +177,7 @@ func TestStreamNativeProviderPath(t *testing.T) {
 			StopReason: "end_turn",
 		},
 	}
-	installStreamSeam(t, func(context.Context, Route, []chatMsg, []toolDef) (ports.ProviderStream, error) {
+	installStreamSeam(t, func(context.Context, Route, []chatMsg, []toolDef, invocation) (ports.ProviderStream, error) {
 		return fs, nil
 	})
 
@@ -252,10 +252,10 @@ func TestStreamNativeOpenFailureFallsBackSameRoute(t *testing.T) {
 	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","capabilities":{"tier":"fast"}}}`)
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
 
-	installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		return result{text: "served buffered", tin: 5, tout: 3}, nil
 	})
-	installStreamSeam(t, func(context.Context, Route, []chatMsg, []toolDef) (ports.ProviderStream, error) {
+	installStreamSeam(t, func(context.Context, Route, []chatMsg, []toolDef, invocation) (ports.ProviderStream, error) {
 		return nil, errors.New("ValidationException: streaming is not supported for this model")
 	})
 
@@ -287,7 +287,7 @@ func TestStreamCacheHitCarriesMetadata(t *testing.T) {
 	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002}}`)
 
 	providerCalled := false
-	installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef) (result, error) {
+	installSeams(t, func(_ context.Context, _ Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
 		providerCalled = true
 		return result{}, nil
 	})

@@ -43,6 +43,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aiplat/core/internal/ports"
 )
@@ -61,6 +63,44 @@ func sseRole(w io.Writer, id, model string) {
 func sseDelta(w io.Writer, id, model, text string) error {
 	return sseWrite(w, map[string]interface{}{"id": id, "object": "chat.completion.chunk", "model": model,
 		"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{"content": text}, "finish_reason": nil}}})
+}
+
+// sseReasoning emits a chain-of-thought delta.
+//
+// The field is `reasoning_content`, SEPARATE from `content`, and that separation is the
+// whole correctness argument: a client that concatenates `delta.content` — which is every
+// OpenAI SDK — must not end up with the model's thinking inside the answer. A client that
+// does not know the field ignores it, which is the correct default for an extension.
+//
+// The name follows the convention other gateways settled on for the chat-completions
+// dialect rather than being invented here, so an existing client that already renders
+// reasoning works without changes.
+//
+// This is also what closes the "long think" gap: an extended-thinking model streams its
+// reasoning during the think phase, so forwarding it means bytes flow while the model
+// thinks. The keepalive comment frame remains the safety net for models that expose no
+// reasoning at all.
+func sseReasoning(w io.Writer, id, model, text string) error {
+	return sseWrite(w, map[string]interface{}{"id": id, "object": "chat.completion.chunk", "model": model,
+		"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{"reasoning_content": text}, "finish_reason": nil}}})
+}
+
+// ssePing writes an SSE COMMENT frame (a line starting with ':'), which the SSE spec tells
+// clients to ignore. It is not a chunk: it carries no id, no choices, and never appears in
+// the message stream, so it cannot be mistaken for content or disturb the frame contract.
+//
+// It exists because idle timeouts are counted on bytes, not on progress. API Gateway cuts a
+// streaming response after 5 minutes of silence on a Regional endpoint (30 seconds on
+// edge-optimized), and any proxy in front of the client has its own idle timer — 60 seconds
+// is a common default. A model that thinks for minutes without emitting anything trips those
+// before the first token, so the connection dies on a request that was working.
+//
+// Deliberately excluded from every counter: a ping is not a token, has no cost, and must not
+// appear in the frame count of the logs. Instrumentation that counts it would report traffic
+// that never existed.
+func ssePing(w io.Writer) error {
+	_, err := io.WriteString(w, ": ping\n\n")
+	return err
 }
 func sseStop(w io.Writer, id, model string) {
 	sseWrite(w, map[string]interface{}{"id": id, "object": "chat.completion.chunk", "model": model,
@@ -102,22 +142,34 @@ func sseDone(w io.Writer) {
 	io.WriteString(w, "data: [DONE]\n\n")
 }
 
-// pseudoStream: for providers without native streaming here, slices the complete text
+// pseudoStream: for providers without native streaming here, slices the complete answer
 // into chunks and emits them as SSE (keeps the client drop-in).
 //
 // It does NOT terminate the stream. The caller emits sseFinal (or sseDone) after
 // accounting, so the metadata frame lands before [DONE].
-func pseudoStream(w io.Writer, id, model, text string) {
+//
+// `reasoning` is emitted FIRST, as reasoning_content frames, and only then the answer. That
+// ordering matches what a native reasoning stream produces, which is the point: without it,
+// `reasoning_content` would reach a streaming client on every provider EXCEPT one served
+// through this fallback — the reasoning would sit in the ledger, already billed, and never be
+// shown. Same argument applies to replaying a cached answer that contains reasoning.
+func pseudoStream(w io.Writer, id, model, reasoning, text string) {
 	sseRole(w, id, model)
 	const n = 24
-	for i := 0; i < len(text); i += n {
-		j := i + n
-		if j > len(text) {
-			j = len(text)
+	slice := func(s string, emit func(io.Writer, string, string, string) error) bool {
+		for i := 0; i < len(s); i += n {
+			j := i + n
+			if j > len(s) {
+				j = len(s)
+			}
+			if err := emit(w, id, model, s[i:j]); err != nil {
+				return false
+			}
 		}
-		if err := sseDelta(w, id, model, text[i:j]); err != nil {
-			break
-		}
+		return true
+	}
+	if slice(reasoning, sseReasoning) {
+		slice(text, sseDelta)
 	}
 	sseStop(w, id, model)
 }
@@ -136,22 +188,201 @@ func pseudoStream(w io.Writer, id, model, text string) {
 // Like pumpOpenAICompat it returns no error. Once the first frame is out the client is
 // committed to a 200, and a stream that breaks halfway still served real tokens: the caller
 // bills what arrived instead of discarding it.
-func pumpProviderStream(w io.Writer, id, model string, st ports.ProviderStream) ports.Result {
+// It also owns two things that only make sense here, because this is the single place that
+// writes to the client during a stream:
+//
+//   - the KEEPALIVE comment frame, emitted after `keepalive` of silence (0 disables it);
+//   - the DEADLINE, via ctx: when it expires the pump stops and the caller closes the
+//     stream normally, so the client gets stop → final → [DONE] instead of a connection
+//     that simply dies mid-answer.
+//
+// The provider read runs in a goroutine and the pump selects over it. That is not for
+// concurrency — it is because Recv BLOCKS, and a blocking read cannot coexist with a timer
+// in the same goroutine. The write side stays here: exactly one goroutine ever writes to w,
+// which is what keeps interleaved frames impossible.
+func pumpProviderStream(ctx context.Context, w io.Writer, id, model string, st ports.ProviderStream, keepalive time.Duration) ports.Result {
 	defer st.Close()
 	sseRole(w, id, model)
-	for {
-		text, err := st.Recv()
-		if text != "" {
-			if werr := sseDelta(w, id, model, text); werr != nil {
-				break // consumer gone; stop pulling provider tokens
+
+	next := chunkReader(st)
+	type recvd struct {
+		c   ports.Chunk
+		err error
+	}
+	ch := make(chan recvd, 1)
+	done := make(chan struct{})
+	defer close(done)
+
+	// The Result is SNAPSHOT by the reader goroutine and published under this mutex, rather
+	// than read from the stream at the end.
+	//
+	// Reading st.Result() after the pump gives up is a data race, and one that only appears
+	// on the paths that matter least often and hurt most: on a deadline or a dead consumer
+	// the reader can still be blocked inside the adapter, and cancelling ctx here does not
+	// cancel the provider's HTTP stream (it was opened with the request context), so that
+	// read can complete and mutate the adapter's accumulated Result while this goroutine
+	// reads it. Snapshotting keeps the adapter touched by exactly one goroutine: the reader
+	// reads back what only it wrote, and the pump only ever sees the published copy.
+	//
+	// The snapshot is also the best answer available on an abandoned stream — it holds the
+	// counters as of the last chunk that did arrive, which is what has to be billed.
+	var mu sync.Mutex
+	snap := st.Result() // pre-stream state, so an immediate abandon still returns a valid zero
+	go func() {
+		for {
+			c, err := next()
+			mu.Lock()
+			snap = st.Result()
+			mu.Unlock()
+			select {
+			case ch <- recvd{c, err}:
+			case <-done:
+				return // pump gave up (deadline, client gone); do not leak on the send
+			}
+			if err != nil {
+				return
 			}
 		}
-		if err != nil {
-			break // io.EOF (normal end) or a broken stream — both keep what arrived
+	}()
+
+	// A ticker rather than a timer reset per write: resetting from the select arm races
+	// with a read already in flight, and the condition below is cheaper to reason about.
+	var tick <-chan time.Time
+	if keepalive > 0 {
+		t := time.NewTicker(keepalive)
+		defer t.Stop()
+		tick = t.C
+	}
+	last := time.Now()
+
+	for streaming := true; streaming; {
+		select {
+		case r := <-ch:
+			// Reasoning, signature and redacted markers all count as activity even when
+			// nothing is forwarded — the point of tracking activity is the idle timer, and
+			// bytes did arrive from the provider.
+			last = time.Now()
+			if r.c.Text != "" {
+				if werr := sseDelta(w, id, model, r.c.Text); werr != nil {
+					streaming = false // consumer gone; stop pulling provider tokens
+					break
+				}
+			}
+			if r.c.Reasoning != "" {
+				if werr := sseReasoning(w, id, model, r.c.Reasoning); werr != nil {
+					streaming = false
+					break
+				}
+			}
+			if r.err != nil {
+				streaming = false // io.EOF (normal end) or a broken stream — keep what arrived
+			}
+		case <-tick:
+			if time.Since(last) < keepalive {
+				continue // real traffic is flowing; a ping would be noise
+			}
+			if werr := ssePing(w); werr != nil {
+				streaming = false
+			}
+			last = time.Now()
+		case <-ctx.Done():
+			// Deadline or cancellation. Everything served so far is real and billed, so
+			// the caller still accounts for it; falling through to sseStop below is what
+			// makes the client see a well-formed end instead of a truncated stream.
+			streaming = false
 		}
 	}
 	sseStop(w, id, model)
-	return st.Result()
+	mu.Lock()
+	res := snap
+	mu.Unlock()
+	return res
+}
+
+// streamDeadlineMargin is time reserved AFTER the pump stops, for the work that still has to
+// happen: the stop frame, accounting, the final metadata frame, [DONE] and the usage record.
+// Without it a request that runs to the runtime's limit loses exactly the numbers this
+// gateway exists to produce — the tokens were billed by the provider and nothing recorded
+// them.
+const streamDeadlineMargin = 5 * time.Second
+
+// defaultSSEKeepalive is the silence tolerated before a ping when no scope configured one.
+//
+// ON by default, and that is the whole point: the failure it prevents (a proxy closing an
+// idle stream at 60 seconds while the model is still thinking) does not look like a timeout
+// to whoever hits it — it looks like the gateway dropping a good request. A feature that has
+// to be discovered and enabled would leave the default deployment with the bug.
+//
+// Safe to default because a ping is an SSE COMMENT frame: the spec tells clients to ignore
+// it, so no client has to know about this and none can misread it as content.
+//
+// 15 seconds sits under every idle timer that matters here (60s proxy default, 30s on an
+// edge-optimized API Gateway) with room for one lost frame.
+const defaultSSEKeepalive = 15 * time.Second
+
+// effectiveKeepalive resolves the configured value.
+//
+// Zero means UNSET, not off — an int with omitempty cannot tell the two apart on the wire, so
+// a NEGATIVE value is how a scope says "disable this". Reading zero as off would have made
+// every deployment that never touched the field silently lose the protection.
+func effectiveKeepalive(seconds int) time.Duration {
+	switch {
+	case seconds < 0:
+		return 0 // explicitly disabled
+	case seconds == 0:
+		return defaultSSEKeepalive
+	default:
+		return time.Duration(seconds) * time.Second
+	}
+}
+
+// streamDeadline derives the generation deadline for one request.
+//
+// The ceiling is the RUNTIME's own deadline, taken from ctx, minus the margin above — not a
+// configured number. That is deliberate: the runtime already knows how long it may live, so
+// reading it means the clamp cannot drift out of sync with the deployed Lambda timeout, and
+// raising that timeout raises the ceiling automatically. A hardcoded ceiling would be one
+// more value to keep aligned with Terraform, and the failure mode of getting it wrong is a
+// stream cut with no final frame.
+//
+// A scope's request_timeout_ms only ever NARROWS: it is applied when it is shorter than what
+// the runtime can honour, and ignored when it is longer. Same rule as the model ceiling.
+// Zero means "no scope deadline", leaving the runtime's own as the only bound.
+func streamDeadline(ctx context.Context, scopeMS int) (context.Context, context.CancelFunc) {
+	ceiling := time.Duration(0)
+	if dl, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(dl) - streamDeadlineMargin; remaining > 0 {
+			ceiling = remaining
+		}
+	}
+	want := time.Duration(scopeMS) * time.Millisecond
+	switch {
+	case want <= 0 && ceiling <= 0:
+		return context.WithCancel(ctx) // nothing to bound it with; caller still cancels
+	case want <= 0:
+		return context.WithTimeout(ctx, ceiling)
+	case ceiling <= 0:
+		return context.WithTimeout(ctx, want)
+	case want < ceiling:
+		return context.WithTimeout(ctx, want)
+	default:
+		return context.WithTimeout(ctx, ceiling)
+	}
+}
+
+// chunkReader picks the richest read the stream offers.
+//
+// A stream implementing ports.ReasoningStream yields chain of thought as well as answer
+// text; anything else is wrapped so the pump has one shape to consume. The type assertion
+// is the same idiom the handler already uses for ports.StreamProvider itself.
+func chunkReader(st ports.ProviderStream) func() (ports.Chunk, error) {
+	if rs, ok := st.(ports.ReasoningStream); ok {
+		return rs.RecvChunk
+	}
+	return func() (ports.Chunk, error) {
+		t, err := st.Recv()
+		return ports.Chunk{Text: t}, err
+	}
 }
 
 // openStreamOpenAICompat is PHASE ONE: it opens the provider stream and validates the

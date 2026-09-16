@@ -168,6 +168,37 @@ type Config struct {
 	DefaultModel string  `json:"default_model,omitempty"`
 	Budget       *Budget `json:"budget,omitempty"`
 	Limits       *Limits `json:"rate_limits,omitempty"`
+
+	// SSEKeepaliveSeconds emits an SSE comment frame after this many seconds of silence on
+	// a streaming response. UNSET (0) means the default is used; a NEGATIVE value disables
+	// it. See effectiveKeepalive — zero cannot mean "off" here, because an int with
+	// omitempty makes "off" and "never configured" the same bytes on the wire.
+	//
+	// It exists because idle timeouts count bytes, not progress: API Gateway cuts a
+	// Regional streaming response after 5 minutes of silence, and proxies in front of the
+	// client commonly cut at 60 seconds. A model that thinks for minutes before its first
+	// token trips those on a request that was working fine.
+	SSEKeepaliveSeconds int `json:"sse_keepalive_seconds,omitempty"`
+	// RequestTimeoutMS bounds the GENERATION phase of one request, per scope. 0 means the
+	// only bound is the deployment's own (the Lambda timeout).
+	//
+	// It is always CLAMPED to what the runtime can honour — see streamDeadline. A scope
+	// can only narrow the deployment's ceiling, never raise it, which is the same rule
+	// allowed_models follows.
+	RequestTimeoutMS int `json:"request_timeout_ms,omitempty"`
+	// MaxThinkingTokens is the operator's ceiling on the extended-thinking budget a single
+	// request may buy, per scope. 0 uses defaultMaxThinkingTokens.
+	//
+	// It exists because thinking tokens are OUTPUT tokens: `reasoning_effort: high` is a
+	// client-side decision with a provider-side price, and without a ceiling one caller can
+	// multiply the cost of every request it makes without the operator having changed
+	// anything. The client's effort is clamped to it and the clamp is recorded in the
+	// ledger — see resolveReasoning.
+	//
+	// Like budget and rate_limits, the most specific scope wins (the config chain replaces
+	// scalars); unlike them it is additionally bounded by maxThinkingHardCap, so the number
+	// cannot grow without limit through a nested scope.
+	MaxThinkingTokens int `json:"max_thinking_tokens,omitempty"`
 	// Org lifecycle (written by the backoffice). "suspended" = kill-switch.
 	Status string `json:"status,omitempty"`
 
@@ -467,6 +498,24 @@ type result struct {
 	// cacheConv distinguishes "the provider reported zero" from "the provider does
 	// not report". Treating both as zero would hide real savings.
 	cacheConv string // ports.CacheCountersReported | ports.CacheCountersAbsent
+
+	// reasoningChars is how much chain of thought the model produced, in characters.
+	//
+	// CHARACTERS, not tokens, and the distinction is deliberate. Bedrock's TokenUsage
+	// reports only input/output/total, so reasoning tokens are already INSIDE outputTokens
+	// — they are billed and they are already in the ledger, so nothing is under-reported.
+	// What was missing is being able to tell how much of a bill was thinking. Deriving a
+	// token count from characters would be a guess dressed as a measurement, so the
+	// observed quantity is recorded under its real name.
+	reasoningChars int
+	// reasoningRedacted: the model thought, but the provider returned it encrypted. Kept
+	// so "did not think" stays distinguishable from "not shown to us".
+	reasoningRedacted bool
+	// reasoning is the chain of thought itself, for the BUFFERED path. It goes out as
+	// `reasoning_content` on the message — a separate field, never appended to
+	// `content`, because every OpenAI SDK concatenates content and would print the
+	// model's thinking inside the answer the end user reads.
+	reasoning string
 }
 
 // --- Tool Use (Function Calling) in the OpenAI dialect ---
@@ -640,7 +689,9 @@ func fromPortsResult(pr ports.Result) result {
 		text: pr.Text, tin: pr.InputTokens, tout: pr.OutputTokens,
 		toolCalls: tc, stopReason: pr.StopReason,
 		cacheRead: pr.CacheReadInputTokens, cacheWrite: pr.CacheWriteInputTokens,
-		cacheConv: pr.CacheCounters,
+		cacheConv:      pr.CacheCounters,
+		reasoningChars: pr.ReasoningChars, reasoningRedacted: pr.ReasoningRedacted,
+		reasoning: pr.Reasoning,
 	}
 }
 
@@ -654,16 +705,38 @@ var callProviderFn = callProvider
 
 // callProvider dispatches to the correct provider adapter, converting the boundary
 // to and from the handler's types. Single-org model: org parameter removed.
-func callProvider(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef) (result, error) {
+func callProvider(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef, inf invocation) (result, error) {
 	p, err := providerFor(ctx, r)
 	if err != nil {
 		return result{}, err
 	}
-	pr, err := p.Invoke(ctx, ports.InvokeInput{Messages: toPortsMessages(msgs), Tools: toPortsTools(tools)})
+	pr, err := p.Invoke(ctx, inf.input(msgs, tools))
 	if err != nil {
 		return result{}, err
 	}
 	return fromPortsResult(pr), nil
+}
+
+// invocation is the per-request inference envelope, carried alongside the messages so both
+// provider paths build the SAME InvokeInput.
+//
+// It exists because the parameters used to be dropped between the handler and the adapters:
+// max_tokens and temperature were parsed, used for the cache key and the routing decision,
+// and then never sent. Bundling them into one value that both callProvider and
+// openProviderStream take as an argument is what makes forgetting one of them a compile
+// error instead of a silent behaviour change.
+type invocation struct {
+	MaxOutputTokens int
+	Params          ports.InferenceParams
+}
+
+func (i invocation) input(msgs []chatMsg, tools []toolDef) ports.InvokeInput {
+	return ports.InvokeInput{
+		Messages:        toPortsMessages(msgs),
+		Tools:           toPortsTools(tools),
+		MaxOutputTokens: i.MaxOutputTokens,
+		Inference:       i.Params,
+	}
 }
 
 // errNoNativeStream says the route's adapter has no native streaming API — not that the
@@ -681,7 +754,7 @@ var openProviderStreamFn = openProviderStream
 // It builds the adapter through the same providerFor as the buffered call, so a streaming
 // request cannot end up talking to a differently-configured provider than a buffered one
 // (different region, role, model id or prompt-cache setting).
-func openProviderStream(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef) (ports.ProviderStream, error) {
+func openProviderStream(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef, inf invocation) (ports.ProviderStream, error) {
 	p, err := providerFor(ctx, r)
 	if err != nil {
 		return nil, err
@@ -690,7 +763,7 @@ func openProviderStream(ctx context.Context, r Route, msgs []chatMsg, tools []to
 	if !ok {
 		return nil, errNoNativeStream
 	}
-	return sp.OpenStream(ctx, ports.InvokeInput{Messages: toPortsMessages(msgs), Tools: toPortsTools(tools)})
+	return sp.OpenStream(ctx, inf.input(msgs, tools))
 }
 
 // providerFor constructs the adapter for a route. Shared by the buffered and the streaming
@@ -1263,6 +1336,286 @@ func decorateSwap(m map[string]interface{}, class, servedModelID string) {
 	}
 }
 
+// Extended-thinking budgets, in output tokens, one per effort level.
+//
+// The client asks in WORDS (`reasoning_effort`) and three of the four providers need a
+// NUMBER, so the translation has to live somewhere. It lives here, once, rather than in
+// each adapter: four adapters resolving "high" independently is four different products
+// under one name, and a customer comparing two providers would be comparing our
+// inconsistency rather than the models.
+//
+// The low value is 1024 because that is Anthropic's documented minimum — anything smaller
+// is rejected, so a "low" that failed on Claude and worked elsewhere would be the worst
+// kind of portable-looking parameter.
+const (
+	thinkingBudgetLow    = 1024
+	thinkingBudgetMedium = 4096
+	thinkingBudgetHigh   = 16384
+
+	// defaultMaxThinkingTokens caps thinking when the operator configured no ceiling.
+	//
+	// A default of "unlimited" would be the wrong way to fail: thinking tokens are output
+	// tokens, billed at the output rate, so an unbounded budget lets one request cost
+	// several times what the same request cost yesterday — with no change on the operator's
+	// side and nothing in the config to point at. 8192 covers medium comfortably and makes
+	// `high` a deliberate act.
+	defaultMaxThinkingTokens = 8192
+
+	// maxThinkingHardCap is the absolute ceiling no configuration can exceed.
+	//
+	// It exists because the scope chain REPLACES scalars (ddbconfig.deepMerge): a team-level
+	// value overrides the org's, the same way budget and rate_limits already behave. That is
+	// the established convention here and this field follows it — but a convention that lets
+	// a number grow needs one bound that does not move.
+	maxThinkingHardCap = 32768
+
+	// minAnswerHeadroom is what stays reserved for the ANSWER when a client sets max_tokens
+	// and asks to think in the same request.
+	//
+	// Anthropic requires max_tokens > budget_tokens, and satisfying that inequality by one
+	// token would technically pass and produce a response that is all thinking and no
+	// answer. Reserving real headroom is what makes the clamp useful rather than merely
+	// valid.
+	minAnswerHeadroom = 512
+)
+
+// effectiveThinkingCeiling resolves the operator's ceiling for this scope.
+func effectiveThinkingCeiling(c *Config) int {
+	ceiling := c.MaxThinkingTokens
+	if ceiling <= 0 {
+		ceiling = defaultMaxThinkingTokens
+	}
+	if ceiling > maxThinkingHardCap {
+		ceiling = maxThinkingHardCap
+	}
+	return ceiling
+}
+
+// reasoningPlan is the outcome of reconciling what the client asked for with what the
+// operator permits and what the provider will accept.
+type reasoningPlan struct {
+	// Req is nil when no thinking was requested at all.
+	Req *ports.ReasoningRequest
+	// MaxTokens is the output ceiling to send, possibly RAISED to make room for thinking.
+	MaxTokens int
+	// Clamped names what had to be adjusted, for the ledger. Empty when nothing was.
+	Clamped string
+}
+
+// resolveReasoning turns `reasoning_effort` into a concrete, permitted, provider-valid
+// plan.
+//
+// It CLAMPS rather than refuses, and records the clamp. That choice follows the precedent
+// already set by budget degrade and by availability degradation: this gateway refuses when
+// a POLICY says no (swap_not_allowed) or when nothing can serve the request
+// (no_eligible_model), and otherwise serves what it can and reports honestly. Refusing here
+// would mean rejecting a request the customer could not have known was over a ceiling they
+// cannot see — while silently shrinking the budget without recording it would be the
+// dishonest half of the same choice. So: clamp, and put it in the ledger.
+//
+// The three reconciliations, in order of precedence:
+//
+//  1. the operator ceiling wins over the client's effort;
+//  2. an explicit max_tokens must leave room for an ANSWER, not just satisfy
+//     max_tokens > budget_tokens by a token;
+//  3. when the client set NO max_tokens, the ceiling is raised to fit thinking plus a
+//     normal answer — otherwise a provider default of a few hundred tokens would be
+//     consumed entirely by the chain of thought and the answer would come back empty.
+func resolveReasoning(effort string, maxTokens *int, ceiling int) reasoningPlan {
+	plan := reasoningPlan{}
+	if maxTokens != nil {
+		plan.MaxTokens = *maxTokens
+	}
+
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "":
+		return plan
+	case ports.ReasoningEffortNone:
+		// An explicit "do not think" carries information no absent field does, and the
+		// providers that can honour it are told so.
+		plan.Req = &ports.ReasoningRequest{Effort: ports.ReasoningEffortNone, Disabled: true}
+		return plan
+	case ports.ReasoningEffortLow:
+		plan.Req = &ports.ReasoningRequest{Effort: ports.ReasoningEffortLow, BudgetTokens: thinkingBudgetLow}
+	case ports.ReasoningEffortMedium:
+		plan.Req = &ports.ReasoningRequest{Effort: ports.ReasoningEffortMedium, BudgetTokens: thinkingBudgetMedium}
+	case ports.ReasoningEffortHigh:
+		plan.Req = &ports.ReasoningRequest{Effort: ports.ReasoningEffortHigh, BudgetTokens: thinkingBudgetHigh}
+	default:
+		// An unrecognised level is NOT silently treated as "no thinking": the client
+		// clearly meant to ask. Medium is the safe reading, and the substitution is
+		// recorded so a typo is visible in the ledger instead of costing nothing and
+		// doing nothing.
+		plan.Req = &ports.ReasoningRequest{Effort: ports.ReasoningEffortMedium, BudgetTokens: thinkingBudgetMedium}
+		plan.Clamped = "unknown_effort"
+	}
+
+	if plan.Req.BudgetTokens > ceiling {
+		plan.Req.BudgetTokens = ceiling
+		plan.Clamped = "operator_ceiling"
+	}
+	if plan.MaxTokens > 0 {
+		if room := plan.MaxTokens - minAnswerHeadroom; plan.Req.BudgetTokens > room {
+			if room < thinkingBudgetLow {
+				// There is not enough room for the smallest budget any provider accepts.
+				// Thinking is dropped rather than sent as a value that would be rejected:
+				// a served answer with a recorded reason beats a provider error.
+				plan.Req.BudgetTokens = 0
+				plan.Req.Disabled = true
+				plan.Clamped = "max_tokens_too_small"
+			} else {
+				plan.Req.BudgetTokens = room
+				plan.Clamped = "max_tokens_headroom"
+			}
+		}
+		return plan
+	}
+	// No client ceiling: raise ours so the answer is not crowded out by the thinking.
+	if plan.Req.BudgetTokens > 0 {
+		plan.MaxTokens = plan.Req.BudgetTokens + defaultOutTokens
+	}
+	return plan
+}
+
+// cachedMessageParts pulls the answer and the reasoning out of a cached response body.
+//
+// Both, not just the answer: a cached response that was produced with thinking carries
+// `reasoning_content` on its message, and replaying only `content` would make the same request
+// answered from cache look like a NON-reasoning answer to a streaming client. The two
+// extractions were also duplicated at the exact and semantic cache-hit sites, which is how one
+// of them would have been the only one updated.
+func cachedMessageParts(cached map[string]interface{}) (reasoning, text string) {
+	ch, ok := cached["choices"].([]interface{})
+	if !ok || len(ch) == 0 {
+		return "", ""
+	}
+	c0, ok := ch[0].(map[string]interface{})
+	if !ok {
+		return "", ""
+	}
+	msg, ok := c0["message"].(map[string]interface{})
+	if !ok {
+		return "", ""
+	}
+	if s, ok := msg["content"].(string); ok {
+		text = s
+	}
+	if s, ok := msg["reasoning_content"].(string); ok {
+		reasoning = s
+	}
+	return reasoning, text
+}
+
+// reasoningKeyPart is the cache-key contribution of a thinking request.
+//
+// It is the RESOLVED effort, not the raw string the client sent, so a request clamped to a
+// smaller budget shares a key with other requests that got the same treatment instead of
+// with the unclamped ones it does not resemble. Empty when no thinking was requested, which
+// keeps the key byte-identical to what it was before this parameter existed.
+func reasoningKeyPart(p reasoningPlan) string {
+	if p.Req == nil {
+		return ""
+	}
+	if p.Req.Disabled {
+		return ports.ReasoningEffortNone
+	}
+	return p.Req.Effort
+}
+
+// thinkingBudgetOf is the budget the plan will actually send, or 0.
+func thinkingBudgetOf(p reasoningPlan) int {
+	if p.Req == nil || p.Req.Disabled {
+		return 0
+	}
+	return p.Req.BudgetTokens
+}
+
+// stopSequences decodes the OpenAI dialect's `stop`, which is a string OR an array of
+// strings.
+//
+// Both forms are accepted because both are valid in the dialect this gateway claims to
+// speak; rejecting the scalar would break a client that is correct against the spec. A
+// malformed value is ignored rather than fatal — a stop sequence is a refinement of the
+// request, and refusing the whole call over it would be a worse trade than serving without
+// it.
+func stopSequences(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		if one == "" {
+			return nil
+		}
+		return []string{one}
+	}
+	var many []string
+	if json.Unmarshal(raw, &many) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(many))
+	for _, s := range many {
+		// An empty stop sequence matches immediately on some providers, truncating the
+		// answer to nothing. Dropping it is the only safe reading.
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// decorateReasoningRequest records what was asked for, and what we actually did.
+//
+// Present only when thinking was requested. `reasoning_effort` is the client's word and
+// `thinking_budget_tokens` the number we sent, kept as two fields because they can
+// legitimately disagree — that disagreement is exactly what an operator needs to see when a
+// ceiling is doing its job. `reasoning_clamped` names WHY they disagree; without it, a
+// budget silently reduced by policy would look like the model simply choosing to think
+// less.
+func decorateReasoningRequest(m map[string]interface{}, plan reasoningPlan) {
+	if plan.Req == nil {
+		return
+	}
+	if plan.Req.Effort != "" {
+		m["reasoning_effort"] = plan.Req.Effort
+	}
+	if plan.Req.BudgetTokens > 0 {
+		m["thinking_budget_tokens"] = plan.Req.BudgetTokens
+	}
+	if plan.Clamped != "" {
+		m["reasoning_clamped"] = plan.Clamped
+	}
+}
+
+// decorateReasoning records how much of the answer was thinking, and whether we were
+// allowed to read it.
+//
+// Present ONLY when the model actually reasoned. Most requests do not, and writing
+// `reasoning_chars: 0` on all of them would add a field to every record in the
+// ledger to say "this did not happen" — the same argument that keeps `canary` off
+// the records it does not apply to.
+//
+// CHARACTERS, not tokens. Bedrock's TokenUsage carries input/output/total only, so
+// reasoning is already inside tokens_out: it is already billed and already in the
+// ledger. This field is not a second cost, it is the split — how much of that output
+// the customer paid for was the model thinking rather than answering. Converting to
+// tokens would mean inventing a ratio and printing the guess as a measurement.
+//
+// reasoning_redacted appears only when true, and it carries information no counter
+// does: the model thought, the provider encrypted it, so a zero-length reasoning
+// text here means "not shown to us" and not "did not think".
+func decorateReasoning(m map[string]interface{}, chars int, redacted bool) {
+	if chars > 0 {
+		m["reasoning_chars"] = chars
+	}
+	if redacted {
+		m["reasoning_redacted"] = true
+	}
+}
+
 // The local `semQueryText` function used to live here and was REMOVED on purpose.
 //
 // It projected ALL messages (including the system prompt) into the text to be
@@ -1442,6 +1795,14 @@ type routerProvider struct {
 	cfg   *Config
 	msgs  []chatMsg
 	tools []toolDef
+	// inf carries the client's inference parameters into the escalation path.
+	//
+	// It was the last place they were still being dropped: this type received an
+	// InvokeInput carrying MaxOutputTokens, read only in.Model from it, and called the
+	// provider without it — so a retry on a higher tier silently ignored the ceiling and
+	// the temperature the first attempt had honoured. Escalation is the worst place for
+	// that: the whole point is to produce a comparable second answer.
+	inf invocation
 
 	// raw keeps the raw result per model, because only it carries the cache counters
 	// in the shape realizedCost() needs.
@@ -1453,7 +1814,14 @@ func (p *routerProvider) Invoke(ctx context.Context, in ports.InvokeInput) (port
 	if !ok {
 		return ports.Result{}, fmt.Errorf("unknown model: %s", in.Model)
 	}
-	res, err := callProviderFn(ctx, r, p.msgs, p.tools)
+	// in.MaxOutputTokens is what routing.Escalate believes the ceiling to be, so it wins
+	// over the envelope's copy when set — the two agree in practice, and preferring the
+	// argument keeps this type honest about where the value came from.
+	inf := p.inf
+	if in.MaxOutputTokens > 0 {
+		inf.MaxOutputTokens = in.MaxOutputTokens
+	}
+	res, err := callProviderFn(ctx, r, p.msgs, p.tools, inf)
 	if err != nil {
 		return ports.Result{}, err
 	}
@@ -1499,11 +1867,11 @@ type escalation struct {
 // Single-org model: org parameter removed.
 func maybeEscalate(ctx context.Context, c *Config, s step,
 	msgs []chatMsg, tools []toolDef, maxOut int, first result,
-	shape routing.RequestShape, now time.Time,
+	shape routing.RequestShape, now time.Time, inf invocation,
 ) escalation {
 	prov := &primedProvider{
 		primed: map[string]result{s.name: first},
-		inner:  &routerProvider{cfg: c, msgs: msgs, tools: tools},
+		inner:  &routerProvider{cfg: c, msgs: msgs, tools: tools, inf: inf},
 	}
 
 	costFn := func(model string, pr ports.Result) routing.Money {
@@ -1621,9 +1989,18 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		// (a deterministic temperature=0 ≠ absent; same for max_tokens).
 		MaxTokens   *int     `json:"max_tokens,omitempty"`
 		Temperature *float64 `json:"temperature,omitempty"`
-		NoCache     bool     `json:"no_cache"`
-		Feature     string   `json:"feature"`
-		Stream      bool     `json:"stream"`
+		TopP        *float64 `json:"top_p,omitempty"`
+		// Stop accepts a string or an array of strings, which is what the OpenAI dialect
+		// allows. stopSequences decodes both — rejecting the scalar form would break
+		// clients that are correct against the dialect we claim to speak.
+		Stop json.RawMessage `json:"stop,omitempty"`
+		// ReasoningEffort is the OpenAI-dialect thinking request: none | low | medium |
+		// high. The gateway resolves it into a token budget (resolveReasoning) because
+		// three of the four providers need a number.
+		ReasoningEffort string `json:"reasoning_effort,omitempty"`
+		NoCache         bool   `json:"no_cache"`
+		Feature         string `json:"feature"`
+		Stream          bool   `json:"stream"`
 		// App attributes this request to one of the key's apps. Same purpose as the
 		// x-aiplat-app header, for callers that control the body but not the headers.
 		App string `json:"app,omitempty"`
@@ -1736,13 +2113,37 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	if body.MaxTokens != nil {
 		maxTok = *body.MaxTokens
 	}
+	// Reconcile the thinking request with the operator's ceiling and with max_tokens BEFORE
+	// the routing decision, because both outputs feed it: WantsReasoning selects
+	// thinking-capable models, and the budget counts against the context window as output
+	// tokens. Resolving it after the decision would let the gateway pick a model that cannot
+	// think for a request that asked to.
+	rplan := resolveReasoning(body.ReasoningEffort, body.MaxTokens, effectiveThinkingCeiling(c))
+	if rplan.MaxTokens > 0 {
+		maxTok = rplan.MaxTokens
+	}
+	stops := stopSequences(body.Stop)
+	inf := invocation{
+		MaxOutputTokens: maxTok,
+		Params: ports.InferenceParams{
+			Temperature: body.Temperature,
+			TopP:        body.TopP,
+			Stop:        stops,
+			Reasoning:   rplan.Req,
+		},
+	}
 	shape := routing.RequestShape{
 		InputTokens:     estimateTokens(body.Messages),
 		MaxOutputTokens: maxTok,
 		HasTools:        len(body.Tools) > 0,
 		HasImage:        hasImage(body.Messages),
-		Feature:         feature,
-		RequestedModel:  requested,
+		// A request that asks to think requires a model that CAN think, the same way a
+		// request carrying tools requires tool use. This is what routes such a request to a
+		// capable model instead of failing at the provider.
+		WantsReasoning: rplan.Req != nil && !rplan.Req.Disabled,
+		ThinkingBudget: thinkingBudgetOf(rplan),
+		Feature:        feature,
+		RequestedModel: requested,
 	}
 	// Hints: historical E[tokens_out] and the unavailability signal, read as a
 	// contract. nil here is the normal path (new org, publisher down) and the domain
@@ -1825,6 +2226,14 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		Tools:       toPortsTools(body.Tools),
 		Temperature: body.Temperature,
 		MaxTokens:   body.MaxTokens,
+		// Every parameter that changes the answer has to change the key. top_p and stop are
+		// here for the same reason temperature already was, and the reasoning effort because
+		// a thinking answer and a non-thinking answer to the same prompt are different
+		// products — sharing one slot would serve the cheap one to whoever paid for the
+		// expensive one, and vice versa.
+		TopP:            body.TopP,
+		Stop:            stops,
+		ReasoningEffort: reasoningKeyPart(rplan),
 	}, keyMode)
 
 	// --- Cache hit ---
@@ -1850,18 +2259,9 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			routing.DecorateSavings(cacheRec, savedCache, savedCache, "cache")
 			emitUsageFn(ctx, cacheRec)
 			if body.Stream {
-				text := ""
-				if ch, ok := cached["choices"].([]interface{}); ok && len(ch) > 0 {
-					if m, ok := ch[0].(map[string]interface{}); ok {
-						if msg, ok := m["message"].(map[string]interface{}); ok {
-							if s, ok := msg["content"].(string); ok {
-								text = s
-							}
-						}
-					}
-				}
+				cachedReasoning, text := cachedMessageParts(cached)
 				var sb bytes.Buffer
-				pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, text)
+				pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text)
 				// Same aiplat block the non-streaming cache hit returns, so a streaming
 				// caller still sees cache_hit and the saved amount. Tokens are 0 on a
 				// cache hit by definition — nothing was sent to a provider.
@@ -1917,18 +2317,9 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 						routing.DecorateSavings(cacheRec, savedCache, 0, routing.ReasonSemanticCache)
 						emitUsageFn(ctx, cacheRec)
 						if body.Stream {
-							text := ""
-							if chs, ok := cached["choices"].([]interface{}); ok && len(chs) > 0 {
-								if m0, ok := chs[0].(map[string]interface{}); ok {
-									if msg, ok := m0["message"].(map[string]interface{}); ok {
-										if sc, ok := msg["content"].(string); ok {
-											text = sc
-										}
-									}
-								}
-							}
+							cachedReasoning, text := cachedMessageParts(cached)
 							var sb bytes.Buffer
-							pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, text)
+							pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text)
 							// Carries semantic_score as well, so a streaming caller can
 							// see the answer was an APPROXIMATE match and how close.
 							sseFinal(&sb, "chatcmpl-"+ck[:12], chosen, 0, 0, cached["aiplat"].(map[string]interface{}))
@@ -1991,13 +2382,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			// ConverseStream, and treating "this model cannot stream" as "this route is
 			// down" would fail a request that the buffered call would have served. Only
 			// if that also fails does the chain move on.
-			if st, e := openProviderStreamFn(ctx, s.r, body.Messages, body.Tools); e == nil {
+			if st, e := openProviderStreamFn(ctx, s.r, body.Messages, body.Tools, inf); e == nil {
 				provStream, okStream = st, true
 				break
 			} else if !errors.Is(e, errNoNativeStream) {
 				perr = e
 			}
-			res, e := callProviderFn(ctx, s.r, body.Messages, body.Tools)
+			res, e := callProviderFn(ctx, s.r, body.Messages, body.Tools, inf)
 			if e == nil {
 				buffered, okStream = res, true
 				break
@@ -2033,11 +2424,23 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				// the cost came out too low AND the prompt-cache saving was invisible in
 				// the ledger. Both wrong, in the one number this product exists to get
 				// right.
-				streamRes = fromPortsResult(pumpProviderStream(w, id, usedName, provStream))
+				//
+				// The generation phase carries the scope's deadline and the keepalive.
+				// Cancelling sctx does not by itself stop the provider read — the stream
+				// was opened on the parent ctx — but the pump's deferred Close does, and
+				// stopping the pump is what lets the client receive stop → final → [DONE]
+				// instead of a connection that dies mid-answer.
+				sctx, scancel := streamDeadline(ctx, c.RequestTimeoutMS)
+				streamRes = fromPortsResult(pumpProviderStream(sctx, w, id, usedName, provStream,
+					effectiveKeepalive(c.SSEKeepaliveSeconds)))
+				scancel()
 				content = streamRes.text
 			default:
 				content, streamRes = buffered.text, buffered
-				pseudoStream(w, id, usedName, content)
+				// buffered.reasoning is forwarded too: this is the path an OpenAI-compatible
+				// provider takes (it has no native streaming API), and without it reasoning
+				// would be billed and recorded but never reach the client.
+				pseudoStream(w, id, usedName, buffered.reasoning, content)
 			}
 			if streamRes.tout == 0 {
 				streamRes.tout = len(content) / 4
@@ -2063,8 +2466,16 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			addRateTokens(ctx, c.limitsScope, c.Limits, tin+tout)
 			addCreditSpend(ctx, usedProvider, c, dec, cost)
 			if cacheStore.Enabled() && !noStore {
+				// The stored message carries the reasoning too. Without it a streamed thinking
+				// answer was cached as if it had never reasoned, so the replay — which is what
+				// the NEXT caller of the same prompt receives — silently lost the
+				// reasoning_content the first caller paid for and got.
+				cachedMsg := map[string]interface{}{"role": "assistant", "content": content}
+				if streamRes.reasoning != "" {
+					cachedMsg["reasoning_content"] = streamRes.reasoning
+				}
 				full := map[string]interface{}{"id": id, "object": "chat.completion", "model": usedName,
-					"choices": []map[string]interface{}{{"index": 0, "message": map[string]string{"role": "assistant", "content": content}, "finish_reason": "stop"}},
+					"choices": []map[string]interface{}{{"index": 0, "message": cachedMsg, "finish_reason": "stop"}},
 					"usage":   map[string]int{"prompt_tokens": tin, "completion_tokens": tout, "total_tokens": tin + tout}}
 				jb, _ := json.Marshal(full)
 				storeTTL := effectiveCacheTTL(c)
@@ -2078,6 +2489,8 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			routing.DecorateUsage(rec, dec, requested, pricingStatus, cost, streamRes.cacheRead, streamRes.cacheWrite, streamRes.cacheConv)
 			decorateSwap(rec, swapClass, servedModelID)
 			decorateCanary(rec, canaryRoute)
+			decorateReasoning(rec, streamRes.reasoningChars, streamRes.reasoningRedacted)
+			decorateReasoningRequest(rec, rplan)
 			rec["price_source"] = priceSourceOf(c, usedName, now)
 			routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
 			emitUsageFn(ctx, rec)
@@ -2091,6 +2504,8 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			streamMeta := map[string]interface{}{"team": team, "app_tag": app, "feature": feature, "provider": usedProvider, "model": usedName, "estimated_cost_usd": cost, "saved_usd": saved, "savings_reason": reason, "savings_class": routing.ClassOf(reason), "cache_hit": false, "latency_ms": lat, "auto_cheapest": c.AutoCheapest, "requested_model": requested, "budget_state": budgetState}
 			decorateSwap(streamMeta, swapClass, servedModelID)
 			decorateCanary(streamMeta, canaryRoute)
+			decorateReasoning(streamMeta, streamRes.reasoningChars, streamRes.reasoningRedacted)
+			decorateReasoningRequest(streamMeta, rplan)
 			sseFinal(w, id, usedName, tin, tout, streamMeta)
 		})
 	}
@@ -2103,7 +2518,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	escalateOn := escalationEnabled(c, feature)
 	var lastErr error
 	for _, s := range chain {
-		res, err := callProviderFn(ctx, s.r, body.Messages, body.Tools)
+		res, err := callProviderFn(ctx, s.r, body.Messages, body.Tools, inf)
 		if err != nil {
 			lastErr = err
 			continue
@@ -2112,7 +2527,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		escalated, escReason, escOutcome, attempts := false, "", "", 1
 		usedName := s.name
 		if escalateOn {
-			e := maybeEscalate(ctx, c, s, body.Messages, body.Tools, maxTok, res, shape, now)
+			e := maybeEscalate(ctx, c, s, body.Messages, body.Tools, maxTok, res, shape, now, inf)
 			res, usedName = e.res, e.model
 			escalated, escReason, escOutcome, attempts, attemptCost =
 				e.escalated, e.reason, e.outcome, e.attempts, e.totalCost
@@ -2160,6 +2575,16 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		}
 
 		msgContent := map[string]interface{}{"role": "assistant", "content": res.text}
+		// A SEPARATE field, and only when there is something to put in it.
+		//
+		// Never appended to `content`: every OpenAI SDK concatenates content, so merging
+		// the two would print the model's private reasoning inside the answer shown to the
+		// end user. The name matches what other gateways already emit (`reasoning_content`)
+		// rather than being invented here, and an unknown field is ignored by clients that
+		// do not want it — so this is additive for everyone else.
+		if res.reasoning != "" {
+			msgContent["reasoning_content"] = res.reasoning
+		}
 		if len(res.toolCalls) > 0 {
 			msgContent["tool_calls"] = res.toolCalls
 			if res.text == "" {
@@ -2174,6 +2599,8 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		// the swap later in a dashboard.
 		decorateSwap(meta, swapClass, servedModelID)
 		decorateCanary(meta, canaryRoute)
+		decorateReasoning(meta, res.reasoningChars, res.reasoningRedacted)
+		decorateReasoningRequest(meta, rplan)
 		out := map[string]interface{}{
 			"id": "chatcmpl-" + ck[:12], "object": "chat.completion", "model": usedName,
 			"choices": []map[string]interface{}{{"index": 0, "message": msgContent, "finish_reason": finishReason}},
@@ -2199,6 +2626,8 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		routing.DecorateUsage(rec, dec, requested, pricingStatus, cost, res.cacheRead, res.cacheWrite, res.cacheConv)
 		decorateSwap(rec, swapClass, servedModelID)
 		decorateCanary(rec, canaryRoute)
+		decorateReasoning(rec, res.reasoningChars, res.reasoningRedacted)
+		decorateReasoningRequest(rec, rplan)
 		rec["price_source"] = priceSourceOf(c, usedName, now)
 		routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
 		routing.DecorateEscalation(rec, escalated, escReason, escOutcome, attempts, dec.RequestedCostUSD, cost)

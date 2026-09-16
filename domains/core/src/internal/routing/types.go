@@ -57,6 +57,11 @@ const (
 	// does not exist in the catalog. Recorded rather than fatal — a typo in a
 	// bundle must degrade the order, never refuse the request.
 	DiscardBundleRefUnknown = "bundle_ref_unknown"
+	// DiscardNoReasoning: the request asked for extended thinking and this model does
+	// not declare the capability. Same shape as no_tool_use, deliberately — a request
+	// that wants reasoning gets ROUTED to a model that can reason, instead of being
+	// refused, whenever the catalog has one.
+	DiscardNoReasoning = "no_reasoning"
 )
 
 // ErrSwapNotAllowed: every capable candidate would require a substitution the
@@ -92,6 +97,18 @@ type Capabilities struct {
 	Multimodal    bool   `json:"multimodal"`
 	ContextWindow int    `json:"context_window_tokens"`
 	Tier          string `json:"tier"`
+	// Reasoning declares that this model can produce a chain of thought when asked.
+	//
+	// Absent counts as FALSE, exactly like ToolUse and for the same reason: asking a model
+	// that cannot think to think is not a soft failure. Bedrock rejects the request
+	// outright for a model that does not accept the thinking parameter, so a permissive
+	// default would turn a routable request into a provider error — and it would do it
+	// only for the customers who adopted the feature.
+	//
+	// It is a DECLARATION and never inferred from the model id. Whether a given model
+	// supports extended thinking is not derivable from its name, ListFoundationModels does
+	// not expose it, and guessing wrong fails the request.
+	Reasoning bool `json:"reasoning,omitempty"`
 	// PerRequestFeeUSD enters as the fourth component of the expected cost (Req 2.1).
 	PerRequestFeeUSD Money `json:"per_request_fee_usd,omitempty"`
 	// CacheTokensInclusive: whether the provider already includes the cached tokens
@@ -127,8 +144,17 @@ type RequestShape struct {
 	MaxOutputTokens   int // ceiling requested by the client (0 = not informed)
 	HasTools          bool
 	HasImage          bool
-	Feature           string
-	RequestedModel    string // "" when the client did not inform it
+	// WantsReasoning: the client asked for extended thinking. A capability requirement
+	// like HasTools and HasImage, and it belongs here for the same reason — it is the
+	// SHAPE of the request, never its content.
+	WantsReasoning bool
+	// ThinkingBudget is the resolved thinking allowance in tokens, already clamped by the
+	// shell. It enters the domain only to be added to the output side of the
+	// context-window check: thinking tokens are output tokens, so a model whose window
+	// fits the answer may not fit the answer plus the thinking.
+	ThinkingBudget int
+	Feature        string
+	RequestedModel string // "" when the client did not inform it
 }
 
 // Policy is the slice of the effective config the decision needs.

@@ -106,6 +106,7 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	if len(in.Tools) > 0 {
 		reqBody["tools"] = toWireTools(in.Tools)
 	}
+	applyInference(reqBody, in)
 	payload, _ := json.Marshal(reqBody)
 	// Carries the caller's context so the provider call is cancelled when the
 	// request is cancelled or the invocation deadline expires, instead of
@@ -127,8 +128,14 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	var d struct {
 		Choices []struct {
 			Message struct {
-				Content   string         `json:"content"`
-				ToolCalls []wireToolCall `json:"tool_calls,omitempty"`
+				Content string `json:"content"`
+				// Two names for the same thing, because the gateways in this dialect did
+				// not converge: DeepSeek and TrueFoundry emit `reasoning_content`,
+				// OpenRouter emits `reasoning`. Reading only one silently drops the
+				// reasoning for half the providers a customer might point at.
+				ReasoningContent string         `json:"reasoning_content"`
+				Reasoning        string         `json:"reasoning"`
+				ToolCalls        []wireToolCall `json:"tool_calls,omitempty"`
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
@@ -157,7 +164,43 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 		res.CacheReadInputTokens = pd.CachedTokens
 		res.CacheCounters = ports.CacheCountersReported
 	}
+	// reasoning_content wins when both are present: it is the more specific name, and a
+	// provider emitting both is emitting the same text twice.
+	if r := d.Choices[0].Message.ReasoningContent; r != "" {
+		res.Reasoning = r
+	} else if r := d.Choices[0].Message.Reasoning; r != "" {
+		res.Reasoning = r
+	}
+	res.ReasoningChars = len(res.Reasoning)
 	return res, nil
+}
+
+// applyInference adds the sampling parameters to an outbound body.
+//
+// This dialect is the one place where the reasoning request is passed through as a WORD
+// rather than a token budget: `reasoning_effort` is the OpenAI parameter, and translating
+// it into a number here would be inventing a mapping the provider already has its own
+// opinion about. The budget resolved by the gateway is used only by the providers that
+// require a number.
+//
+// Every field is conditional so the emitted body stays byte-identical for a request that
+// sends none of them — this package's golden fixtures compare exact bytes.
+func applyInference(body map[string]interface{}, in ports.InvokeInput) {
+	if in.MaxOutputTokens > 0 {
+		body["max_tokens"] = in.MaxOutputTokens
+	}
+	if t := in.Inference.Temperature; t != nil {
+		body["temperature"] = *t
+	}
+	if p := in.Inference.TopP; p != nil {
+		body["top_p"] = *p
+	}
+	if len(in.Inference.Stop) > 0 {
+		body["stop"] = in.Inference.Stop
+	}
+	if r := in.Inference.Reasoning; r != nil && r.Effort != "" {
+		body["reasoning_effort"] = r.Effort
+	}
 }
 
 func fromWireToolCalls(tcs []wireToolCall) []ports.ToolCall {

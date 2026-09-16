@@ -261,6 +261,32 @@ const I18N={
     'only the same app (strictest)':'só o mesmo app (mais restrito)',
     'anyone in this deployment (highest hit rate)':'qualquer um neste deployment (maior taxa de acerto)',
     'Changing this changes the cache key: the existing cache stops being reachable and the hit rate drops until it refills. Nothing is lost — it is regenerated on demand.':'Mudar isto muda a chave do cache: o cache atual deixa de ser alcançável e a taxa de acerto cai até reencher. Nada é perdido — é regenerado sob demanda.',
+    // long answers (sse_keepalive_seconds, request_timeout_ms)
+    // extended thinking (reasoning_effort, max_thinking_tokens)
+    'Thinking budget ceiling':'Teto do orçamento de raciocínio',
+    'A client asks how hard to think (<code>reasoning_effort</code>) and thinking is billed as <b>output tokens</b>, so without a ceiling one caller can multiply what every request costs you without anything changing on your side. Requests above this are served with the budget reduced to it, and the reduction is recorded in the ledger — never silently. Only models you marked as reasoning-capable on the Models tab receive these requests.':'Um cliente pede o quão intensamente pensar (<code>reasoning_effort</code>) e o raciocínio é cobrado como <b>tokens de saída</b>, então sem um teto um chamador pode multiplicar o custo de cada requisição sem que nada mude do seu lado. Requisições acima disto são atendidas com o orçamento reduzido a este valor, e a redução é registrada no ledger — nunca em silêncio. Apenas modelos que você marcou como capazes de raciocinar na aba Modelos recebem essas requisições.',
+    'Most thinking one request may buy':'Máximo de raciocínio que uma requisição pode comprar',
+    '8k tokens (default)':'8k tokens (padrão)',
+    '1k tokens — low effort only':'1k tokens — apenas esforço baixo',
+    '4k tokens — up to medium effort':'4k tokens — até esforço médio',
+    '16k tokens — full high effort':'16k tokens — esforço alto completo',
+    '32k tokens — the maximum allowed':'32k tokens — o máximo permitido',
+    'reasoning:':'raciocínio:',
+    'Whether this model can produce a chain of thought when a request asks for it (reasoning_effort). Declared, never detected: no provider API reports it, and asking a model that cannot think makes the provider reject the request. A request that asks to think is only routed to models declared here.':'Se este modelo pode produzir uma cadeia de raciocínio quando uma requisição pede (reasoning_effort). Declarado, nunca detectado: nenhuma API de provedor reporta isso, e pedir a um modelo que não pode pensar faz o provedor rejeitar a requisição. Uma requisição que pede raciocínio só é roteada para modelos declarados aqui.',
+    'Long answers':'Respostas longas',
+    'A reasoning model can think for minutes before its first token. Idle timeouts count <b>bytes, not progress</b>, so a proxy closes the connection on a request that was working. A keepalive signal is sent during the silence — it is a comment frame, ignored by clients, never billed and never counted as content.':'Um modelo de raciocínio pode pensar por minutos antes do primeiro token. Timeouts de inatividade contam <b>bytes, não progresso</b>, então um proxy fecha a conexão em uma requisição que estava funcionando. Um sinal de keepalive é enviado durante o silêncio — é um frame de comentário, ignorado pelos clientes, nunca cobrado e nunca contado como conteúdo.',
+    'Keepalive during silence':'Keepalive durante o silêncio',
+    'every 15s (default)':'a cada 15s (padrão)',
+    'every 10s — behind a stricter proxy':'a cada 10s — atrás de um proxy mais restrito',
+    'every 30s':'a cada 30s',
+    'off — only if a client rejects comment frames':'desligado — só se um cliente rejeitar frames de comentário',
+    'Generation time limit':'Limite de tempo de geração',
+    'Stops generation early enough to still send the closing frames and record the cost. Without it a request that hits the platform limit is cut mid-answer and the tokens the provider already billed are never accounted for. This can only <b>shorten</b> the platform limit, never extend it.':'Interrompe a geração com antecedência suficiente para ainda enviar os frames finais e registrar o custo. Sem isso, uma requisição que atinge o limite da plataforma é cortada no meio da resposta e os tokens que o provedor já cobrou nunca são contabilizados. Isto só pode <b>reduzir</b> o limite da plataforma, nunca estendê-lo.',
+    'Stop generating after':'Parar de gerar após',
+    'the platform limit (default)':'o limite da plataforma (padrão)',
+    '30 seconds':'30 segundos',
+    '60 seconds':'60 segundos',
+    '2 minutes':'2 minutos',
     // strings that were tagged/wrapped but never had an entry, so they rendered in
     // English inside a pt/es screen
     'the organization':'a organização',
@@ -1066,6 +1092,32 @@ const I18N={
     'only the same app (strictest)':'solo la misma app (más estricto)',
     'anyone in this deployment (highest hit rate)':'cualquiera en este deployment (mayor tasa de acierto)',
     'Changing this changes the cache key: the existing cache stops being reachable and the hit rate drops until it refills. Nothing is lost — it is regenerated on demand.':'Cambiar esto cambia la clave del cache: el cache actual deja de ser alcanzable y la tasa de acierto baja hasta rellenarse. Nada se pierde — se regenera bajo demanda.',
+    // long answers (sse_keepalive_seconds, request_timeout_ms)
+    // extended thinking (reasoning_effort, max_thinking_tokens)
+    'Thinking budget ceiling':'Límite del presupuesto de razonamiento',
+    'A client asks how hard to think (<code>reasoning_effort</code>) and thinking is billed as <b>output tokens</b>, so without a ceiling one caller can multiply what every request costs you without anything changing on your side. Requests above this are served with the budget reduced to it, and the reduction is recorded in the ledger — never silently. Only models you marked as reasoning-capable on the Models tab receive these requests.':'Un cliente pide qué tan intensamente pensar (<code>reasoning_effort</code>) y el razonamiento se cobra como <b>tokens de salida</b>, así que sin un límite un llamador puede multiplicar lo que cuesta cada petición sin que nada cambie de su lado. Las peticiones por encima de esto se atienden con el presupuesto reducido a este valor, y la reducción se registra en el ledger — nunca en silencio. Solo los modelos que marcó como capaces de razonar en la pestaña Modelos reciben estas peticiones.',
+    'Most thinking one request may buy':'Máximo de razonamiento que una petición puede comprar',
+    '8k tokens (default)':'8k tokens (predeterminado)',
+    '1k tokens — low effort only':'1k tokens — solo esfuerzo bajo',
+    '4k tokens — up to medium effort':'4k tokens — hasta esfuerzo medio',
+    '16k tokens — full high effort':'16k tokens — esfuerzo alto completo',
+    '32k tokens — the maximum allowed':'32k tokens — el máximo permitido',
+    'reasoning:':'razonamiento:',
+    'Whether this model can produce a chain of thought when a request asks for it (reasoning_effort). Declared, never detected: no provider API reports it, and asking a model that cannot think makes the provider reject the request. A request that asks to think is only routed to models declared here.':'Si este modelo puede producir una cadena de razonamiento cuando una petición lo pide (reasoning_effort). Declarado, nunca detectado: ninguna API de proveedor lo reporta, y pedirlo a un modelo que no puede pensar hace que el proveedor rechace la petición. Una petición que pide razonamiento solo se rutea a modelos declarados aquí.',
+    'Long answers':'Respuestas largas',
+    'A reasoning model can think for minutes before its first token. Idle timeouts count <b>bytes, not progress</b>, so a proxy closes the connection on a request that was working. A keepalive signal is sent during the silence — it is a comment frame, ignored by clients, never billed and never counted as content.':'Un modelo de razonamiento puede pensar por minutos antes de su primer token. Los timeouts de inactividad cuentan <b>bytes, no progreso</b>, así que un proxy cierra la conexión en una petición que estaba funcionando. Se envía una señal de keepalive durante el silencio — es un frame de comentario, ignorado por los clientes, nunca cobrado y nunca contado como contenido.',
+    'Keepalive during silence':'Keepalive durante el silencio',
+    'every 15s (default)':'cada 15s (predeterminado)',
+    'every 10s — behind a stricter proxy':'cada 10s — detrás de un proxy más estricto',
+    'every 30s':'cada 30s',
+    'off — only if a client rejects comment frames':'apagado — solo si un cliente rechaza frames de comentario',
+    'Generation time limit':'Límite de tiempo de generación',
+    'Stops generation early enough to still send the closing frames and record the cost. Without it a request that hits the platform limit is cut mid-answer and the tokens the provider already billed are never accounted for. This can only <b>shorten</b> the platform limit, never extend it.':'Detiene la generación con suficiente antelación para aún enviar los frames finales y registrar el costo. Sin esto, una petición que alcanza el límite de la plataforma se corta a mitad de la respuesta y los tokens que el proveedor ya cobró nunca se contabilizan. Esto solo puede <b>reducir</b> el límite de la plataforma, nunca extenderlo.',
+    'Stop generating after':'Detener la generación tras',
+    'the platform limit (default)':'el límite de la plataforma (predeterminado)',
+    '30 seconds':'30 segundos',
+    '60 seconds':'60 segundos',
+    '2 minutes':'2 minutos',
     // strings that were tagged/wrapped but never had an entry
     'the organization':'la organización',
     'The trail is <b>read-only</b>: there is no way to edit or delete a record.':'La traza es <b>solo lectura</b>: no hay forma de editar ni borrar un registro.',
@@ -1678,7 +1730,21 @@ function paintNavLabels(){
 function applyStaticI18n(root){
   const r=root||document;
   paintNavLabels();
-  $$('[data-i18n]',r).forEach(el=>{ el.textContent=_t(el.dataset.i18n); });
+  // Some sources carry inline markup — <b> for emphasis, <code> for a config key, a coloured
+  // <span> for a badge, `&nbsp;` to keep a unit next to its number. textContent printed those
+  // tags LITERALLY, so the Models tab read "The <b>toggle</b> says what the gateway may use".
+  // The page looked right until this ran, which is why it survived: the markup is authored
+  // correctly in the HTML and then clobbered on the first applyStaticI18n.
+  //
+  // innerHTML is safe HERE and only here: both sides are static and ours — the key is an
+  // attribute authored in console.html and the value comes from the pt/es dictionaries in this
+  // file (or is the key itself when a translation is missing). No API or user value reaches
+  // this path. Anything interpolated from data still goes through esc(), which is a separate
+  // rule and stays.
+  $$('[data-i18n]',r).forEach(el=>{
+    const s=_t(el.dataset.i18n);
+    if(/[<&]/.test(s)) el.innerHTML=s; else el.textContent=s;
+  });
   $$('[data-i18n-ph]',r).forEach(el=>{ el.placeholder=_t(el.dataset.i18nPh); });
   $$('[data-i18n-al]',r).forEach(el=>{ el.setAttribute('aria-label',_t(el.dataset.i18nAl)); });
   $$('[data-i18n-title]',r).forEach(el=>{ el.title=_t(el.dataset.i18nTitle); });
@@ -1752,9 +1818,9 @@ const CATALOG = {
   // declare what we are confident about, instead of inventing a number.
   bedrock:   { label:'Amazon Bedrock', models:[
     // Anthropic Claude
-    {alias:'claude-opus',   id:'us.anthropic.claude-opus-5',                     in:0.005,   out:0.025,   caps:{tool_use:true,multimodal:true,context_window_tokens:200000,tier:'frontier'}},
-    {alias:'claude-sonnet', id:'us.anthropic.claude-sonnet-5',                   in:0.003,   out:0.015,   caps:{tool_use:true,multimodal:true,context_window_tokens:200000,tier:'frontier'}},
-    {alias:'claude-haiku',  id:'us.anthropic.claude-haiku-4-5-20251001-v1:0',    in:0.001,   out:0.005,   caps:{tool_use:true,multimodal:true,context_window_tokens:200000,tier:'balanced'}},
+    {alias:'claude-opus',   id:'us.anthropic.claude-opus-5',                     in:0.005,   out:0.025,   caps:{tool_use:true,multimodal:true,context_window_tokens:200000,tier:'frontier',reasoning:true}},
+    {alias:'claude-sonnet', id:'us.anthropic.claude-sonnet-5',                   in:0.003,   out:0.015,   caps:{tool_use:true,multimodal:true,context_window_tokens:200000,tier:'frontier',reasoning:true}},
+    {alias:'claude-haiku',  id:'us.anthropic.claude-haiku-4-5-20251001-v1:0',    in:0.001,   out:0.005,   caps:{tool_use:true,multimodal:true,context_window_tokens:200000,tier:'balanced',reasoning:true}},
     // Amazon Nova — Micro is text-only (documented)
     {alias:'nova-premier',  id:'us.amazon.nova-premier-v1:0',                    in:0.0025,  out:0.0125,  caps:{tool_use:true,multimodal:true,context_window_tokens:0,     tier:'frontier'}},
     {alias:'nova-pro',      id:'us.amazon.nova-pro-v1:0',                        in:0.0008,  out:0.0032,  caps:{tool_use:true,multimodal:true,context_window_tokens:300000,tier:'balanced'}},
@@ -1765,7 +1831,7 @@ const CATALOG = {
     {alias:'llama-4-scout',    id:'us.meta.llama4-scout-17b-instruct-v1:0',      in:0.00017, out:0.00066, caps:{tool_use:true,multimodal:true,context_window_tokens:0,tier:'fast'}},
     {alias:'llama-3-3-70b',    id:'us.meta.llama3-3-70b-instruct-v1:0',          in:0.00072, out:0.00072, caps:{tool_use:true,multimodal:false,context_window_tokens:0,tier:'balanced'}},
     // Others — R1 is a reasoning model: tool use is not its use case
-    {alias:'deepseek-r1',   id:'us.deepseek.r1-v1:0',                            in:0.00135, out:0.0054,  caps:{tool_use:false,multimodal:false,context_window_tokens:0,tier:'balanced'}},
+    {alias:'deepseek-r1',   id:'us.deepseek.r1-v1:0',                            in:0.00135, out:0.0054,  caps:{tool_use:false,multimodal:false,context_window_tokens:0,tier:'balanced',reasoning:true}},
     {alias:'pixtral-large', id:'us.mistral.pixtral-large-2502-v1:0',             in:0.002,   out:0.006,   caps:{tool_use:true,multimodal:true,context_window_tokens:0,tier:'balanced'}},
   ]},
   openai_compatible: { label:'OpenAI / compatible', models:[
@@ -2416,7 +2482,7 @@ function localModels(){ return Object.keys((CFG_RAW&&CFG_RAW.routing)||{}); }
 // permissive on tool use, because every modern model does function calling and a
 // `false` default would leave the new model unable to receive `tools`.
 function defaultCaps(over){
-  return Object.assign({tool_use:true, multimodal:false, context_window_tokens:0, tier:'balanced'}, over||{});
+  return Object.assign({tool_use:true, multimodal:false, context_window_tokens:0, tier:'balanced', reasoning:false}, over||{});
 }
 
 // addLocalModel registers a model as local: it goes into the effective config (so it shows up
@@ -3291,6 +3357,16 @@ function syncConfigToggles(){
   rSemOn=!!CFG.semantic_cache; if($('#rSemantic')) toggle($('#rSemantic'),rSemOn);
   if($('#rSemThreshold')){ const th=String(CFG.semantic_threshold||0.92);
     if([...$('#rSemThreshold').options].some(o=>o.value===th)) $('#rSemThreshold').value=th; }
+  // Long answers. Both read with ||0 rather than a fallback constant: 0 is the gateway's
+  // "unset, use the default" and the option labelled default carries value 0, so the screen
+  // and the gateway agree without either repeating the other's number. Off is -1, not 0 —
+  // the same distinction the gateway makes.
+  if($('#rKeepalive')){ const ka=String(CFG.sse_keepalive_seconds||0);
+    if([...$('#rKeepalive').options].some(o=>o.value===ka)) $('#rKeepalive').value=ka; }
+  if($('#rReqTimeout')){ const rt=String(CFG.request_timeout_ms||0);
+    if([...$('#rReqTimeout').options].some(o=>o.value===rt)) $('#rReqTimeout').value=rt; }
+  if($('#rThinkMax')){ const tm=String(CFG.max_thinking_tokens||0);
+    if([...$('#rThinkMax').options].some(o=>o.value===tm)) $('#rThinkMax').value=tm; }
 }
 
 // MODELS TAB: every connected model, with on/off, origin, price and
@@ -3310,6 +3386,14 @@ function renderModelList(){
     const badges=[kindBadge(route)];
     if(caps.tier) badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-line text-mut">'+caps.tier+'</span>');
     if(!caps.tool_use) badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-amber-500 text-amber-400" title="'+esc(_t('does not accept requests with tools'))+'">'+esc(_t('no tool use'))+'</span>');
+    // Extended thinking is a DECLARATION, not something we can detect: no provider API
+    // reports whether a model supports it, and guessing wrong makes the provider reject the
+    // request. So it is a toggle, defaulting to off — a request asking to think is routed
+    // only to models declared here, exactly like tool use.
+    {
+      const rz=!!caps.reasoning;
+      badges.push(`<button data-rz="${esc(name)}" class="text-[10px] px-2 py-0.5 rounded-full border ${rz?'border-brand text-brand':'border-line text-mut'}" title="${esc(_t('Whether this model can produce a chain of thought when a request asks for it (reasoning_effort). Declared, never detected: no provider API reports it, and asking a model that cannot think makes the provider reject the request. A request that asks to think is only routed to models declared here.'))}">🧠 ${esc(_t('reasoning:'))} ${esc(rz?_t('yes'):_t('no'))}</button>`);
+    }
     const semPreco = !price.input && !price.output;
     if(semPreco) badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-amber-500 text-amber-400" title="'+esc(_t('stays out of automatic cost routing'))+'">'+esc(_t('no price'))+'</span>');
     else if(price.source==='contract') badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-brand text-brand" title="'+esc(_t('the negotiated price you entered'))+'">'+esc(_t('contract price'))+'</span>');
@@ -3341,6 +3425,20 @@ function renderModelList(){
     if(!Array.isArray(al)||!al.length) al=all.slice();
     al = al.includes(m) ? al.filter(x=>x!==m) : al.concat([m]);
     CFG.allowed_models = al.length===all.length ? [] : al;
+    RENDER.models();
+  });
+
+  // reasoning capability, per model. Dual write like prompt_cache and setIdentity: CFG so
+  // the screen updates now, CFG_RAW because that is the only thing saveConfig may write.
+  // capabilities is rebuilt as a new object rather than mutated, so a route object shared
+  // with the effective config cannot be edited behind the caller's back.
+  $$('[data-rz]',box).forEach(b=>b.onclick=()=>{
+    const m=b.dataset.rz, r=CFG.routing&&CFG.routing[m]; if(!r) return;
+    const nv=!(r.capabilities&&r.capabilities.reasoning);
+    r.capabilities=Object.assign({},r.capabilities||{},{reasoning:nv});
+    if(!CFG_RAW.routing) CFG_RAW.routing={};
+    if(!CFG_RAW.routing[m]) CFG_RAW.routing[m]=r;
+    CFG_RAW.routing[m].capabilities=Object.assign({},CFG_RAW.routing[m].capabilities||{},{reasoning:nv});
     RENDER.models();
   });
 
@@ -3717,6 +3815,9 @@ $('#mSave').onclick=()=>{
   CFG.semantic_cache=rSemOn;
   CFG.semantic_threshold=Number($('#rSemThreshold').value);
   if($('#rScope')) CFG.cache_scope=$('#rScope').value;
+  if($('#rKeepalive')) CFG.sse_keepalive_seconds=Number($('#rKeepalive').value);
+  if($('#rReqTimeout')) CFG.request_timeout_ms=Number($('#rReqTimeout').value);
+  if($('#rThinkMax')) CFG.max_thinking_tokens=Number($('#rThinkMax').value);
   CFG.model_order=curOrder().slice();
   // routing/pricing go in, but saveConfig writes only CFG_RAW (what is
   // declared in THIS scope) — never the effective value merged from the scopes above.
@@ -3727,7 +3828,13 @@ $('#mSave').onclick=()=>{
   // value could be set through the API and the next unrelated save reverted it, with no
   // error and nothing on screen. For a field that decides whether one team can read
   // another team's cached answer, that is a governance decision being undone quietly.
-  saveConfig($('#mMsg'),['auto_cheapest','cache_ttl','cache_scope','semantic_cache','semantic_threshold','model_order','allowed_models','routing','pricing','bundles','feature_policy']);
+  //
+  // Adding a key here is only safe once the screen actually SETS it: saveConfig copies
+  // CFG, which is the EFFECTIVE config, so an allowlisted key with no control would write
+  // the value inherited from the parent scope into this scope as a local declaration —
+  // silently pinning what used to follow the org. That is why the two fields above are
+  // assigned from their selects immediately before this call.
+  saveConfig($('#mMsg'),['auto_cheapest','cache_ttl','cache_scope','semantic_cache','semantic_threshold','sse_keepalive_seconds','request_timeout_ms','max_thinking_tokens','model_order','allowed_models','routing','pricing','bundles','feature_policy']);
 };
 
 // ---- Wizard: connect an external provider (catalog of known providers) ----
@@ -3842,6 +3949,9 @@ $('#rTtl')&&($('#rTtl').onchange=()=>{ if(CFG && rCacheOn) CFG.cache_ttl=Number(
 // Written into CFG on change, like the others: the model list re-renders on any toggle
 // and reads CFG back, which would discard an unsaved selection.
 $('#rScope')&&($('#rScope').onchange=()=>{ if(CFG) CFG.cache_scope=$('#rScope').value; });
+$('#rKeepalive')&&($('#rKeepalive').onchange=()=>{ if(CFG) CFG.sse_keepalive_seconds=Number($('#rKeepalive').value); });
+$('#rReqTimeout')&&($('#rReqTimeout').onchange=()=>{ if(CFG) CFG.request_timeout_ms=Number($('#rReqTimeout').value); });
+$('#rThinkMax')&&($('#rThinkMax').onchange=()=>{ if(CFG) CFG.max_thinking_tokens=Number($('#rThinkMax').value); });
 
 // =================== write config (PUT on the scope) ===================
 // PUT writes the whole scope; so as not to lose the rest, we send the scope's raw

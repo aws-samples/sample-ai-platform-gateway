@@ -12,6 +12,12 @@
       "parts": [
         {
           "text": "o que é isto?"
+        },
+        {
+          "inlineData": {
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==",
+            "mimeType": "image/png"
+          }
         }
       ],
       "role": "user"
@@ -19,7 +25,12 @@
     {
       "parts": [
         {
-          "text": ""
+          "functionCall": {
+            "args": {
+              "city": "SP"
+            },
+            "name": "get_weather"
+          }
         }
       ],
       "role": "model"
@@ -27,7 +38,12 @@
     {
       "parts": [
         {
-          "text": "25C"
+          "functionResponse": {
+            "name": "get_weather",
+            "response": {
+              "output": "25C"
+            }
+          }
         }
       ],
       "role": "user"
@@ -39,5 +55,26 @@
         "text": "você é um assistente"
       }
     ]
-  }
+  },
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "description": "current weather for a city",
+          "name": "get_weather",
+          "parameters": {
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ],
+            "type": "object"
+          }
+        }
+      ]
+    }
+  ]
 }

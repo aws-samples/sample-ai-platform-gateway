@@ -12,6 +12,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,22 +39,99 @@ type Adapter struct {
 
 var _ ports.Provider = (*Adapter)(nil) // compile-time assertion
 
-// wireMsg replicates the shape chatMsg used to marshal (same tags/order/omitempty).
+// wireMsg is ONE message in Anthropic's Messages API format.
+//
+// It used to be a copy of the OpenAI dialect's shape — `tool_calls`, `tool_call_id`, `name`,
+// and `content` passed through verbatim from the client. None of those field names exist in
+// this API, so the effect was not an error: Anthropic ignored what it did not recognise and
+// answered as if the request had been text-only. Tool use never reached the model, tool
+// results never reached it either, and a multimodal message arrived as an OpenAI
+// `image_url` part that Anthropic does not understand.
 type wireMsg struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content,omitempty"`
-	Name       string          `json:"name,omitempty"`
-	ToolCalls  []wireToolCall  `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
+	Role    string      `json:"role"`
+	Content []wireBlock `json:"content"`
 }
 
-type wireToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
+// wireBlock is one content block. Anthropic uses a tagged union, so a single struct with
+// omitempty covers every variant without needing a marshaller per type.
+type wireBlock struct {
+	Type string `json:"type"`
+	// type=text
+	Text string `json:"text,omitempty"`
+	// type=image
+	Source *wireImageSource `json:"source,omitempty"`
+	// type=tool_use
+	ID    string                 `json:"id,omitempty"`
+	Name  string                 `json:"name,omitempty"`
+	Input map[string]interface{} `json:"input,omitempty"`
+	// type=tool_result
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	// Content of a tool_result is a plain string in the simple form this gateway emits.
+	// Declared as interface{} so the field is omitted entirely on the other block types.
+	ResultContent interface{} `json:"content,omitempty"`
+}
+
+type wireImageSource struct {
+	Type      string `json:"type"`       // always "base64" here
+	MediaType string `json:"media_type"` // "image/png", …
+	Data      string `json:"data"`       // base64
+}
+
+// wireTool is a tool declaration. Note `input_schema`, not the OpenAI dialect's nested
+// `function.parameters` — the schema itself is the same JSON Schema, only the envelope
+// differs.
+type wireTool struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	InputSchema map[string]interface{} `json:"input_schema"`
+}
+
+// anthropicImageMediaTypes maps the boundary's bare format onto the media type Anthropic
+// expects. An unknown format is DROPPED rather than sent: Anthropic rejects the whole
+// request over one bad part, and losing an image is better than losing the answer. Same
+// decision, and the same reasoning, as bedrock.bedrockImageFormats.
+var anthropicImageMediaTypes = map[string]string{
+	"png":  "image/png",
+	"jpeg": "image/jpeg",
+	"jpg":  "image/jpeg", // OpenAI-dialect clients commonly send "jpg"
+	"gif":  "image/gif",
+	"webp": "image/webp",
+}
+
+// toWireTools converts the boundary's tools into Anthropic declarations.
+func toWireTools(tools []ports.ToolDef) []wireTool {
+	out := make([]wireTool, 0, len(tools))
+	for _, t := range tools {
+		if t.Name == "" {
+			continue
+		}
+		schema := t.Parameters
+		if schema == nil {
+			// A tool with no parameters still needs a schema: Anthropic rejects a missing
+			// input_schema, and an empty object is the correct way to say "no arguments".
+			schema = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+		}
+		out = append(out, wireTool{Name: t.Name, Description: t.Description, InputSchema: schema})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// imageBlocks converts the boundary's already-decoded image parts into Anthropic blocks.
+func imageBlocks(images []ports.ImagePart) []wireBlock {
+	var out []wireBlock
+	for _, img := range images {
+		mt, ok := anthropicImageMediaTypes[strings.ToLower(img.Format)]
+		if !ok || len(img.Bytes) == 0 {
+			continue
+		}
+		out = append(out, wireBlock{Type: "image", Source: &wireImageSource{
+			Type: "base64", MediaType: mt, Data: base64.StdEncoding.EncodeToString(img.Bytes),
+		}})
+	}
+	return out
 }
 
 // splitSystem separates system messages (concatenated) from the conversation. Same
@@ -73,25 +151,70 @@ func splitSystem(msgs []ports.Message) (string, []ports.Message) {
 	return strings.Join(sys, "\n"), conv
 }
 
+// toWireMessages translates the boundary conversation into Anthropic's Messages format.
+//
+// The one non-obvious rule, and the same one Bedrock's convertMessages documents: in the
+// OpenAI dialect every tool result is its OWN message (`role:"tool"` + tool_call_id), while
+// Anthropic requires ALL the tool_result blocks of a turn to arrive GROUPED inside a single
+// `user` message, in the order of the assistant's tool_use blocks. Emitting one user message
+// per result gets the conversation rejected.
 func toWireMessages(msgs []ports.Message) []wireMsg {
-	out := make([]wireMsg, len(msgs))
-	for i, m := range msgs {
-		w := wireMsg{Role: m.Role, Name: m.Name, ToolCallID: m.ToolCallID}
-		if len(m.Raw) > 0 {
-			w.Content = json.RawMessage(m.Raw)
-		} else if m.Text != "" {
-			b, _ := json.Marshal(m.Text)
-			w.Content = b
+	out := make([]wireMsg, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		m := msgs[i]
+		switch m.Role {
+		case "tool":
+			// Merge this and every following `tool` message into one user turn.
+			var results []wireBlock
+			for ; i < len(msgs) && msgs[i].Role == "tool"; i++ {
+				tm := msgs[i]
+				if tm.ToolCallID == "" {
+					continue
+				}
+				results = append(results, wireBlock{
+					Type: "tool_result", ToolUseID: tm.ToolCallID, ResultContent: tm.Text,
+				})
+			}
+			i-- // the outer loop increments; step back so the next message is not skipped
+			if len(results) > 0 {
+				out = append(out, wireMsg{Role: "user", Content: results})
+			}
+
+		case "assistant":
+			var blocks []wireBlock
+			if m.Text != "" {
+				blocks = append(blocks, wireBlock{Type: "text", Text: m.Text})
+			}
+			for _, tc := range m.ToolCalls {
+				args := map[string]interface{}{}
+				if tc.Arguments != "" {
+					// A malformed argument string becomes an empty object rather than
+					// failing the request: the model produced it, and refusing the whole
+					// conversation over it would strand a session that could still recover.
+					json.Unmarshal([]byte(tc.Arguments), &args)
+				}
+				blocks = append(blocks, wireBlock{
+					Type: "tool_use", ID: tc.ID, Name: tc.Name, Input: args,
+				})
+			}
+			if len(blocks) == 0 {
+				continue // an assistant turn with neither text nor tool calls carries nothing
+			}
+			out = append(out, wireMsg{Role: "assistant", Content: blocks})
+
+		default:
+			// user (and anything unrecognised, treated as user). Text first, then images —
+			// the order the model reads them in.
+			var blocks []wireBlock
+			if m.Text != "" {
+				blocks = append(blocks, wireBlock{Type: "text", Text: m.Text})
+			}
+			blocks = append(blocks, imageBlocks(m.Images)...)
+			if len(blocks) == 0 {
+				continue
+			}
+			out = append(out, wireMsg{Role: "user", Content: blocks})
 		}
-		for _, tc := range m.ToolCalls {
-			var wc wireToolCall
-			wc.ID = tc.ID
-			wc.Type = "function"
-			wc.Function.Name = tc.Name
-			wc.Function.Arguments = tc.Arguments
-			w.ToolCalls = append(w.ToolCalls, wc)
-		}
-		out[i] = w
 	}
 	return out
 }
@@ -116,9 +239,19 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	}
 	var d struct {
 		Content []struct {
-			Text string `json:"text"`
+			Type      string `json:"type"`
+			Text      string `json:"text"`
+			Thinking  string `json:"thinking"`
+			Signature string `json:"signature"`
+			// Encrypted thinking; the payload is never readable and serves only as a marker.
+			Data string `json:"data"`
+			// type=tool_use
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
 		} `json:"content"`
-		Usage struct {
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
 			InputTokens              int `json:"input_tokens"`
 			OutputTokens             int `json:"output_tokens"`
 			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
@@ -129,10 +262,50 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 		return ports.Result{}, fmt.Errorf("bad anthropic response")
 	}
 	res := ports.Result{
-		Text: d.Content[0].Text, InputTokens: d.Usage.InputTokens, OutputTokens: d.Usage.OutputTokens,
+		InputTokens: d.Usage.InputTokens, OutputTokens: d.Usage.OutputTokens,
 		CacheReadInputTokens: d.Usage.CacheReadInputTokens, CacheWriteInputTokens: d.Usage.CacheCreationInputTokens,
 		CacheCounters: ports.CacheCountersAbsent,
 	}
+	// EVERY block, dispatched by type — not Content[0].
+	//
+	// Reading only the first block is a bug that stayed invisible while thinking was
+	// impossible to request: a plain answer has exactly one text block. With thinking
+	// enabled the response is `[{type:"thinking"...},{type:"text"...}]`, and a thinking block
+	// carries no `text` field — so the old code would have returned an EMPTY answer for every
+	// reasoning request. Not "reasoning dropped": no answer at all.
+	for _, b := range d.Content {
+		switch b.Type {
+		case "thinking":
+			res.Reasoning += b.Thinking
+			// Opaque metadata, never content, and the only thing that makes this reasoning
+			// chain continuable on a later turn.
+			if b.Signature != "" {
+				res.ReasoningSignature = b.Signature
+			}
+		case "redacted_thinking":
+			// The model thought and the provider encrypted it. Recorded so "did not think"
+			// stays distinguishable from "not shown to us".
+			res.ReasoningRedacted = true
+		case "tool_use":
+			// Arguments go back as a STRING, because that is what the OpenAI dialect the
+			// client speaks expects in `function.arguments`. `{}` when the model sent no
+			// input, never an empty string, which some SDKs fail to parse.
+			args := "{}"
+			if len(b.Input) > 0 {
+				args = string(b.Input)
+			}
+			res.ToolCalls = append(res.ToolCalls, ports.ToolCall{ID: b.ID, Name: b.Name, Arguments: args})
+		default:
+			// "text", and anything new that carries prose. Concatenated rather than
+			// replaced: a multi-block answer used to lose everything after the first.
+			res.Text += b.Text
+		}
+	}
+	res.ReasoningChars = len(res.Reasoning)
+	// stop_reason was dropped before. It is what tells the caller the model stopped to CALL a
+	// tool rather than because it finished, and the OpenAI-dialect finish_reason is derived
+	// from it — without it a tool call looked like a completed answer.
+	res.StopReason = d.StopReason
 	// In Anthropic's native API, input_tokens EXCLUDES the cached ones: they come in
 	// dedicated fields. Hence this provider's convention is exclusive.
 	if res.CacheReadInputTokens > 0 || res.CacheWriteInputTokens > 0 {
