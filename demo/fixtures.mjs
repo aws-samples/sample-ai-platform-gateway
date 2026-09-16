@@ -247,6 +247,11 @@ function buildUsage() {
   const cost = r4(totals.cost);
 
   return {
+    // Echo the request window, as the real usage-api response does — the console never
+    // reads these back, but a shape audit against the live API compares them.
+    bucket: 'day',
+    from: labels[0],
+    to: labels[labels.length - 1],
     totals: {
       cost_usd: cost,
       requests: totals.requests,
@@ -295,6 +300,9 @@ function buildUsage() {
       { key: 'batch-jobs', cost_usd: r4(cost * 0.21) },
       { key: 'internal-tools', cost_usd: r4(cost * 0.17) },
     ],
+    // Each row also carries the credit/cash and verified/counterfactual split and the two
+    // price references (list vs contract) that the real usage-api response includes —
+    // fields the console reads on this breakdown, not only on `totals`.
     by_provider: [
       {
         key: 'bedrock',
@@ -304,6 +312,12 @@ function buildUsage() {
         cost_usd: r4(cost * 0.96),
         saved_usd: r4(savedTotal * 0.97),
         cache_hits: Math.round(totals.cacheHits * 0.95),
+        credit_usd: r4(credit * 0.96),
+        cash_usd: r4(cash * 0.96),
+        saved_verified_usd: r4(savedVerified * 0.97),
+        saved_counterfactual_usd: r4(savedCounter * 0.97),
+        cost_list_price_usd: r4(cost * 0.96 * 0.71),
+        cost_contract_price_usd: 0,
       },
       {
         key: 'openai_compatible',
@@ -313,7 +327,19 @@ function buildUsage() {
         cost_usd: r4(cost * 0.04),
         saved_usd: r4(savedTotal * 0.03),
         cache_hits: Math.round(totals.cacheHits * 0.05),
+        credit_usd: r4(credit * 0.04),
+        cash_usd: r4(cash * 0.04),
+        saved_verified_usd: r4(savedVerified * 0.03),
+        saved_counterfactual_usd: r4(savedCounter * 0.03),
+        cost_list_price_usd: r4(cost * 0.04 * 0.71),
+        cost_contract_price_usd: 0,
       },
+    ],
+    // The two real destinations behind by_provider's two rows: BYO Bedrock in the
+    // customer's own account/region, and the self-hosted openai_compatible endpoint.
+    by_upstream: [
+      { key: 'bedrock-us-west-2', cost_usd: r4(cost * 0.96), requests: Math.round(totals.requests * 0.93) },
+      { key: 'acme-selfhosted', cost_usd: r4(cost * 0.04), requests: Math.round(totals.requests * 0.07) },
     ],
     savings_by_reason: [
       { key: 'cache', saved_usd: totals.saved.cache },
@@ -359,6 +385,10 @@ function buildRecords(n) {
       ts,
       model,
       requested_model: model,
+      // requested_cost_usd is what the REQUESTED model would have cost — equal to cost_usd
+      // until a swap branch below re-prices the actually-served model.
+      requested_cost_usd: cost,
+      served_model_id: (ROUTING[model] && ROUTING[model].model_id) || model,
       provider: ROUTING[model].provider,
       upstream: ROUTING[model].provider === 'bedrock' ? 'bedrock-' + (ROUTING[model].region || 'us-west-2') : 'acme-selfhosted',
       feature: FEATURES[Math.floor(rnd() * FEATURES.length)],
@@ -367,6 +397,8 @@ function buildRecords(n) {
       cost_usd: cost,
       latency_ms: Math.round(180 + rnd() * 1900),
       result: 'served',
+      status: 'success',
+      cache_hit: false,
       swap_class: null,
       canary: false,
     };
@@ -374,10 +406,14 @@ function buildRecords(n) {
     const dice = rnd();
     if (dice < 0.26) {
       rec.result = 'cache';
+      rec.status = 'cache';
+      rec.cache_hit = true;
       rec.cost_usd = 0;
       rec.latency_ms = Math.round(18 + rnd() * 60);
     } else if (dice < 0.32) {
       rec.result = 'cache';
+      rec.status = 'cache';
+      rec.cache_hit = true;
       rec.savings_reason = 'semantic_cache';
       rec.cost_usd = 0;
       rec.latency_ms = Math.round(40 + rnd() * 90);
@@ -385,25 +421,30 @@ function buildRecords(n) {
       // Same model reached through the customer's own account: no quality risk.
       rec.requested_model = 'claude-sonnet';
       rec.model = 'claude-sonnet-byo';
+      rec.served_model_id = (ROUTING['claude-sonnet-byo'] && ROUTING['claude-sonnet-byo'].model_id) || 'claude-sonnet-byo';
       rec.swap_class = 'same_model';
       rec.savings_reason = 'provider_arbitrage';
     } else if (dice < 0.46) {
       rec.requested_model = 'claude-sonnet';
       rec.model = 'nova-lite';
+      rec.served_model_id = (ROUTING['nova-lite'] && ROUTING['nova-lite'].model_id) || 'nova-lite';
       rec.swap_class = 'equivalent';
       rec.savings_reason = 'auto_cheapest';
     } else if (dice < 0.48) {
       rec.requested_model = 'claude-sonnet';
       rec.model = 'llama-scout';
+      rec.served_model_id = (ROUTING['llama-scout'] && ROUTING['llama-scout'].model_id) || 'llama-scout';
       rec.swap_class = 'downgrade';
       rec.savings_reason = 'budget_degrade';
     } else if (dice < 0.505) {
       rec.result = 'error';
+      rec.status = 'error';
       rec.reason = rnd() < 0.5 ? 'provider_rate_limited' : 'provider_quota_exceeded';
       rec.detail = 'upstream returned 429 after 2 retries';
       rec.cost_usd = 0;
     } else if (dice < 0.52) {
       rec.result = 'blocked';
+      rec.status = 'blocked';
       rec.reason = rnd() < 0.5 ? 'secret_detected' : 'prompt_injection';
       rec.detail = 'guardrail matched before the request left the gateway';
       rec.cost_usd = 0;
@@ -518,12 +559,14 @@ export const MEMBERS = [
   { email: 'finops@acme.example', role: 'billing', team: 'platform', apps: [], status: 'CONFIRMED', enabled: true },
 ];
 
+// status and org are on every real /admin/keys row (keyadmin/main.go); k_05 is revoked so
+// the console's status rendering is exercised offline instead of only against a live org.
 export const KEYS = [
-  { id: 'k_01', key_prefix: 'sk-aiplat-w7Qd', team: 'platform', app: 'web', created_at: '2026-06-14T09:12:00Z' },
-  { id: 'k_02', key_prefix: 'sk-aiplat-b3Km', team: 'platform', app: 'batch-jobs', created_at: '2026-06-21T14:41:00Z' },
-  { id: 'k_03', key_prefix: 'sk-aiplat-Xp9r', team: 'growth', app: 'mobile', created_at: '2026-07-02T11:05:00Z' },
-  { id: 'k_04', key_prefix: 'sk-aiplat-t4Nv', team: 'support', app: 'internal-tools', created_at: '2026-07-19T16:28:00Z' },
-  { id: 'k_05', key_prefix: 'sk-aiplat-Ls2h', team: 'growth', app: 'mobile', created_at: '2026-08-08T08:53:00Z' },
+  { id: 'k_01', key_prefix: 'sk-aiplat-w7Qd', org: ORG_ID, team: 'platform', app: 'web', created_at: '2026-06-14T09:12:00Z', status: 'active' },
+  { id: 'k_02', key_prefix: 'sk-aiplat-b3Km', org: ORG_ID, team: 'platform', app: 'batch-jobs', created_at: '2026-06-21T14:41:00Z', status: 'active' },
+  { id: 'k_03', key_prefix: 'sk-aiplat-Xp9r', org: ORG_ID, team: 'growth', app: 'mobile', created_at: '2026-07-02T11:05:00Z', status: 'active' },
+  { id: 'k_04', key_prefix: 'sk-aiplat-t4Nv', org: ORG_ID, team: 'support', app: 'internal-tools', created_at: '2026-07-19T16:28:00Z', status: 'active' },
+  { id: 'k_05', key_prefix: 'sk-aiplat-Ls2h', org: ORG_ID, team: 'growth', app: 'mobile', created_at: '2026-08-08T08:53:00Z', status: 'revoked' },
 ];
 
 export const CREDITS = [

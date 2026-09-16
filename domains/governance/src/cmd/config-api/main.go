@@ -1153,6 +1153,32 @@ func vendorFromModelID(id string) string {
 	return strings.ToUpper(v[:1]) + v[1:]
 }
 
+// orgDeclaresBaseURL reports whether baseURL (case-insensitive, trailing slash ignored)
+// is the base_url of at least one route saved at the org scope. It is the allowlist for
+// the outbound credential-bearing call in /admin/provider/models: without it, an
+// otherwise-legitimate admin request could redirect the org's own provider credential to
+// any HTTPS host by naming it in base_url.
+func orgDeclaresBaseURL(ctx context.Context, org, baseURL string) bool {
+	m := readScope(ctx, scopeKey(org, "", ""))
+	routing, _ := m["routing"].(map[string]interface{})
+	return baseURLDeclaredIn(routing, baseURL)
+}
+
+// baseURLDeclaredIn is the pure comparison orgDeclaresBaseURL applies to a routing map —
+// split out so the matching rule (case-insensitive, trailing slash ignored) is testable
+// without DynamoDB.
+func baseURLDeclaredIn(routing map[string]interface{}, baseURL string) bool {
+	norm := func(u string) string { return strings.TrimRight(strings.ToLower(strings.TrimSpace(u)), "/") }
+	want := norm(baseURL)
+	for _, r := range routing {
+		rm, _ := r.(map[string]interface{})
+		if bu, _ := rm["base_url"].(string); bu != "" && norm(bu) == want {
+			return true
+		}
+	}
+	return false
+}
+
 // listProviderModels lists an external/self-hosted provider's models using the org's
 // credential kept in the vault — the key NEVER goes back to the client. Covers
 // the OpenAI dialect (GET {base}/models: OpenAI, Groq, xAI, Azure, self-hosted…),
@@ -2730,6 +2756,11 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	// Uses the org's credential kept in the vault (aiplat/org/<org>/<provider>) —
 	// the key never leaves for the client. Per-org scope from the token.
 	case strings.HasSuffix(path, "/admin/provider/models") && method == "GET":
+		// Role: this call puts the org's provider credential on the wire to base_url, so
+		// it is a credential operation, not a read — same gate as POST /admin/secrets.
+		if !canAdmin {
+			return resp(403, map[string]string{"error": "your role cannot list provider models (owner/admin only)"}, origin)
+		}
 		q := req.QueryStringParameters
 		org, okScope := forceOrg(q["org"])
 		if !okScope {
@@ -2747,6 +2778,14 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		baseURL := strings.TrimSpace(q["base_url"])
 		if provider == "" || baseURL == "" {
 			return resp(400, map[string]string{"error": "provider and base_url are required"}, origin)
+		}
+		// The credential may only travel to a destination the gateway itself already calls:
+		// a base_url declared on one of the org's routes. Anything else is refused before the
+		// secret is read.
+		if !orgDeclaresBaseURL(ctx, org, baseURL) {
+			writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role,
+				"provider_models_undeclared_base_url", fmt.Sprintf("org:%s,base_url:%s", org, baseURL), "")
+			return resp(400, map[string]string{"error": "base_url must match a base_url already saved on one of this org's routes"}, origin)
 		}
 		key, err := secrets.Get(ctx, "aiplat/org/"+org+"/"+provider)
 		if err != nil || key == "" {

@@ -323,6 +323,7 @@ const I18N={
     'all teams and apps in':'todos os times e apps em',
     'add':'adicionar', 'Add card':'Adicionar cartão', 'Add endpoint':'Adicionar endpoint',
     'add layer':'adicionar camada', 'add member…':'adicionar membro…',
+    'add/manage members':'adicionar/gerenciar membros',
     'add route or identity…':'adicionar rota ou identidade…',
     'Admin — config and members':'Admin — config e membros',
     'aggregator':'agregador',
@@ -553,7 +554,7 @@ const I18N={
     'No requests in the period.':'Nenhuma requisição no período.',
     'no team':'sem time', 'No team to associate. Create one under':'Sem time para associar. Crie um em',
     'No team yet. Create the first one above — then add apps and point an API key at it.':'Nenhum time ainda. Crie o primeiro acima — depois adicione apps e aponte uma API key para ele.',
-    'no token':'sem token', 'no tool use':'sem tool use', 'none yet':'nenhum ainda',
+    'no token':'sem token', 'no tool use':'sem tool use', 'none yet':'nenhum ainda', 'none':'nenhum',
     'normal':'normal', 'not delivered':'não entregue',
     'not persisted yet — it exists only because a key references it':'ainda não persistido — existe só porque uma chave o referencia',
     'Nothing to suggest yet. Declare the model identity of your routes and their prices, and suggestions appear here.':'Nada a sugerir ainda. Declare a identidade de modelo das suas rotas e os preços, e as sugestões aparecem aqui.',
@@ -868,6 +869,8 @@ const I18N={
     'unknown route':'rota desconhecida',
     'you do not have access to this app':'você não tem acesso a este app',
     'your role cannot store credentials (owner/admin only)':'seu papel não pode gravar credenciais (só owner/admin)',
+    'your role cannot list provider models (owner/admin only)':'seu papel não pode listar modelos do provedor (só owner/admin)',
+    'base_url must match a base_url already saved on one of this org\'s routes':'base_url precisa corresponder a um base_url já salvo em uma das rotas desta org',
     'your role cannot view the org credit':'seu papel não pode ver o crédito da org',
   },
   es:{
@@ -1152,6 +1155,7 @@ const I18N={
     'all teams and apps in':'todos los equipos y apps en',
     'add':'agregar', 'Add card':'Agregar tarjeta', 'Add endpoint':'Agregar endpoint',
     'add layer':'agregar capa', 'add member…':'agregar miembro…',
+    'add/manage members':'agregar/gestionar miembros',
     'add route or identity…':'agregar ruta o identidad…',
     'Admin — config and members':'Admin — config y miembros',
     'aggregator':'agregador',
@@ -1382,7 +1386,7 @@ const I18N={
     'No requests in the period.':'Ninguna solicitud en el período.',
     'no team':'sin equipo', 'No team to associate. Create one under':'Sin equipo para asociar. Crea uno en',
     'No team yet. Create the first one above — then add apps and point an API key at it.':'Ningún equipo aún. Crea el primero arriba — después agrega apps y apunta una API key hacia él.',
-    'no token':'sin token', 'no tool use':'sin tool use', 'none yet':'ninguno aún',
+    'no token':'sin token', 'no tool use':'sin tool use', 'none yet':'ninguno aún', 'none':'ninguno',
     'normal':'normal', 'not delivered':'no entregado',
     'not persisted yet — it exists only because a key references it':'aún no persistido — existe solo porque una clave lo referencia',
     'Nothing to suggest yet. Declare the model identity of your routes and their prices, and suggestions appear here.':'Nada que sugerir aún. Declara la identidad de modelo de tus rutas y sus precios, y las sugerencias aparecen aquí.',
@@ -1693,6 +1697,8 @@ const I18N={
     'unknown route':'ruta desconocida',
     'you do not have access to this app':'no tienes acceso a esta app',
     'your role cannot store credentials (owner/admin only)':'tu rol no puede grabar credenciales (solo owner/admin)',
+    'your role cannot list provider models (owner/admin only)':'tu rol no puede listar modelos del proveedor (solo owner/admin)',
+    'base_url must match a base_url already saved on one of this org\'s routes':'base_url debe coincidir con un base_url ya guardado en una de las rutas de esta organización',
     'your role cannot view the org credit':'tu rol no puede ver el crédito de la organización',
   },
 };
@@ -2132,6 +2138,12 @@ const VIEWS = {
 const RENDER = {};
 let curView='overview';
 function show(v){
+  // Role gate at the primitive, not at the sidebar: every navigation path (sidebar,
+  // Overview cards, sub-tab helpers, restored view) funnels through here, so a role that
+  // must not see a panel cannot reach it by any route. applyRoleNav() still hides the
+  // sidebar items for the same roles; this is what makes the hiding true.
+  const _allowed=ROLE_VIEWS[auth.role];
+  if(_allowed && !_allowed.includes(v)) v='overview';
   curView=v;
   $$('[data-panel]').forEach(p=>p.classList.toggle('hidden', p.dataset.panel!==v));
   $$('.nav').forEach(b=>{ const on=b.dataset.view===v;
@@ -2181,7 +2193,7 @@ async function openHelp(){
   $('#helpTitle').textContent=_t('Help')+' — '+_t((VIEWS[view]||[view])[0]);
   $('#helpOverlay').classList.remove('hidden'); $('#helpPanel').classList.remove('hidden');
   $('#helpClose').focus();
-  const body=$('#helpBody'); body.innerHTML='<div class="text-mut text-xs">carregando…</div>';
+  const body=$('#helpBody'); body.innerHTML='<div class="text-mut text-xs">'+esc(_t('loading…'))+'</div>';
   let faqHtml='';
   try{
     const ctrl=new AbortController(); const to=setTimeout(()=>ctrl.abort(),10000);
@@ -2249,7 +2261,8 @@ document.addEventListener('keydown',e=>{
 
 // UI gating by role (defence in depth + UX). The backend is the source of
 // truth; here we only avoid showing what the role cannot use.
-// owner/admin/platform_admin: everything. See the matrix in aiplat-security.md.
+// owner/admin/platform_admin: everything. The authoritative matrix is resolveAccess() in
+// domains/governance/src/cmd/config-api (canAdmin / teamScoped); this table mirrors it for the UI.
 const ROLE_VIEWS = {
   billing: ['overview','usage','roi','logs','settings'],
   dev:     ['overview','usage','roi','logs','play','keys','settings'],
@@ -2602,14 +2615,24 @@ function hcHtml(id){
   else if(c.state==='empty') inner='<div class="text-2xl font-semibold mt-1 text-mut">—</div><div class="text-[11px] text-mut mt-0.5">'+esc(_t(c.sub||'no data'))+'</div>';
   else inner='<div class="text-2xl font-semibold mt-1 '+valCol+'">'+esc(c.value)+'</div><div class="text-[11px] text-mut mt-0.5">'+esc(c.sub||'')+'</div>';
   const lbl=_t(m.label);
-  return '<div data-hc="'+m.id+'" data-nav="'+m.nav+'" role="button" tabindex="0" aria-label="'+esc(lbl)+' — '+esc(_t('open detail'))+'" '
-    +'class="bg-panel border '+border+' rounded-xl p-4 cursor-pointer hover:border-brand2/60 focus:outline-none focus:ring-1 focus:ring-brand2">'
+  // A role whose ROLE_VIEWS excludes this card's destination cannot open it — show() would
+  // just bounce back to Overview. Make that visible up front instead of a click that does
+  // nothing: no role="button"/tabindex, no hover affordance, aria-disabled for AT users.
+  // The card still shows its data — a dev must still SEE the budget, they just cannot edit it.
+  const allowed=ROLE_VIEWS[auth.role];
+  const gated=allowed && !allowed.includes(m.nav);
+  const interactive=gated?'':' role="button" tabindex="0"';
+  const hoverCls=gated?'':' cursor-pointer hover:border-brand2/60';
+  const ariaDisabled=gated?' aria-disabled="true"':'';
+  return '<div data-hc="'+m.id+'" data-nav="'+m.nav+'"'+interactive+' aria-label="'+esc(lbl)+' — '+esc(_t('open detail'))+'"'+ariaDisabled+' '
+    +'class="bg-panel border '+border+' rounded-xl p-4'+hoverCls+' focus:outline-none focus:ring-1 focus:ring-brand2">'
     +'<div class="text-[11px] uppercase tracking-wide text-mut">'+esc(lbl)+'</div>'+inner+'</div>';
 }
 function ovPaint(){
   const box=$('#ovCards'); if(!box) return;
   box.innerHTML=OV_BLOCKS.map(b=>hcHtml(b.id)).join('');
   $$('#ovCards [data-hc]').forEach(el=>{ const nav=el.dataset.nav;
+    if(el.getAttribute('aria-disabled')==='true') return; // gated: no click/keyboard nav
     el.onclick=(e)=>{ if(e.target.closest('[data-hcretry]')) return; show(nav); };
     el.onkeydown=(e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); show(nav); } };
   });
@@ -4450,18 +4473,18 @@ RENDER.teams=async function(){
         return `<div class="flex items-center gap-2 ${aArch?'opacity-60':''}">
           <span class="text-xs px-2 py-0.5 rounded-full border border-line">${esc(a.name)}</span>
           ${aDer?'<span class="text-[9px] text-amber-400" title="'+esc(_t('derived from a key'))+'">'+esc(_t('derived'))+'</span>':''}
-          ${aArch?'<span class="text-[9px] text-mut">arquivado</span>':''}
-          <span class="text-[9px] text-mut font-mono">${esc(a.id)}${aKeys?` · ${aKeys} chave(s)`:''}</span>
+          ${aArch?'<span class="text-[9px] text-mut">'+esc(_t('archived'))+'</span>':''}
+          <span class="text-[9px] text-mut font-mono">${esc(a.id)}${aKeys?` · ${aKeys} ${esc(_t('key(s)'))}`:''}</span>
           <span class="ml-auto flex items-center gap-2">${aActions}</span>
         </div>`;}).join('')}</div>
       ${(!derived && !archived) ? `<div class="flex items-end gap-2 mt-2">
-        <input data-newapp-for="${esc(t.id)}" maxlength="64" placeholder="novo app…" class="bg-panel2 border border-line rounded-lg px-2 py-1 text-xs min-w-[160px]" />
+        <input data-newapp-for="${esc(t.id)}" maxlength="64" placeholder="${esc(_t('new app…'))}" class="bg-panel2 border border-line rounded-lg px-2 py-1 text-xs min-w-[160px]" />
         <button data-addapp="${esc(t.id)}" class="text-[11px] px-2 py-1 rounded-lg border border-line text-brand2 hover:bg-panel2">+ app</button>
       </div>` : ''}
 
-      <div class="text-[11px] text-mut mt-3 mb-1">membros${mem.length?'':' <span class="text-mut">(nenhum)</span>'}</div>
+      <div class="text-[11px] text-mut mt-3 mb-1">${esc(_t('members'))}${mem.length?'':' <span class="text-mut">('+esc(_t('none'))+')</span>'}</div>
       <div class="flex flex-wrap gap-1.5 items-center">${mem.map(m=>`<span class="text-xs px-2 py-0.5 rounded-full border border-line" title="${esc(m.role||'')}">${esc(m.email)}</span>`).join('')}
-        ${(!derived&&!archived)?`<button data-tmembers="${esc(t.id)}" class="text-[11px] text-brand2 hover:underline">+ adicionar/gerenciar membros ▾</button>`:''}</div>
+        ${(!derived&&!archived)?`<button data-tmembers="${esc(t.id)}" class="text-[11px] text-brand2 hover:underline">+ ${esc(_t('add/manage members'))} ▾</button>`:''}</div>
       <div data-membox="${esc(t.id)}" class="hidden mt-2"></div>
     </div>`;}).join('');
 
@@ -4919,7 +4942,7 @@ function renderMemApps(){
 function fillMemTeam(sel){
   const s=$('#memTeam'); if(!s) return;
   const teams=(window._teams||['default']).slice();
-  s.innerHTML=teams.map(t=>`<option value="${t}">${t}</option>`).join('')+'<option value="__new__">novo time…</option>';
+  s.innerHTML=teams.map(t=>`<option value="${t}">${t}</option>`).join('')+'<option value="__new__">'+esc(_t('new team…'))+'</option>';
   if(sel && teams.includes(sel)) s.value=sel;
   $('#memTeamNewWrap').classList.toggle('hidden', s.value!=='__new__');
 }
@@ -4940,7 +4963,7 @@ $('#memCancel')&&($('#memCancel').onclick=()=>{ memResetForm(); $('#memMsg').tex
 
 RENDER.members=async function(){
   const rows=$('#memRows'), gate=$('#memGate'), inv=$('#memInvite'); $('#memMsg').textContent='';
-  rows.innerHTML='<tr><td class="py-3 text-mut" colspan="5">carregando…</td></tr>';
+  rows.innerHTML='<tr><td class="py-3 text-mut" colspan="5">'+esc(_t('loading…'))+'</td></tr>';
   await loadTeamsApps();
   // Populates the Team <select> and the Apps pills right after teams/apps are
   // known — without this, the dropdown stayed empty until the user clicked

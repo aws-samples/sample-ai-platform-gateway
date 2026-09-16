@@ -12,10 +12,17 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-16
+
 Reasoning models are now first-class: their chain of thought reaches the client, the silence
 while they think no longer looks like a dropped request, and a request can no longer run to the
 platform ceiling and take its own accounting down with it. The sampling parameters a client
 sends now reach the provider at all, which they previously did not.
+
+This release also closes a real credential-exposure hole found by a functional audit of the
+console and every admin route against what each promises: a member with no write permission at
+all could make the platform hand over the org's stored provider API key. See **Security** below
+before anything else in this entry.
 
 ### Upgrade notes
 
@@ -196,6 +203,68 @@ Read this one before deploying: it changes behaviour on traffic you already have
   streaming path already had. Without it there was no way to test what `callBedrock` actually
   put on the wire — reintroducing "drop every inference parameter" left the suite green, which
   is the same structural gap that let the reasoning block go unhandled in that file.
+
+### Security
+
+- **`GET /admin/provider/models` let any authenticated member exfiltrate the org's stored
+  provider API key.** The route's only check was that the caller belonged to the org — the
+  same gate as a read — but it makes the platform send that org's vault credential, as an
+  `Authorization`/`x-api-key`/`?key=` header, to whatever `base_url` the request names. A
+  `dev` or `billing` member, neither of whom can write anything else in the console, could
+  point `base_url` at a host they control and receive the org's real OpenAI/Anthropic/Gemini
+  key in the resulting request. Every other route that touches a credential (`POST
+  /admin/secrets`, `PUT /admin/config`) already required `owner`/`admin`; this one did not.
+
+  Fixed with two independent layers: the route now requires `owner`/`admin`, matching
+  `/admin/secrets`; and `base_url` must match a `base_url` already declared on one of the
+  org's own routes (`orgDeclaresBaseURL`), so even an admin cannot redirect the credential to
+  an arbitrary destination. Found and verified with a Playwright-driven audit of the console
+  against every role, plus characterization tests that fail against the pre-fix handler and
+  pass with it. No upgrade action needed — this only removes access a role never should have
+  had — but audit your logs for `unauthorized_provider_models_access_attempt` /
+  `provider_models_undeclared_base_url` entries if you suspect the route was probed.
+
+### Fixed
+
+- **`GET /admin/keys` silently returned a partial key list past ~1&nbsp;MB of table
+  content.** It issued a single unpaginated `Scan` with a `FilterExpression`, and DynamoDB
+  applies the filter *after* reading a page — so an org whose api-keys table exceeded the
+  page boundary saw a truncated list presented as complete: the Overview "API Keys" card and
+  the Teams & Apps key counts under-reported, and an existing key could look revoked. It is
+  now the only route in the repo that was missing the `LastEvaluatedKey` loop every other
+  paginated read already follows; fixed to match.
+- **The console only hid gated panels from the sidebar, not from every way to reach
+  them.** `applyRoleNav()` hid the sidebar's own buttons for `dev`/`billing`, but `show(v)` —
+  the single primitive every navigation path funnels through, including the Overview
+  health-cards — never checked the role. A `dev` clicking the "Cost & Budget" card landed on a
+  fully interactive Limits & Budget screen and only discovered the restriction after a 403 on
+  Save. `show(v)` now enforces the same allowlist for every caller, and a gated Overview card
+  drops its click/keyboard affordances (`aria-disabled`) while still showing its data. This
+  was UI-only: the backend authorization was already correct and is unchanged.
+- **Six strings shipped in Portuguese inside the English console**, invisible to
+  `scripts/i18n-check.sh` because they were single words with no accent (`arquivado`,
+  `carregando…`) or sat inside a template literal the existing checks do not parse
+  (`membros`, `chave(s)`, an unwrapped `<option>`, an unwrapped placeholder). Rewritten through
+  `_t()`, with the missing dictionary keys added to both `pt` and `es`. Added check 7 to
+  `scripts/i18n-check.sh`: a curated marker sweep over `console.js` outside the dictionary
+  blocks, so a recurrence of this specific defect fails the build instead of shipping quietly.
+
+### Changed
+
+- **The local demo fixtures (`demo/fixtures.mjs`, `demo/server.mjs`) now match the real API
+  response shapes.** They were missing `status`/`org` on keys, `by_upstream` and six fields on
+  every `usage-api` provider breakdown row, and `requested_cost_usd`/`served_model_id`/
+  `status`/`cache_hit` on log records — so those console code paths were never exercised
+  offline and never appeared in a generated screenshot. `server.mjs` also now scales every
+  breakdown table when slicing a short window, not only the summary cards, so a 7-day view is
+  internally consistent instead of showing 30 days of breakdown next to 7 days of totals.
+  Local/offline only; nothing here is deployed.
+
+All of the above were found by a from-scratch functional audit: every documented promise in
+the README and the console's own copy checked against the running code, the console driven in
+a real browser under every role, and the live control-plane APIs probed read-only. Full report
+kept out of the published tree (`.kiro/specs/audit-fable/`, gitignored) — this entry and the
+Security note above are the parts of it that belong in a changelog.
 
 ## [1.2.0] - 2026-09-16
 

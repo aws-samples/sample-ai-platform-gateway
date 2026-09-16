@@ -83,6 +83,19 @@ function usageSummary(params) {
   const scale = (n) => Number((n * share).toFixed(6));
   const t = fx.USAGE.totals;
 
+  // The by_* breakdowns used to stay at 30-day magnitude on a sliced request, which made a
+  // short window internally inconsistent: the totals cards shrank with `share` while every
+  // breakdown table still showed the full period. Scale every numeric field on every
+  // breakdown row the same way, so a 7-day view agrees with itself.
+  const scaleRows = (rows) =>
+    (rows || []).map((r) => {
+      const out = { ...r };
+      for (const k of Object.keys(out)) {
+        if (k !== 'key' && typeof out[k] === 'number') out[k] = scale(out[k]);
+      }
+      return out;
+    });
+
   return {
     ...fx.USAGE,
     totals: {
@@ -105,6 +118,14 @@ function usageSummary(params) {
       availability_pct: fx.USAGE.sli.availability_pct,
     },
     series,
+    by_model: scaleRows(fx.USAGE.by_model),
+    by_feature: scaleRows(fx.USAGE.by_feature),
+    by_team: scaleRows(fx.USAGE.by_team),
+    by_app: scaleRows(fx.USAGE.by_app),
+    by_provider: scaleRows(fx.USAGE.by_provider),
+    by_upstream: scaleRows(fx.USAGE.by_upstream),
+    savings_by_reason: scaleRows(fx.USAGE.savings_by_reason),
+    by_swap_class: scaleRows(fx.USAGE.by_swap_class),
     savings_series: { labels, by_reason: byReason },
   };
 }

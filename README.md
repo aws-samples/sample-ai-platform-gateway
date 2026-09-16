@@ -8,10 +8,11 @@ cost and who spent it.
 100% serverless: Go on AWS Lambda (ARM64), API Gateway, DynamoDB, SQS, EventBridge, Cognito and
 Amazon Bedrock. Deployed per domain with Terraform, each domain holding its own state.
 
-Current release: **v1.2.0** — see the [CHANGELOG](CHANGELOG.md). Read its **Upgrade notes**
-before deploying over an older version: `allowed_models` now resolves by intersection down the
-scope chain (a parent is a ceiling, so any scope configured to widen its parent loses the extra
-models), and a declared-empty list now denies instead of allowing.
+Current release: **v1.3.0** — see the [CHANGELOG](CHANGELOG.md). It closes a credential-exposure
+issue (a member with no write permission could make the platform hand over the org's stored
+provider API key — see the **Security** entry) and enforces `max_tokens`/`temperature`, which
+were previously parsed but silently dropped before the provider call: read the **Upgrade notes**
+before deploying, since a caller relying on that being ignored will now see it honoured.
 
 > [!WARNING]
 > **Not for production use.** This repository is a **reference implementation** of an AI gateway

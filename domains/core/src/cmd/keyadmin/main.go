@@ -175,6 +175,37 @@ func claim(req events.APIGatewayProxyRequest, name string) string {
 func s(v string) *ddbtypes.AttributeValueMemberS { return &ddbtypes.AttributeValueMemberS{Value: v} }
 func awsStr(v string) *string                    { return &v }
 
+// keyScanner is the slice of *dynamodb.Client that scanAllKeys needs, so the pagination
+// loop is testable with a fake instead of a live table.
+type keyScanner interface {
+	Scan(context.Context, *dynamodb.ScanInput, ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+}
+
+// scanAllKeys returns every item in the table matching org_id/tenant == org, following
+// LastEvaluatedKey until DynamoDB reports none. A single unpaginated Scan only returns
+// items from the first ~1 MB page it reads BEFORE the FilterExpression is applied, so an
+// org past that boundary would otherwise see a partial key list presented as complete.
+func scanAllKeys(ctx context.Context, sc keyScanner, org string) ([]map[string]ddbtypes.AttributeValue, error) {
+	var items []map[string]ddbtypes.AttributeValue
+	var lek map[string]ddbtypes.AttributeValue
+	for {
+		out, err := sc.Scan(ctx, &dynamodb.ScanInput{
+			TableName:                 &table,
+			FilterExpression:          awsStr("org_id = :o OR tenant = :o"),
+			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":o": s(org)},
+			ExclusiveStartKey:         lek,
+		})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, out.Items...)
+		if out.LastEvaluatedKey == nil {
+			return items, nil
+		}
+		lek = out.LastEvaluatedKey
+	}
+}
+
 func genKey() string {
 	buf := make([]byte, 24)
 	rand.Read(buf)
@@ -381,11 +412,7 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if !ok {
 			return resp(reqOrigin, 400, map[string]string{"error": "org could not be determined (platform_admin must provide ?org=)"})
 		}
-		out, err := ddb.Scan(ctx, &dynamodb.ScanInput{
-			TableName:                 &table,
-			FilterExpression:          awsStr("org_id = :o OR tenant = :o"),
-			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":o": s(org)},
-		})
+		items, err := scanAllKeys(ctx, ddb, org)
 		if err != nil {
 			return resp(reqOrigin, 500, map[string]string{"error": err.Error()})
 		}
@@ -397,7 +424,7 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		summary := req.QueryStringParameters["summary"] == "1"
 		teamSet, appSet2 := map[string]bool{}, map[string]bool{}
 		keys := []map[string]string{}
-		for _, it := range out.Items {
+		for _, it := range items {
 			get := func(k string) string {
 				if v, ok := it[k].(*ddbtypes.AttributeValueMemberS); ok {
 					return v.Value
@@ -447,7 +474,7 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			}
 			sort.Strings(teams)
 			sort.Strings(apps)
-			return resp(reqOrigin, 200, map[string]interface{}{"org": org, "teams": teams, "apps": apps, "count": len(out.Items)})
+			return resp(reqOrigin, 200, map[string]interface{}{"org": org, "teams": teams, "apps": apps, "count": len(items)})
 		}
 		return resp(reqOrigin, 200, map[string]interface{}{"org": org, "keys": keys})
 

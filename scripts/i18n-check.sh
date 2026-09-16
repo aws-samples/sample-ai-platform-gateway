@@ -438,6 +438,38 @@ else
   [ "$PT_N" -eq 0 ] && [ "$UN_N2" -eq 0 ] && say "ok — all $GO_N fixed backend messages are English and translated"
 fi
 
+# ── 7. Portuguese-source marker sweep (console.js, outside the dictionaries) ─
+# Checks 3/3d catch accented or multi-word literals reaching the DOM, but they miss a
+# single-word Portuguese literal (no accent, no second word — "arquivado", "carregando…"),
+# a Portuguese value in an HTML attribute with no accent ("novo app…" as a placeholder=),
+# and a literal nested inside a template-literal-returning helper that never matches the
+# structural .textContent=/.innerHTML= pattern 3d looks for. All three let a handful of
+# Portuguese-authored strings render in an English UI (the F-04 audit finding) with none of
+# the checks above reporting a failure. This is a small curated marker list rather than a
+# general heuristic — it exists specifically to catch a recurrence of THAT finding, not to
+# replace 3/3b/3c/3d.
+hdr "7. Portuguese-source marker sweep (console.js)"
+# Comments are excluded: an internal identifier like data-tsec="membros" (console.html)
+# is legitimately named in Portuguese and gets EXPLAINED in a nearby English comment that
+# quotes the identifier ("… the visible sub-tab is 'membros' …") — that quoting is not the
+# defect this check exists to catch, and without the exclusion it drowns the real hits.
+OUTSIDE_DICT="$(awk '
+  /^  (pt|es):\{/ { indict=1; next } indict && /^  \},/ { indict=0; next }
+  indict { next }
+  /^[[:space:]]*\/\// { next }
+  { sub(/\/\/.*$/, ""); print }
+' "$CONSOLE_JS")"
+MARKER_RE='arquivado|carregando|\bnenhum\b|chave\(s\)|\bmembros\b|adicionar/gerenciar|novo (time|app)…'
+MARKER_HITS="$(printf '%s\n' "$OUTSIDE_DICT" | grep -noE ".{0,20}($MARKER_RE).{0,20}" || true)"
+MARKER_N="$(printf '%s\n' "$MARKER_HITS" | grep -c . || true)"
+if [ "$MARKER_N" -gt 0 ]; then
+  say "FAIL — $MARKER_N Portuguese-source marker(s) found outside the pt/es dictionaries:"
+  printf '%s\n' "$MARKER_HITS" | sed 's/^/    /'
+  FAIL=1
+else
+  say "ok — no Portuguese-source markers outside the dictionaries"
+fi
+
 say ""
 if [ "$FAIL" -eq 0 ]; then say "PASS"; else say "FINDINGS — see above"; fi
 exit "$FAIL"
