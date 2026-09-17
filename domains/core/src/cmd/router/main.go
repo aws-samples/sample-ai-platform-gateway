@@ -35,6 +35,7 @@ import (
 
 	"github.com/aiplat/core/internal/adapters/bedrock"
 	"github.com/aiplat/core/internal/adapters/bedrockembed"
+	"github.com/aiplat/core/internal/adapters/bedrockgateway"
 	"github.com/aiplat/core/internal/adapters/ddbcache"
 	"github.com/aiplat/core/internal/adapters/ddbconfig"
 	"github.com/aiplat/core/internal/adapters/ddbhints"
@@ -67,10 +68,15 @@ func main() {
 	}
 	gateway.Wire(gateway.Deps{
 		BedrockPool: bedrock.NewPool(cfg, bedrockruntime.NewFromConfig(cfg), sts.NewFromConfig(cfg)),
-		Config:      ddbconfig.New(ddb, os.Getenv("CONFIG_TABLE"), deploymentOrg),
-		Org:         deploymentOrg,
-		Cache:       cacheImpl,
-		Sem:         cacheImpl,
+		// AgentCore Gateway calls are signed with the deployment's own credentials
+		// (service bedrock-agentcore); the gateway's execution role is what reaches the
+		// model. Built unconditionally because it is just a signer over cfg — a route has
+		// to name provider "bedrock_gateway" for any of it to be used.
+		GatewaySigner: bedrockgateway.NewSigV4(cfg),
+		Config:        ddbconfig.New(ddb, os.Getenv("CONFIG_TABLE"), deploymentOrg),
+		Org:           deploymentOrg,
+		Cache:         cacheImpl,
+		Sem:           cacheImpl,
 		// Semantic cache embedder: Titan v2 in the platform account. An empty
 		// EMBED_MODEL falls back to the adapter's default; no new mandatory env var.
 		Embedder: bedrockembed.New(bedrockruntime.NewFromConfig(cfg), os.Getenv("EMBED_MODEL"), 256),

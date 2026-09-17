@@ -108,6 +108,24 @@ export const ROUTING = {
     prompt_cache: true,
     capabilities: { tool_use: true, multimodal: true, context_window_tokens: 200000, tier: 'frontier', reasoning: true },
   },
+  // A native Anthropic route (API key, not Bedrock). It exists in the dataset for two
+  // reasons: the console's `anthropic` provider path was otherwise never exercised offline,
+  // and it is the only route shape that reaches the extended-thinking toggle while coming
+  // from the SERVER rather than from the add form. That distinction is what makes
+  // demo/check-agentcore.mjs able to catch a toggle that updates the effective config and
+  // not the raw one — CFG and CFG_RAW are two separate fetches, so for a server-loaded route
+  // they are two different objects and a missing raw write is silently lost on save.
+  //
+  // reasoning_style is deliberately ABSENT: that is what an existing route looks like before
+  // anyone declares the shape, and an absent value means "budget" to the adapter.
+  'claude-direct': {
+    provider: 'anthropic',
+    provider_model_id: 'claude-sonnet-4-5',
+    base_url: 'https://api.anthropic.com',
+    api_key_secret: 'anthropic',
+    prompt_cache: true,
+    capabilities: { tool_use: true, multimodal: true, context_window_tokens: 200000, tier: 'frontier', reasoning: true },
+  },
   'nova-lite': {
     provider: 'bedrock',
     provider_model_id: 'us.amazon.nova-lite-v1:0',
@@ -133,6 +151,7 @@ export const ROUTING = {
 export const PRICING = {
   'claude-sonnet': { input: 0.003, output: 0.015, source: 'list' },
   'claude-sonnet-byo': { input: 0.0024, output: 0.012, source: 'contract' },
+  'claude-direct': { input: 0.003, output: 0.015, source: 'list' },
   'nova-lite': { input: 0.00006, output: 0.00024, source: 'list' },
   'llama-scout': { input: 0.00017, output: 0.00066, source: 'list' },
   'mixtral-selfhosted': { input: 0, output: 0 },

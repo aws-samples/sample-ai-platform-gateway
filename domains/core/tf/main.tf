@@ -141,7 +141,11 @@ resource "aws_iam_role_policy" "router" {
   role = aws_iam_role.router.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    # concat, not a literal list: the AgentCore Gateway statement is scoped to the ARN of
+    # the gateway THIS stack creates, so it can only exist when the gateway does. Granting
+    # InvokeGateway on "*" unconditionally would hand the router permission to invoke every
+    # gateway in the account, including ones belonging to other workloads.
+    Statement = concat([
       { Effect = "Allow", Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Resource = "arn:aws:logs:*:*:*" },
       { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:PutItem"], Resource = aws_dynamodb_table.cache.arn },
       { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = aws_dynamodb_table.api_keys.arn },
@@ -174,7 +178,15 @@ resource "aws_iam_role_policy" "router" {
       # X-Ray requires Resource = "*": trace segments are not addressable
       # resources, so this is the documented AWS pattern for tracing.
       { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
-    ]
+      ],
+      # Amazon Bedrock AgentCore Gateway (provider "bedrock_gateway"), only when this
+      # stack created one. See agentcore.tf for why the gateway is opt-in.
+      var.agentcore_gateway_enabled ? [{
+        Effect   = "Allow",
+        Action   = ["bedrock-agentcore:InvokeGateway"],
+        Resource = aws_bedrockagentcore_gateway.inference[0].gateway_arn,
+      }] : []
+    )
   })
 }
 

@@ -41,7 +41,7 @@ func (a *Adapter) OpenStream(ctx context.Context, in ports.InvokeInput) (ports.P
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("anthropic %d: %s", resp.StatusCode, string(b))
+		return nil, fmt.Errorf("%s %d: %s", a.Transport.label(), resp.StatusCode, string(b))
 	}
 	return ssestream.New(resp, anthropicFrame), nil
 }
@@ -63,6 +63,13 @@ func (a *Adapter) buildRequest(ctx context.Context, in ports.InvokeInput, stream
 		maxTok = DefaultMaxTokens
 	}
 	payload := map[string]interface{}{"model": a.ModelID, "max_tokens": maxTok, "messages": toWireMessages(conv)}
+	// The Bedrock family carries the API version in the BODY and rejects the request
+	// outright without it. Anthropic's own API carries it in a header instead, so this is
+	// set only when the transport asks for it — sending both would be sending a field
+	// Anthropic does not declare.
+	if v := a.Transport.BodyVersion; v != "" {
+		payload["anthropic_version"] = v
+	}
 	// Conditional, all of them: an absent field lets the model's own default stand, while a
 	// zero we invented would change the output. temperature 0 is a real request for
 	// determinism and must stay distinguishable from "not informed".
@@ -75,12 +82,8 @@ func (a *Adapter) buildRequest(ctx context.Context, in ports.InvokeInput, stream
 	if len(in.Inference.Stop) > 0 {
 		payload["stop_sequences"] = in.Inference.Stop
 	}
-	// Extended thinking. The budget arrives already resolved and clamped from the gateway,
-	// and the API's own invariant is max_tokens > budget_tokens — which is why the payload
-	// is built from a maxTok that the gateway has already reconciled with the budget.
-	if r := in.Inference.Reasoning; r != nil && !r.Disabled && r.BudgetTokens > 0 {
-		payload["thinking"] = map[string]interface{}{"type": "enabled", "budget_tokens": r.BudgetTokens}
-	}
+	// Extended thinking, in whichever shape THIS model accepts (see ReasoningStyle*).
+	applyThinking(payload, in.Inference.Reasoning, a.Transport.ReasoningStyle)
 	// Tools. `in.Tools` was never read here at all, so a client sending `tools` to a native
 	// Anthropic route got an ordinary prose answer and no tool call — the request succeeded,
 	// which is what made it invisible. The routing layer had already checked the model was
@@ -101,14 +104,55 @@ func (a *Adapter) buildRequest(ctx context.Context, in ports.InvokeInput, stream
 		payload["stream"] = true
 	}
 	b, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+"/v1/messages", bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL+a.Transport.path(), bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("content-type", "application/json")
+	// Auth is either a key or a signature, never both. Signing must be the LAST thing done
+	// to the request: SigV4 covers the headers it signs, so setting one afterwards
+	// invalidates the signature — which surfaces as a 403 that looks like bad credentials.
+	if sign := a.Transport.Sign; sign != nil {
+		if err := sign(ctx, req, b); err != nil {
+			return nil, err
+		}
+		return req, nil
+	}
 	req.Header.Set("x-api-key", a.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 	return req, nil
+}
+
+// applyThinking writes the extended-thinking request in the shape the model accepts.
+//
+// Nothing is written when the client did not ask to think, or asked NOT to: the absence of
+// the field is what "do not think" looks like on both shapes, and inventing a disabled
+// marker would be sending a field neither API documents.
+func applyThinking(payload map[string]interface{}, r *ports.ReasoningRequest, style string) {
+	if r == nil || r.Disabled {
+		return
+	}
+	if style == ReasoningStyleAdaptive {
+		// Adaptive lets the MODEL choose the budget, so the token count the gateway
+		// resolved is not sent at all — there is no field for it. What this shape takes is
+		// the client's word, which ReasoningRequest carries alongside the budget precisely
+		// for the dialects that want it back.
+		payload["thinking"] = map[string]interface{}{"type": "adaptive"}
+		// Effort is omitted rather than derived from BudgetTokens when the client sent only
+		// a number. Deriving it would mean a second, inverse copy of the gateway's
+		// effort→budget table, and the two would drift; adaptive alone is a valid request
+		// (measured: opus-4-8 produced a 45-token thinking block with no effort named).
+		switch r.Effort {
+		case ports.ReasoningEffortLow, ports.ReasoningEffortMedium, ports.ReasoningEffortHigh:
+			payload["output_config"] = map[string]interface{}{"effort": r.Effort}
+		}
+		return
+	}
+	// Budget shape. The API's own invariant is max_tokens > budget_tokens, which is why the
+	// payload is built from a maxTok the gateway has already reconciled with the budget.
+	if r.BudgetTokens > 0 {
+		payload["thinking"] = map[string]interface{}{"type": "enabled", "budget_tokens": r.BudgetTokens}
+	}
 }
 
 // DefaultMaxTokens is the fallback for a request that names no ceiling.

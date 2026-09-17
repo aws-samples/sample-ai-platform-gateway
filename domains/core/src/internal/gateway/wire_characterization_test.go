@@ -159,3 +159,50 @@ func TestWire_Gemini(t *testing.T) {
 	body := captureBody(t, r, `{"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}`)
 	assertWireGolden(t, "gemini", body)
 }
+
+// stubGatewaySigner stands in for SigV4 so the golden can be captured without AWS
+// credentials. It is deliberately NOT a no-op signer inside the adapter: production must
+// fail when nothing wired a signer (see bedrockgateway.New), and a test that relied on
+// unsigned requests working would have removed that guarantee.
+type stubGatewaySigner struct{}
+
+func (stubGatewaySigner) SignRequest(_ context.Context, req *http.Request, _ []byte, service, region string) error {
+	req.Header.Set("authorization", "AWS4-HMAC-SHA256 Credential=test/"+region+"/"+service)
+	return nil
+}
+
+// TestWire_BedrockGateway pins the body sent to Amazon Bedrock AgentCore Gateway.
+//
+// It shares the Messages-dialect translation with the anthropic route by construction, so
+// this golden's real job is to prove the two DIVERGE only where they are meant to: the
+// `anthropic_version` field the Bedrock family requires in the body. Comparing this file
+// against anthropic.wire.json is the check — everything else must be identical, and if a
+// future change to the shared builder alters one and not the other, both goldens move.
+func TestWire_BedrockGateway(t *testing.T) {
+	prev := gatewaySigner
+	gatewaySigner = stubGatewaySigner{}
+	t.Cleanup(func() { gatewaySigner = prev })
+
+	// Region on the route, not derived: captureBody points BaseURL at 127.0.0.1, which
+	// carries no region. A real route may omit it and let the gateway host supply it.
+	r := Route{Provider: "bedrock_gateway", ProviderModelID: "us.anthropic.claude-opus-4-8", Region: "us-east-1"}
+	body := captureBody(t, r, `{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+	assertWireGolden(t, "bedrock_gateway", body)
+}
+
+// TestBedrockGateway_NoSignerIsAnError proves the dispatch refuses to build the route
+// rather than sending an unsigned request. Without this, a deployment that forgot to wire
+// the signer would fail with a 403 from the gateway and look like a credentials problem.
+func TestBedrockGateway_NoSignerIsAnError(t *testing.T) {
+	prev := gatewaySigner
+	gatewaySigner = nil
+	t.Cleanup(func() { gatewaySigner = prev })
+
+	_, err := providerFor(context.Background(), Route{
+		Provider: "bedrock_gateway", ProviderModelID: "m",
+		BaseURL: "https://gw.gateway.bedrock-agentcore.us-east-1.amazonaws.com",
+	})
+	if err == nil {
+		t.Fatal("expected providerFor to fail with no signer wired")
+	}
+}

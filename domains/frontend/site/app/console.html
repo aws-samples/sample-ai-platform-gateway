@@ -757,6 +757,92 @@
           <span id="scMsg" class="text-xs ml-3"></span>
         </div>
 
+        <!-- Amazon Bedrock AgentCore Gateway: AWS-managed transport in front of the models.
+             Registered here rather than under Bedrock because it is a different door with a
+             different catalog, a different credential model (the gateway's own execution
+             role, so no BYO cross-account) and one field that has no equivalent anywhere
+             else: the extended-thinking shape, which is a per-model fact the operator has
+             to declare because the two shapes are mutually exclusive. -->
+        <div id="addAgentcore" class="bg-panel border border-line rounded-xl p-5 mb-5 hidden">
+          <div class="text-sm font-medium mb-1">🚪 Amazon Bedrock AgentCore Gateway</div>
+          <div class="text-[11px] text-mut mb-4" data-i18n="AWS manages the transport: one endpoint, model-based routing and egress credentials. The catalog is the gateway's, which is smaller than Bedrock's — Amazon Nova, Meta Llama and the older Claude generations are not reachable this way, and neither are embeddings.">AWS manages the transport: one endpoint, model-based routing and egress credentials. The catalog is the gateway's, which is smaller than Bedrock's — Amazon Nova, Meta Llama and the older Claude generations are not reachable this way, and neither are embeddings.</div>
+          <div class="grid md:grid-cols-4 gap-3">
+            <div>
+              <label for="agAlias" class="block text-[11px] text-mut mb-1" data-i18n="Model alias">Model alias</label>
+              <input id="agAlias" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm" placeholder="gw-claude-haiku" />
+            </div>
+            <div>
+              <label for="agModel" class="block text-[11px] text-mut mb-1"><span data-i18n="Model id at the gateway">Model id at the gateway</span> <span class="opacity-60" data-i18n="(target-qualified)">(target-qualified)</span></label>
+              <input id="agModel" list="agModelOpts" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm font-mono" placeholder="mantle/anthropic.claude-haiku-4-5" />
+              <datalist id="agModelOpts"></datalist>
+            </div>
+            <div>
+              <label for="agBase" class="block text-[11px] text-mut mb-1"><span data-i18n="Gateway endpoint">Gateway endpoint</span> <span class="opacity-60">base_url</span></label>
+              <input id="agBase" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm font-mono" placeholder="https://<gateway-id>.gateway.bedrock-agentcore.us-east-1.amazonaws.com" />
+            </div>
+            <!-- Region is an enumerable set, so it is a select (the "choose, don't type"
+                 rule). It is also the signing region: a mismatch with the endpoint is
+                 rejected as if the credentials were wrong, which is why the hint below says
+                 so explicitly instead of leaving it to be discovered. -->
+            <div>
+              <label for="agRegion" class="block text-[11px] text-mut mb-1" data-i18n="Region">Region</label>
+              <select id="agRegion" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm font-mono">
+                <option value="us-east-1" selected>us-east-1</option><option value="us-west-2">us-west-2</option>
+                <option value="us-east-2">us-east-2</option><option value="eu-central-1">eu-central-1</option>
+                <option value="eu-west-1">eu-west-1</option><option value="ap-northeast-1">ap-northeast-1</option>
+                <option value="ap-southeast-2">ap-southeast-2</option>
+              </select>
+            </div>
+          </div>
+          <div class="text-[11px] text-mut mt-2" data-i18n="Get the endpoint from &lt;code&gt;terraform output agentcore_gateway_url&lt;/code&gt; in the core domain. The region above signs the request and must match the one in the endpoint.">Get the endpoint from <code>terraform output agentcore_gateway_url</code> in the core domain. The region above signs the request and must match the one in the endpoint.</div>
+
+          <div class="mt-3 border-t border-line pt-3">
+            <div class="text-[11px] text-mut mb-2" data-i18n="What this model can do — the gateway uses this to &lt;b&gt;avoid&lt;/b&gt; sending it a request it cannot serve.">What this model can do — the gateway uses this to <b>avoid</b> sending it a request it cannot serve.</div>
+            <div class="grid md:grid-cols-6 gap-3">
+              <div>
+                <label for="agThink" class="block text-[11px] text-mut mb-1" data-i18n="Extended thinking">Extended thinking</label>
+                <select id="agThink" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm">
+                  <option value="budget" selected data-i18n="budget — Haiku 4.5">budget — Haiku 4.5</option>
+                  <option value="adaptive" data-i18n="adaptive — Sonnet 5, Opus 4.7+">adaptive — Sonnet 5, Opus 4.7+</option>
+                </select>
+              </div>
+              <div>
+                <label for="agTool" class="block text-[11px] text-mut mb-1">Function calling</label>
+                <select id="agTool" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm">
+                  <option value="1" selected data-i18n="supports tool use">supports tool use</option>
+                  <option value="0" data-i18n="does not">does not</option>
+                </select>
+              </div>
+              <div>
+                <label for="agMulti" class="block text-[11px] text-mut mb-1" data-i18n="Image">Image</label>
+                <select id="agMulti" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm">
+                  <option value="1" selected data-i18n="accepts images">accepts images</option>
+                  <option value="0" data-i18n="text only">text only</option>
+                </select>
+              </div>
+              <div>
+                <label for="agTier" class="block text-[11px] text-mut mb-1" data-i18n="Quality tier">Quality tier</label>
+                <select id="agTier" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm">
+                  <option value="frontier">frontier</option>
+                  <option value="balanced" selected>balanced</option>
+                  <option value="fast">fast</option>
+                </select>
+              </div>
+              <div>
+                <label for="agIn" class="block text-[11px] text-mut mb-1"><span data-i18n="Input price">Input price</span> <span class="opacity-60">/1K tok</span></label>
+                <input id="agIn" type="number" step="0.0000001" min="0" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm font-mono" placeholder="0.001" />
+              </div>
+              <div>
+                <label for="agOut" class="block text-[11px] text-mut mb-1"><span data-i18n="Output price">Output price</span> <span class="opacity-60">/1K tok</span></label>
+                <input id="agOut" type="number" step="0.0000001" min="0" class="w-full bg-panel2 border border-line rounded-lg px-3 py-2 text-sm font-mono" placeholder="0.005" />
+              </div>
+            </div>
+            <div class="text-[11px] text-mut mt-2" data-i18n="The two thinking shapes are mutually exclusive per model and the wrong one is rejected outright — plain requests keep working while every reasoning request fails. The gateway also charges its own per-request fee, which is &lt;b&gt;not&lt;/b&gt; included in the prices above.">The two thinking shapes are mutually exclusive per model and the wrong one is rejected outright — plain requests keep working while every reasoning request fails. The gateway also charges its own per-request fee, which is <b>not</b> included in the prices above.</div>
+          </div>
+          <button id="agAdd" class="mt-3 px-4 py-2 rounded-lg bg-brand text-ink font-semibold text-sm hover:brightness-110" data-i18n="Add">Add</button>
+          <span id="agMsg" class="text-xs ml-3"></span>
+        </div>
+
         <!-- Your models: everything connected, with on/off, origin, price and remove. -->
         <!-- There is no order here — the priority of the models that are ON lives on the Routing tab. -->
         <div class="mt-6 border-t border-line pt-4">

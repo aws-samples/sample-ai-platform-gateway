@@ -99,3 +99,20 @@ variable "response_streaming" {
   type    = bool
   default = true
 }
+
+variable "agentcore_gateway_enabled" {
+  type        = bool
+  default     = false
+  description = "Create the optional AgentCore Gateway and enable provider bedrock_gateway routes."
+}
+
+variable "agentcore_gateway_region" {
+  type        = string
+  default     = "us-east-1"
+  description = <<-EOT
+    Region for the AgentCore Gateway. Must stay in sync with the aws.agentcore provider in
+    providers.tf — they are two places that read the same variable precisely so they cannot
+    disagree. us-east-1 by default because that is where the gateway serves a full Anthropic
+    ladder; us-west-2 serves only claude-haiku-4-5.
+  EOT
+}
