@@ -391,10 +391,11 @@ resource "aws_lambda_permission" "api" {
 # not the size-based blocking threshold of the CRS rule itself.
 # Fixed following AWS's official practice for this case (repost.aws/
 # knowledge-center/waf-http-request-body-inspection): apply a Count override
-# specifically on the SizeRestrictions_BODY rule (keeping the rest of the CRS —
-# SQLi, XSS, etc. — blocking normally) and raise size_inspection_limit to the
-# maximum (64KB), so the rules that MATTER (malicious content, not size)
-# keep inspecting the whole body instead of only the first 8-16KB.
+# specifically on the SizeRestrictions_BODY rule and raise size_inspection_limit
+# to the maximum (64KB), so the rules that MATTER (malicious content, not size)
+# keep inspecting the whole body instead of only the first 8-16KB. The body
+# CrossSiteScripting rule is Count too (see the rule_action_override block below
+# for why); SQLi/LFI/RCE and the KnownBadInputs group keep blocking.
 resource "aws_wafv2_web_acl" "router" {
   name = "${local.name}-router-waf"
   # No apostrophes: WAFv2 validates description against
@@ -429,11 +430,30 @@ resource "aws_wafv2_web_acl" "router" {
         name        = "AWSManagedRulesCommonRuleSet"
         vendor_name = "AWS"
 
-        # Only the body SIZE rule is downgraded to Count — it is the one that
-        # produces the false positive on legitimate tool-calling payloads. The other
-        # ~15 CRS rules (SQLi, XSS, LFI, etc.) keep blocking normally.
+        # Two body rules are downgraded to Count because both produce false
+        # positives on legitimate LLM payloads; every other CRS rule (SQLi, LFI,
+        # RCE, etc.) keeps blocking normally.
+        #
+        # 1. SizeRestrictions_BODY: fixed 8KB blocking threshold, tripped by any
+        #    tool-calling call with ~16+ tool schemas (see the block comment above).
+        #
+        # 2. CrossSiteScripting_BODY: inspects the request body for HTML/JS markup.
+        #    For this gateway the body is a chat-completions prompt (JSON prompt
+        #    data forwarded to Bedrock, never rendered as HTML), so any prompt
+        #    carrying angle brackets, code, or markdown — e.g. the "generate a 2x2"
+        #    prompt that embeds free-form customer notes — matches and returns
+        #    403 {"message":"Forbidden"} BEFORE the request ever reaches the
+        #    authorizer or the Lambda. XSS-in-body detection is meaningless for a
+        #    JSON->LLM API, so it is downgraded to Count rather than left to block
+        #    real traffic.
         rule_action_override {
           name = "SizeRestrictions_BODY"
+          action_to_use {
+            count {}
+          }
+        }
+        rule_action_override {
+          name = "CrossSiteScripting_BODY"
           action_to_use {
             count {}
           }
