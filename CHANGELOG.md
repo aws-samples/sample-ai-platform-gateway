@@ -12,6 +12,35 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-19
+
+An optional second model transport: the router can now reach Anthropic models through an
+Amazon Bedrock AgentCore Gateway, selected per route with the `bedrock_gateway` provider,
+alongside the existing direct `bedrock` provider. It is off by default and changes nothing
+for a deployment that does not enable it.
+
+### Added
+
+- **AgentCore Gateway transport (`bedrock_gateway` provider).** A route can now be served
+  through an Amazon Bedrock AgentCore Gateway instead of calling Bedrock directly. Terraform
+  creates the gateway with two targets — a `bedrock-mantle` target for versionless Anthropic
+  model ids and a `bedrock-runtime` target for the geo-prefixed inference profiles — and the
+  router picks the target from the model id. Inbound auth is `AWS_IAM`, so the router signs
+  with the deployment's own credentials and no bearer token is stored anywhere. Every route
+  on the existing `bedrock` provider is unchanged.
+
+### Upgrade notes
+
+- **New and optional; off unless you turn it on.** The module variable
+  `agentcore_gateway_enabled` defaults to `false`, so a deployment that never sets it is
+  byte-identical to one without this feature. Enabling it also requires wiring an
+  `aws.agentcore` provider alias and setting `agentcore_gateway_region` — deliberately
+  independent of the deployment region, because the model catalog behind the gateway differs
+  by region. The bundled `poc` environment opts in.
+- **The gateway adds its own per-request charge** on top of the model call, and it is an
+  alternative door to models the `bedrock` provider already reaches (it reaches fewer of
+  them), so turning it on is a deliberate choice rather than a default.
+
 ## [1.3.0] - 2026-09-16
 
 Reasoning models are now first-class: their chain of thought reaches the client, the silence
