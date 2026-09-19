@@ -99,3 +99,27 @@ variable "response_streaming" {
   type    = bool
   default = true
 }
+
+variable "agentcore_gateway_enabled" {
+  type = bool
+  # This poc environment DOES run the AgentCore Gateway (the demo uses provider
+  # "bedrock_gateway" routes), so the env opts in here. The reusable module in ../../tf
+  # keeps its own default at false — turning the gateway on is this environment's
+  # deliberate choice, not the module's. Kept in tracked config on purpose: the gateway
+  # used to be enabled only via an out-of-band -var/TF_VAR at apply time, so any plain
+  # `terraform apply` planned to DESTROY the live gateway (count -> 0). Declaring it true
+  # here makes the tracked state match what is deployed.
+  default     = true
+  description = "Create the optional AgentCore Gateway and enable provider bedrock_gateway routes. This poc env opts in; the module default stays false."
+}
+
+variable "agentcore_gateway_region" {
+  type        = string
+  default     = "us-east-1"
+  description = <<-EOT
+    Region for the AgentCore Gateway. Must stay in sync with the aws.agentcore provider in
+    providers.tf — they are two places that read the same variable precisely so they cannot
+    disagree. us-east-1 by default because that is where the gateway serves a full Anthropic
+    ladder; us-west-2 serves only claude-haiku-4-5.
+  EOT
+}

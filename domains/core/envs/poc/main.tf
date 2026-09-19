@@ -4,7 +4,11 @@
 # Core domain — poc environment (thin wrapper around the domains/core/tf module).
 # backend.tf, providers.tf, versions.tf and variables.tf stay in the env.
 module "domain" {
-  source      = "../../tf"
+  source = "../../tf"
+  providers = {
+    aws           = aws
+    aws.agentcore = aws.agentcore
+  }
   project     = var.project
   environment = var.environment
   region      = var.region
@@ -33,4 +37,11 @@ module "domain" {
   # stayed BUFFERED while the timeout was raised to 900000, and the provider rejected
   # the pair. The rejection was correct and cost nothing, but the cause was here.
   response_streaming = var.response_streaming
+
+  # Optional AgentCore Gateway transport. Same forwarding rule as above: the region has to
+  # travel with the flag, and it has to match the aws.agentcore provider's region or the
+  # router will sign for one region and call another — which the service rejects as if the
+  # credentials were wrong.
+  agentcore_gateway_enabled = var.agentcore_gateway_enabled
+  agentcore_gateway_region  = var.agentcore_gateway_region
 }

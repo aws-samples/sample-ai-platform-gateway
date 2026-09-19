@@ -333,6 +333,23 @@ const I18N={
     'Allowed IP ranges in CIDR (unavailable — preview)':'Faixas de IP permitidas em CIDR (indisponível — preview)',
     'Allowed models':'Modelos permitidos',
     'Amazon Bedrock (your AWS account)':'Amazon Bedrock (sua conta AWS)',
+    'Amazon Bedrock AgentCore Gateway (managed transport)':'Amazon Bedrock AgentCore Gateway (transporte gerenciado)',
+    'AWS manages the transport: one endpoint, model-based routing and egress credentials. The catalog is the gateway\'s, which is smaller than Bedrock\'s — Amazon Nova, Meta Llama and the older Claude generations are not reachable this way, and neither are embeddings.':'A AWS gerencia o transporte: um endpoint, roteamento por modelo e credenciais de saída. O catálogo é o do gateway, menor que o do Bedrock — Amazon Nova, Meta Llama e as gerações antigas do Claude não são alcançáveis por aqui, nem embeddings.',
+    'Gateway endpoint':'Endpoint do gateway',
+    'Model id at the gateway':'ID do modelo no gateway',
+    '(target-qualified)':'(qualificado pelo target)',
+    'Get the endpoint from <code>terraform output agentcore_gateway_url</code> in the core domain. The region above signs the request and must match the one in the endpoint.':'Pegue o endpoint com <code>terraform output agentcore_gateway_url</code> no domínio core. A região acima assina a requisição e precisa ser a mesma do endpoint.',
+    'Extended thinking':'Raciocínio estendido',
+    'budget — Haiku 4.5':'budget — Haiku 4.5',
+    'adaptive — Sonnet 5, Opus 4.7+':'adaptive — Sonnet 5, Opus 4.7+',
+    'The two thinking shapes are mutually exclusive per model and the wrong one is rejected outright — plain requests keep working while every reasoning request fails. The gateway also charges its own per-request fee, which is <b>not</b> included in the prices above.':'As duas formas de raciocínio são mutuamente exclusivas por modelo e a errada é rejeitada de imediato — requisições comuns continuam funcionando enquanto toda requisição de raciocínio falha. O gateway também cobra uma taxa própria por requisição, que <b>não</b> está incluída nos preços acima.',
+    'fill in alias, endpoint and model id':'preencha alias, endpoint e id do modelo',
+    'the gateway rejects a model id containing ":" — use the versionless family id':'o gateway rejeita id de modelo com ":" — use o id da família, sem versão',
+    'the region does not match the endpoint — signing would fail':'a região não corresponde ao endpoint — a assinatura falharia',
+    'Which extended-thinking request shape this model accepts. The two are mutually exclusive and the wrong one is rejected outright: plain requests keep working while every reasoning request fails. Haiku 4.5 and older take budget; Sonnet 5 and Opus 4.7 or newer take adaptive. Click to switch, then Save.':'Qual forma de requisição de raciocínio estendido este modelo aceita. As duas são mutuamente exclusivas e a errada é rejeitada de imediato: requisições comuns continuam funcionando enquanto toda requisição de raciocínio falha. Haiku 4.5 e anteriores usam budget; Sonnet 5 e Opus 4.7 ou mais novos usam adaptive. Clique para trocar e depois Salvar.',
+    'thinking:':'raciocínio:',
+    'budget':'budget',
+    'adaptive':'adaptive',
     'Amount':'Valor',
     'An aggregator routes internally to varying upstreams and may serve a different version or quantization between requests. It never joins an identity group, because the no-quality-risk promise would be false there.':'Um agregador roteia internamente para upstreams variáveis e pode servir outra versão ou quantização entre requisições. Ele nunca entra num grupo de identidade, porque a promessa de "sem risco de qualidade" seria falsa ali.',
     'An extra code from your authenticator app (Google Authenticator, 1Password, Authy) on every login.':'Um código extra do seu app autenticador (Google Authenticator, 1Password, Authy) a cada login.',
@@ -1165,6 +1182,23 @@ const I18N={
     'Allowed IP ranges in CIDR (unavailable — preview)':'Rangos de IP permitidos en CIDR (no disponible — preview)',
     'Allowed models':'Modelos permitidos',
     'Amazon Bedrock (your AWS account)':'Amazon Bedrock (tu cuenta AWS)',
+    'Amazon Bedrock AgentCore Gateway (managed transport)':'Amazon Bedrock AgentCore Gateway (transporte gestionado)',
+    'AWS manages the transport: one endpoint, model-based routing and egress credentials. The catalog is the gateway\'s, which is smaller than Bedrock\'s — Amazon Nova, Meta Llama and the older Claude generations are not reachable this way, and neither are embeddings.':'AWS gestiona el transporte: un endpoint, enrutamiento por modelo y credenciales de salida. El catálogo es el del gateway, más pequeño que el de Bedrock — Amazon Nova, Meta Llama y las generaciones antiguas de Claude no son alcanzables por aquí, ni tampoco los embeddings.',
+    'Gateway endpoint':'Endpoint del gateway',
+    'Model id at the gateway':'ID del modelo en el gateway',
+    '(target-qualified)':'(cualificado por el target)',
+    'Get the endpoint from <code>terraform output agentcore_gateway_url</code> in the core domain. The region above signs the request and must match the one in the endpoint.':'Obtén el endpoint con <code>terraform output agentcore_gateway_url</code> en el dominio core. La región de arriba firma la solicitud y debe coincidir con la del endpoint.',
+    'Extended thinking':'Razonamiento extendido',
+    'budget — Haiku 4.5':'budget — Haiku 4.5',
+    'adaptive — Sonnet 5, Opus 4.7+':'adaptive — Sonnet 5, Opus 4.7+',
+    'The two thinking shapes are mutually exclusive per model and the wrong one is rejected outright — plain requests keep working while every reasoning request fails. The gateway also charges its own per-request fee, which is <b>not</b> included in the prices above.':'Las dos formas de razonamiento son mutuamente excluyentes por modelo y la incorrecta se rechaza de inmediato — las solicitudes normales siguen funcionando mientras toda solicitud de razonamiento falla. El gateway también cobra una tarifa propia por solicitud, que <b>no</b> está incluida en los precios de arriba.',
+    'fill in alias, endpoint and model id':'completa alias, endpoint e id del modelo',
+    'the gateway rejects a model id containing ":" — use the versionless family id':'el gateway rechaza un id de modelo con ":" — usa el id de familia, sin versión',
+    'the region does not match the endpoint — signing would fail':'la región no coincide con el endpoint — la firma fallaría',
+    'Which extended-thinking request shape this model accepts. The two are mutually exclusive and the wrong one is rejected outright: plain requests keep working while every reasoning request fails. Haiku 4.5 and older take budget; Sonnet 5 and Opus 4.7 or newer take adaptive. Click to switch, then Save.':'Qué forma de solicitud de razonamiento extendido acepta este modelo. Las dos son mutuamente excluyentes y la incorrecta se rechaza de inmediato: las solicitudes normales siguen funcionando mientras toda solicitud de razonamiento falla. Haiku 4.5 y anteriores usan budget; Sonnet 5 y Opus 4.7 o más nuevos usan adaptive. Haz clic para cambiar y luego Guardar.',
+    'thinking:':'razonamiento:',
+    'budget':'budget',
+    'adaptive':'adaptive',
     'Amount':'Monto',
     'An aggregator routes internally to varying upstreams and may serve a different version or quantization between requests. It never joins an identity group, because the no-quality-risk promise would be false there.':'Un agregador enruta internamente a upstreams variables y puede servir otra versión o cuantización entre solicitudes. Nunca entra en un grupo de identidad, porque ahí la promesa de "sin riesgo de calidad" sería falsa.',
     'An extra code from your authenticator app (Google Authenticator, 1Password, Authy) on every login.':'Un código extra de tu app de autenticación (Google Authenticator, 1Password, Authy) en cada inicio de sesión.',
@@ -3261,10 +3295,11 @@ $('#mcAdd').onclick=()=>{
   $('#mcAlias').value = '';  // cleared for the next one
   RENDER.models();
 };
-// Model type selector: external · internal · bedrock
+// Model type selector: external · internal · bedrock · agentcore gateway
 function showAdd(which){
-  [['externo','#addExterno'],['interno','#addInterno'],['bedrock','#addBedrock']].forEach(([k,sel])=>{
+  [['externo','#addExterno'],['interno','#addInterno'],['bedrock','#addBedrock'],['agentcore','#addAgentcore']].forEach(([k,sel])=>{
     const el=$(sel); if(el) el.classList.toggle('hidden',k!==which); });
+  if(which==='agentcore') setupAgentcore();
   if(which==='bedrock') setupBedrockByo(); // Bedrock is always BYO: prepare the customer-account fields
   $$('.addchooser').forEach(b=>{ const on=b.dataset.add===which;
     b.classList.toggle('border-brand',on); b.classList.toggle('text-brand',on);
@@ -3512,9 +3547,21 @@ function renderRouteList(){
     else badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-line text-mut">'+esc(_t('fallback'))+' #'+i+'</span>');
     if(!caps.tool_use) badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-amber-500 text-amber-400" title="'+esc(_t('does not accept requests with tools'))+'">'+esc(_t('no tool use'))+'</span>');
     // Prefix cache (prompt caching): per-route toggle, only where the provider supports it.
-    if(route.provider==='bedrock'||route.provider==='anthropic'){
+    // bedrock_gateway belongs here too: it speaks the Anthropic Messages dialect, so the
+    // cache_control block works and the counters come back — measured on a live route,
+    // the ledger recorded savings_class "verified". Leaving it out of this list would hide
+    // a toggle that does work, which reads as "the gateway route cannot cache".
+    if(route.provider==='bedrock'||route.provider==='anthropic'||route.provider==='bedrock_gateway'){
       const pc=!!route.prompt_cache;
       badges.push(`<button data-pc="${name}" class="text-[10px] px-2 py-0.5 rounded-full border ${pc?'border-brand text-brand':'border-line text-mut'}" title="${esc(_t('Provider prompt caching. The gateway marks the end of the system message to cache the stable prefix: later reads with the same prefix cost ~90% less. The first write charges a small premium, so it only pays off when the system message repeats. Click to turn it on/off, then Save.'))}">⚡ ${esc(_t('prefix cache:'))} ${esc(pc?_t('on'):_t('off'))}</button>`);
+    }
+    // Extended-thinking shape, on the routes whose adapter honours it. NOT shown for the
+    // `bedrock` provider: it sends the budget shape through additionalModelRequestFields and
+    // has no adaptive path, so the control would be inert — a toggle that does nothing is
+    // worse than no toggle.
+    if(route.provider==='bedrock_gateway'||route.provider==='anthropic'){
+      const adaptive=route.reasoning_style==='adaptive';
+      badges.push(`<button data-rs="${name}" class="text-[10px] px-2 py-0.5 rounded-full border ${adaptive?'border-brand2 text-brand2':'border-line text-mut'}" title="${esc(_t('Which extended-thinking request shape this model accepts. The two are mutually exclusive and the wrong one is rejected outright: plain requests keep working while every reasoning request fails. Haiku 4.5 and older take budget; Sonnet 5 and Opus 4.7 or newer take adaptive. Click to switch, then Save.'))}">🧠 ${esc(_t('thinking:'))} ${esc(adaptive?_t('adaptive'):_t('budget'))}</button>`);
     }
     row.innerHTML=`
       <div class="cursor-grab select-none text-mut text-lg leading-none shrink-0" title="${esc(_t('drag to reorder'))}" aria-hidden="true">⠿</div>
@@ -3538,6 +3585,19 @@ function renderRouteList(){
     if(!CFG_RAW.routing) CFG_RAW.routing={};
     if(!CFG_RAW.routing[m]) CFG_RAW.routing[m]=r;
     CFG_RAW.routing[m].prompt_cache=nv;
+    RENDER.models();
+  });
+
+  // extended-thinking shape toggle, per route. Two states and not three: an absent value
+  // already MEANS budget in the adapter, so writing it explicitly on the first click makes
+  // the config say what the behaviour already is instead of leaving it implied.
+  $$('[data-rs]',box).forEach(b=>b.onclick=()=>{
+    const m=b.dataset.rs, r=CFG.routing&&CFG.routing[m]; if(!r) return;
+    const nv=r.reasoning_style==='adaptive'?'budget':'adaptive';
+    r.reasoning_style=nv;
+    if(!CFG_RAW.routing) CFG_RAW.routing={};
+    if(!CFG_RAW.routing[m]) CFG_RAW.routing[m]=r;
+    CFG_RAW.routing[m].reasoning_style=nv;
     RENDER.models();
   });
 
@@ -3886,12 +3946,14 @@ function wzShortModel(m){ return (m.split('/').pop()||'model').replace(/:.*$/,''
 (function(){ const sel=$('#provPick'); if(!sel) return;
   Object.entries(EXT_PROVIDERS).forEach(([k,v])=>{const o=document.createElement('option');o.value='ext:'+k;o.textContent=v.label;sel.appendChild(o);});
   const ob=document.createElement('option'); ob.value='bedrock'; ob.textContent=_t('Amazon Bedrock (your AWS account)'); sel.appendChild(ob);
+  const og=document.createElement('option'); og.value='agentcore'; og.textContent=_t('Amazon Bedrock AgentCore Gateway (managed transport)'); sel.appendChild(og);
   const os=document.createElement('option'); os.value='selfhost'; os.textContent=_t('Your own endpoint (vLLM/Ollama/Azure…)'); sel.appendChild(os);
 })();
 $('#provPick')&&($('#provPick').onchange=function(){
   const v=this.value;
   if(!v){ showAdd('none'); return; }
   if(v==='bedrock'){ showAdd('bedrock'); return; }
+  if(v==='agentcore'){ showAdd('agentcore'); return; }
   if(v==='selfhost'){ showAdd('interno'); return; }
   if(v.startsWith('ext:')){ showAdd('externo'); const w=$('#wzProvider'); if(w){ w.value=v.slice(4); w.dispatchEvent(new Event('change')); } }
 });
@@ -3949,6 +4011,96 @@ $('#wzAdd')&&($('#wzAdd').onclick=async()=>{
   addLocalModel(alias,route,{input:0,output:0},defaultCaps({tool_use:true}));
   await saveConfig(m,['routing','pricing','allowed_models','model_order']);
   m.className='text-[11px] text-brand'; m.textContent='✓ "'+alias+'" '+_t('connected to')+' '+p.label+'. '+_t('Try it in the Playground (turn auto-cheapest off to force this model).');
+  RENDER.models();
+});
+
+// ---- Amazon Bedrock AgentCore Gateway ----
+//
+// Model ids that are KNOWN to work through the gateway's Anthropic-dialect path, grouped by
+// the target that serves them. Offered as a datalist rather than a closed select because the
+// gateway's catalog moves and the target names are chosen by whoever ran the Terraform — a
+// closed list would go stale and block a model that works. The datalist makes the two
+// non-obvious things visible: the id is target-qualified, and Haiku lives on a different
+// target than the rest.
+//
+// Deliberately NOT a fetch from the gateway: listing its models needs a SigV4-signed call,
+// which the browser cannot make. Doing it properly means an admin-api endpoint, and that is
+// the obvious next step rather than something to fake here with a hardcoded full catalog.
+const AGENTCORE_MODELS = {
+  mantle: [
+    'anthropic.claude-haiku-4-5',
+    'anthropic.claude-sonnet-5',
+    'anthropic.claude-opus-4-7',
+    'anthropic.claude-opus-4-8',
+    'anthropic.claude-opus-5',
+  ],
+  runtime: [
+    'us.anthropic.claude-sonnet-5',
+    'us.anthropic.claude-opus-4-7',
+    'us.anthropic.claude-opus-4-8',
+    'us.anthropic.claude-opus-5',
+    'global.anthropic.claude-opus-4-8',
+    'global.anthropic.claude-opus-5',
+  ],
+};
+// Which thinking shape each family takes. Measured against the live gateway: the two shapes
+// are mutually exclusive, so this is a lookup and not a default.
+function agThinkFor(modelId){
+  return /claude-haiku/.test(modelId||'') ? 'budget' : 'adaptive';
+}
+function setupAgentcore(){
+  const dl=$('#agModelOpts'); if(!dl) return;
+  dl.innerHTML=Object.entries(AGENTCORE_MODELS)
+    .flatMap(([target,ids])=>ids.map(id=>`<option value="${esc(target+'/'+id)}">`)).join('');
+  // Prefill the endpoint from a route that already uses the gateway, so the second model
+  // does not require pasting the URL again — and cannot disagree with the first.
+  const ex=Object.values((CFG&&CFG.routing)||{}).find(r=>r&&r.provider==='bedrock_gateway');
+  if(ex){
+    if(!$('#agBase').value && ex.base_url) $('#agBase').value=ex.base_url;
+    if(ex.region) $('#agRegion').value=ex.region;
+  }
+}
+// Keep the thinking shape in step with the model id as it is typed. It is still a select the
+// operator can override: the mapping is what I measured today, not a guarantee about a model
+// that ships tomorrow.
+$('#agModel')&&($('#agModel').oninput=()=>{
+  const t=$('#agThink'); if(t) t.value=agThinkFor($('#agModel').value);
+});
+$('#agAdd')&&($('#agAdd').onclick=()=>{
+  const alias=$('#agAlias').value.trim(), model=$('#agModel').value.trim(), base=$('#agBase').value.trim();
+  const m=$('#agMsg');
+  if(!alias||!model||!base){ m.className='text-xs text-amber-400'; m.textContent=_t('fill in alias, endpoint and model id'); return; }
+  // The gateway rejects a model id containing ':' outright, so catch it here rather than
+  // letting every request to this route fail with a validation error from the service.
+  if(model.includes(':')){ m.className='text-xs text-amber-400'; m.textContent=_t('the gateway rejects a model id containing ":" — use the versionless family id'); return; }
+  const region=$('#agRegion').value;
+  // A signing region that disagrees with the endpoint is rejected as if the credentials were
+  // wrong, so it is worth refusing here instead of shipping a route that 403s.
+  if(base.includes('.bedrock-agentcore.') && !base.includes('.bedrock-agentcore.'+region+'.')){
+    m.className='text-xs text-amber-400';
+    m.textContent=_t('the region does not match the endpoint — signing would fail');
+    return;
+  }
+  CFG.routing=CFG.routing||{};
+  const route={
+    provider:'bedrock_gateway', provider_model_id:model, base_url:base, region:region,
+    reasoning_style:$('#agThink').value, prompt_cache:true, kind:'external', fallback:[],
+  };
+  addLocalModel(alias,route,
+    {input:Number($('#agIn').value)||0, output:Number($('#agOut').value)||0},
+    defaultCaps({
+      tool_use:   $('#agTool').value==='1',
+      multimodal: $('#agMulti').value==='1',
+      // Every Claude the gateway serves does extended thinking, and the shape is declared
+      // above — so reasoning is on by default here, unlike a hand-added endpoint where we
+      // cannot know.
+      reasoning:  true,
+      tier:       $('#agTier').value,
+      context_window_tokens: 200000,
+    }));
+  if(Array.isArray(CFG.allowed_models) && CFG.allowed_models.length) CFG.allowed_models.push(alias);
+  m.className='text-xs text-brand'; m.textContent='"'+alias+'" → '+model+' — '+_t('click Save.');
+  ['agAlias','agModel'].forEach(i=>{ const el=$('#'+i); if(el) el.value=''; });
   RENDER.models();
 });
 
@@ -4678,7 +4830,7 @@ $('#kCopy').onclick=()=>{ navigator.clipboard.writeText($('#kNewVal').textConten
 // Credit is BALANCE, not a discount. The balance shown is ESTIMATED and is a lower bound
 // of real consumption (we only see what passes through the gateway), which is why the screen is obliged
 // to say so and to offer manual correction.
-const PROVIDER_LABEL={bedrock:'Amazon Bedrock',openai_compatible:'OpenAI / compatible',anthropic:'Anthropic',google:'Google Gemini'};
+const PROVIDER_LABEL={bedrock:'Amazon Bedrock',bedrock_gateway:'Amazon Bedrock AgentCore Gateway',openai_compatible:'OpenAI / compatible',anthropic:'Anthropic',google:'Google Gemini'};
 
 // Only offers providers the org actually uses: the consumption counter is keyed
 // by the route's provider, so an unused provider would never accumulate anything.

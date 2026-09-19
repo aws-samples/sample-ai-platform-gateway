@@ -6,3 +6,6 @@ output "api_keys_table" { value = module.domain.api_keys_table }
 output "cache_table" { value = module.domain.cache_table }
 output "router_fn" { value = module.domain.router_fn }
 output "keyadmin_endpoint" { value = module.domain.keyadmin_endpoint }
+output "agentcore_gateway_url" { value = module.domain.agentcore_gateway_url }
+output "agentcore_gateway_id" { value = module.domain.agentcore_gateway_id }
+output "agentcore_gateway_region" { value = module.domain.agentcore_gateway_region }

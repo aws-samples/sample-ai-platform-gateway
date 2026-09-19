@@ -33,6 +33,7 @@ import (
 
 	"github.com/aiplat/core/internal/adapters/anthropic"
 	"github.com/aiplat/core/internal/adapters/bedrock"
+	"github.com/aiplat/core/internal/adapters/bedrockgateway"
 	"github.com/aiplat/core/internal/adapters/ddbhints"
 	"github.com/aiplat/core/internal/adapters/google"
 	"github.com/aiplat/core/internal/adapters/openaicompat"
@@ -70,6 +71,17 @@ type Route struct {
 	// pays off when the system prefix repeats across requests. The adapter marks the
 	// end of the system block with a cache point when this is true.
 	PromptCache bool `json:"prompt_cache,omitempty"`
+
+	// ReasoningStyle declares which extended-thinking REQUEST SHAPE this model accepts:
+	// "budget" (default) or "adaptive". Anthropic-dialect routes only.
+	//
+	// It is declared rather than inferred because the two shapes are mutually exclusive and
+	// sending the wrong one is a hard 400, not a degraded answer. Measured on the same
+	// gateway: claude-haiku-4-5 accepts only "budget", claude-sonnet-5 and claude-opus-4-8
+	// accept only "adaptive". Nothing in the model id separates them, so a route that leaves
+	// this blank on an adaptive-only model gets a 502 on every reasoning request while plain
+	// requests keep working — which is exactly how it was found.
+	ReasoningStyle string `json:"reasoning_style,omitempty"`
 
 	// Capabilities feeds the routing eligibility filter. Absence counts as
 	// incapable of tool use and multimodal — deliberately conservative, so we do
@@ -274,6 +286,13 @@ func (c *Config) allowed(model string) bool {
 var (
 	// bedrockPool resolves/caches Bedrock clients (pooled or cross-account role).
 	bedrockPool *bedrock.Pool
+
+	// gatewaySigner signs calls to Amazon Bedrock AgentCore Gateway (SigV4, service
+	// bedrock-agentcore). Concrete-typed like bedrockPool and for the same reason: request
+	// signing is transport plumbing for one provider, not a boundary with alternative
+	// implementations to substitute. nil = no bedrock_gateway route can be built, which
+	// providerFor reports as an error rather than sending an unsigned request.
+	gatewaySigner bedrockgateway.Signer
 
 	// Typed as PORTS (not the concrete adapters): that is what allows injecting an
 	// in-memory double in the orchestration test (R3.2) and what keeps the handler
@@ -792,10 +811,31 @@ func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
 			Route:       bedrock.Route{RoleARN: r.RoleARN, ExternalID: ext, Region: r.Region},
 			CachePrefix: r.PromptCache,
 		}
+	case "bedrock_gateway":
+		// Amazon Bedrock AgentCore Gateway. Deliberately NOT folded into the "bedrock"
+		// case: it is a different endpoint, a different signing service, a different model
+		// catalog and a different credential model (the gateway's own execution role does
+		// the model call, so there is no per-route AssumeRole and no BYO Bedrock here).
+		// Sharing one case would hide all four behind whether role_arn happened to be set.
+		gp, err := bedrockgateway.New(httpc, gatewaySigner, bedrockgateway.Route{
+			BaseURL:        r.BaseURL,
+			Region:         r.Region,
+			ModelID:        r.ProviderModelID,
+			PromptCache:    r.PromptCache,
+			ReasoningStyle: r.ReasoningStyle,
+		})
+		if err != nil {
+			return nil, err
+		}
+		p = gp
 	case "openai_compatible":
 		p = &openaicompat.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret)}
 	case "anthropic":
-		p = &anthropic.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret), CachePrefix: r.PromptCache}
+		// ReasoningStyle is forwarded here too: the same model-family API change reaches
+		// Anthropic's own endpoint, so a native route to a newer model needs the adaptive
+		// shape for exactly the same reason. Blank keeps the original behaviour.
+		p = &anthropic.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret), CachePrefix: r.PromptCache,
+			Transport: anthropic.Transport{ReasoningStyle: r.ReasoningStyle}}
 	case "google", "gemini":
 		p = &google.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret)}
 	default:
@@ -2655,15 +2695,18 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 // get-a-list-of-vectors.
 type Deps struct {
 	BedrockPool *bedrock.Pool
-	Config      ports.ConfigStore
-	Cache       ports.Cache
-	Sem         ports.SemIndex
-	Embedder    ports.Embedder
-	Limits      ports.LimitsStore
-	Usage       ports.UsageSink
-	Secrets     ports.SecretStore
-	Keys        ports.KeyStore
-	Hints       *ddbhints.Reader // nil = hints unavailable; the decision falls back to the heuristic
+	// GatewaySigner signs AgentCore Gateway calls. Optional: leaving it nil disables the
+	// bedrock_gateway provider and changes nothing else.
+	GatewaySigner bedrockgateway.Signer
+	Config        ports.ConfigStore
+	Cache         ports.Cache
+	Sem           ports.SemIndex
+	Embedder      ports.Embedder
+	Limits        ports.LimitsStore
+	Usage         ports.UsageSink
+	Secrets       ports.SecretStore
+	Keys          ports.KeyStore
+	Hints         *ddbhints.Reader // nil = hints unavailable; the decision falls back to the heuristic
 
 	// Org is the deployment's single org (DEPLOYMENT_ORG / Contract of Environment).
 	// It is NOT used for config scoping here (ConfigStore already carries it) — the
@@ -2679,6 +2722,7 @@ type Deps struct {
 // characterization tests swap individual seams and this keeps their surface intact.
 func Wire(d Deps) {
 	bedrockPool = d.BedrockPool
+	gatewaySigner = d.GatewaySigner
 	configStore = d.Config
 	cacheStore = d.Cache
 	semIndex = d.Sem

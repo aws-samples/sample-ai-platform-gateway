@@ -35,6 +35,86 @@ type Adapter struct {
 	// per-route opt-in as Bedrock's (config.routing[model].prompt_cache) — the
 	// cache-write charges a premium and only pays off when the prefix repeats.
 	CachePrefix bool
+
+	// Transport overrides the HTTP details for a host that speaks this SAME dialect
+	// behind a different door. Zero value = Anthropic's own API, unchanged.
+	Transport Transport
+}
+
+// SignFunc signs an outbound request in place. payload is the exact body being sent,
+// which SigV4 needs to hash — reading it back off req.Body would consume it.
+type SignFunc func(ctx context.Context, req *http.Request, payload []byte) error
+
+// Transport is the set of HTTP-level differences between hosts that speak the Messages
+// API. It exists so that a second such host reuses this package's TRANSLATION rather
+// than copying it.
+//
+// The translation is the expensive, subtle part: the tool-result grouping rule, the
+// per-type content-block dispatch, the two-event streaming usage accounting, the
+// cache_control placement. Amazon Bedrock AgentCore Gateway speaks exactly that dialect
+// and differs only in where the request goes and how it is authenticated. Duplicating
+// ~600 lines to change a URL and an auth header would guarantee the two copies drift,
+// and the drift would be silent: a request that is merely IGNORED by the provider still
+// returns a plausible answer, which is precisely the class of bug this package's own
+// history records (the OpenAI dialect was being sent here and quietly discarded).
+type Transport struct {
+	// Path is the endpoint path appended to BaseURL. Empty = "/v1/messages".
+	Path string
+	// ReasoningStyle selects which extended-thinking request shape this MODEL accepts.
+	// Empty = ReasoningStyleBudget. See the constants for why this cannot be inferred.
+	ReasoningStyle string
+	// BodyVersion, when non-empty, sends `anthropic_version` in the BODY and omits the
+	// `anthropic-version` HEADER. Anthropic's own API takes the header; the Bedrock
+	// family requires the field in the body and rejects a request without it
+	// ("anthropic_version: Field required"). They are mutually exclusive, not additive.
+	BodyVersion string
+	// Sign replaces API-key auth. Non-nil means the request is signed and no `x-api-key`
+	// header is set; a host reached this way has no API key to send.
+	Sign SignFunc
+	// Label names the provider in error messages. Empty = "anthropic". A gateway route
+	// failing with "anthropic 403" would send whoever reads the log to the wrong service.
+	Label string
+}
+
+// Extended-thinking request shapes. They are MUTUALLY EXCLUSIVE per model, which is why
+// this is a declaration and not a default: sending the wrong one is a hard 400, so neither
+// can be used blindly.
+//
+// Measured through Amazon Bedrock AgentCore Gateway on 2026-09-16:
+//
+//	model          thinking.enabled+budget          thinking.adaptive+effort
+//	haiku-4-5      thinking block, 139 tokens       400 "adaptive thinking is not supported"
+//	sonnet-5       400 "not supported for this      thinking block, 27 tokens
+//	               model. Use thinking.type.
+//	               adaptive and output_config.
+//	               effort"
+//	opus-4-8       400 (same)                       thinking block, 45 tokens
+//
+// Nothing in the model id makes the split derivable — it tracks a model-family API change,
+// not a naming rule — so guessing from the string would break on the next model either way.
+const (
+	// ReasoningStyleBudget sends thinking:{type:"enabled",budget_tokens:N}. The original
+	// shape, and what Anthropic's own API and the older Bedrock models take.
+	ReasoningStyleBudget = "budget"
+	// ReasoningStyleAdaptive sends thinking:{type:"adaptive"} plus, when the client named
+	// one, output_config:{effort:...}. The model decides how much to think.
+	ReasoningStyleAdaptive = "adaptive"
+)
+
+// path returns the endpoint path for this transport.
+func (t Transport) path() string {
+	if t.Path == "" {
+		return "/v1/messages"
+	}
+	return t.Path
+}
+
+// label returns the provider name used in error messages.
+func (t Transport) label() string {
+	if t.Label == "" {
+		return "anthropic"
+	}
+	return t.Label
 }
 
 var _ ports.Provider = (*Adapter)(nil) // compile-time assertion
@@ -235,7 +315,7 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return ports.Result{}, fmt.Errorf("anthropic %d: %s", resp.StatusCode, string(body))
+		return ports.Result{}, fmt.Errorf("%s %d: %s", a.Transport.label(), resp.StatusCode, string(body))
 	}
 	var d struct {
 		Content []struct {
@@ -259,7 +339,7 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &d); err != nil || len(d.Content) == 0 {
-		return ports.Result{}, fmt.Errorf("bad anthropic response")
+		return ports.Result{}, fmt.Errorf("bad %s response", a.Transport.label())
 	}
 	res := ports.Result{
 		InputTokens: d.Usage.InputTokens, OutputTokens: d.Usage.OutputTokens,

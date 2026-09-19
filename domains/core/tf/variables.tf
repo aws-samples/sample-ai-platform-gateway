@@ -116,3 +116,32 @@ variable "console_origin" {
   type        = string
   default     = ""
 }
+
+# --- Amazon Bedrock AgentCore Gateway (optional transport) ---
+
+variable "agentcore_gateway_enabled" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Create an AgentCore Gateway and grant the router InvokeGateway on it, enabling routes
+    with provider "bedrock_gateway". OFF by default: it is an alternative door to models the
+    "bedrock" provider already reaches directly, and it reaches FEWER of them (see
+    agentcore.tf). Turning it on costs the gateway's own per-request charge on top of the
+    model, so it has to be a deliberate choice.
+  EOT
+}
+
+variable "agentcore_gateway_region" {
+  type        = string
+  default     = "us-east-1"
+  description = <<-EOT
+    Region for the AgentCore Gateway. Deliberately independent of var.region: the model
+    catalog behind the gateway differs by region, and the deployment's own region may be one
+    where only a single Anthropic model is served — which would leave routing with nothing to
+    escalate to. Must match the region of the aws.agentcore provider alias the caller passes.
+  EOT
+  validation {
+    condition     = can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.agentcore_gateway_region))
+    error_message = "invalid region."
+  }
+}
