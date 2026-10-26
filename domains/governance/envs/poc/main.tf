@@ -45,12 +45,22 @@ variable "mfa_configuration" {
   default     = "ON"
 }
 variable "seed_user_password" {
-  description = "Initial password for the seeded platform_admin users. No default on purpose: any default committed here is published in the repo and would silently become the password of an account that can change budgets and read cost data. Set it via TF_VAR_seed_user_password."
+  description = "Initial password for the seeded platform_admin user (admin@aiplat.local). No default on purpose: any default committed here is published in the repo and would silently become the password of an account that can change budgets and read cost data. Set it via TF_VAR_seed_user_password."
   type        = string
   sensitive   = true
   validation {
     condition     = length(var.seed_user_password) >= 16
     error_message = "seed_user_password must be at least 16 characters."
+  }
+}
+
+variable "seed_demo_password" {
+  description = "Initial password for the seeded org-scoped demo admin (admin@xyzorg.local). Separate from seed_user_password so a leak of one seeded account does not compromise the other. No default on purpose. Set it via TF_VAR_seed_demo_password."
+  type        = string
+  sensitive   = true
+  validation {
+    condition     = length(var.seed_demo_password) >= 16
+    error_message = "seed_demo_password must be at least 16 characters."
   }
 }
 
@@ -71,6 +81,7 @@ module "domain" {
 
   cost_store_table   = var.cost_store_table
   seed_user_password = var.seed_user_password
+  seed_demo_password = var.seed_demo_password
 
   # MFA on the control-plane pool: ON by default (see the module for why).
   mfa_configuration = var.mfa_configuration
