@@ -204,12 +204,16 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	role := claim(req, "custom:role")
 	claimTeam := claim(req, "team")
 	appsClaim := claim(req, "apps")
-	// Per-team enforcement: a dev/billing user bound to one team only sees
-	// that team's usage. Owner/admin see the whole deployment.
+	// Who may read deployment-wide usage/cost: owner, admin, billing (the cost
+	// role) and the platform operator. Everyone else (e.g. dev) is confined to
+	// their own team/app scope and must carry one.
+	broadRead := role == "owner" || role == "admin" || role == "billing" || role == "platform_admin"
+	// privileged (owner/admin only) still gates the alert-history view below.
 	privileged := role == "owner" || role == "admin"
-	teamScoped := claimTeam != "" && !privileged
+	// A dev/billing user bound to one team only sees that team's usage.
+	teamScoped := claimTeam != "" && !broadRead
 	// Per-app scope: they only see their own apps' usage.
-	appScoped := appsClaim != "" && !privileged
+	appScoped := appsClaim != "" && !broadRead
 	appSet := map[string]bool{}
 	for _, a := range strings.Split(appsClaim, ",") {
 		if a = strings.TrimSpace(a); a != "" {
@@ -230,6 +234,12 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	// (config-api, keyadmin) dropped this same token for the same reason.
 	if role == "" {
 		return resp(reqOrigin, 401, map[string]string{"error": "unauthorized"})
+	}
+	// A non-broad role (e.g. dev) with no team and no app scope must not fall
+	// through to a deployment-wide read. Without a scope there is nothing it is
+	// authorized to see, so refuse rather than leak the whole deployment's usage.
+	if !broadRead && !teamScoped && !appScoped {
+		return resp(reqOrigin, 403, map[string]string{"error": "your role is limited to a team or app, but your token carries no team/app scope"})
 	}
 	now := time.Now().UTC()
 

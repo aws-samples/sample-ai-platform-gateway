@@ -345,6 +345,14 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			if app != "" && app != "default" && len(apps) > 0 && !apps[app] {
 				return resp(reqOrigin, 400, map[string]string{"error": "app does not exist — create the app under Teams & Apps before issuing the key"})
 			}
+			// The default app must also belong to the key's own team — the same rule
+			// applied to the extra apps below. An app carries its own config scope
+			// (APP#<app>), so a key pointing at another team's app would file spend and
+			// pick up limits under a scope its team does not own. This closes the former
+			// asymmetry where the single `app` field skipped the team-ownership gate.
+			if ot := appTeam[app]; ot != "" && team != "default" && ot != team {
+				return resp(reqOrigin, 400, map[string]string{"error": "a key can only attribute to its own team's apps: " + app + " belongs to " + ot + ", not " + team})
+			}
 			if len(apps) > 0 {
 				for _, a := range extraApps {
 					if a == "default" {
@@ -358,10 +366,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 					// granting another team's app would let this key file spend — and pick
 					// up limits — under a scope its team does not own.
 					//
-					// Applied to `apps` and deliberately NOT retrofitted onto the single
-					// `app` field: that one has keys in the field and console flows built
-					// around it, so tightening it is a separate change with its own
-					// blast radius. Asymmetry noted rather than hidden.
+					// Applied to BOTH the extra `apps` (here) and the single `app` field
+					// (checked above): an app-scoped caller may only attribute a key to
+					// apps that belong to the key's own team. The former asymmetry (single
+					// `app` skipping this gate) is now closed.
 					if ot := appTeam[a]; ot != "" && team != "default" && ot != team {
 						// Leading text is a COMPLETE phrase, not a fragment: the console
 						// renders backend errors through _terr() -> _t(), where the English

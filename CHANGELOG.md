@@ -12,6 +12,43 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-26
+
+Follow-up security hardening after the 1.5.0 fix for the cross-tenant escalation
+(SOC CloudOps TigerTeam-22377). These are defense-in-depth measures that reduce blast
+radius and close lower-severity gaps found in the same review; the core control that
+1.5.0 established (`write_attributes` on the console client) is unchanged.
+
+### Security
+
+- **The console app client sets `prevent_user_existence_errors = "ENABLED"`.** Sign-in,
+  forgot-password and confirmation now return a generic failure instead of distinguishing
+  "user does not exist" from "wrong password", so an unauthenticated caller can no longer
+  enumerate which e-mails are members of the pool.
+- **Seeded accounts no longer share a password.** `admin@aiplat.local` (platform_admin)
+  uses `seed_user_password`; `admin@xyzorg.local` (org admin) uses a new, separate
+  `seed_demo_password`. A leak of one seeded credential no longer compromises the other.
+- **The usage API refuses an unscoped read.** A non-broad role (e.g. `dev`) whose token
+  carries no team/app scope now receives `403` instead of falling through to a
+  deployment-wide view. `owner`, `admin`, `billing` and `platform_admin` keep the
+  deployment-wide view.
+- **Key issuance closes an app→team ownership gap.** The single `app` field on a new key
+  is now held to the same rule already applied to the additional `apps` list: an
+  app-scoped caller may only attribute a key to apps that belong to the key's own team.
+
+### Upgrade notes
+
+- **New required variable `seed_demo_password`** (governance, >= 16 chars). Set it via
+  `TF_VAR_seed_demo_password` alongside `TF_VAR_seed_user_password`. Applying this release
+  re-sets the `admin@xyzorg.local` password to the new value.
+- **`prevent_user_existence_errors` changes the error responses** of failed
+  sign-in/forgot-password. Any client that branched on the old
+  `UserNotFoundException` vs `NotAuthorizedException` distinction should stop doing so.
+- **Usage API:** a `dev` (or other non-broad role) with no team/app claim loses the
+  deployment-wide usage view (now `403`). Assign such members a team/app, or use an
+  owner/admin/billing token for org-wide cost.
+- **In-place updates only** — no user-pool recreation or data migration.
+
 ## [1.5.0] - 2026-10-26
 
 Closes a cross-tenant privilege escalation reported through the AWS Vulnerability Reporting

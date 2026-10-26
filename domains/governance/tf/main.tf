@@ -755,7 +755,14 @@ resource "aws_cognito_user_pool_client" "console" {
   # Without this list Cognito grants write access to ALL attributes, which is the
   # default that caused the escalation. Member role/org changes still go through
   # config-api using the Lambda's Admin* credentials, which are unaffected by this.
-  write_attributes       = ["email", "name"]
+  write_attributes = ["email", "name"]
+
+  # SECURITY: return a generic failure for sign-in, password reset and
+  # confirmation instead of distinguishing "user does not exist" from "wrong
+  # password". Without this, an unauthenticated caller can enumerate which
+  # e-mails are members of the pool from the different error responses.
+  prevent_user_existence_errors = "ENABLED"
+
   access_token_validity  = 8
   id_token_validity      = 8
   refresh_token_validity = 30
@@ -799,7 +806,10 @@ resource "aws_cognito_user" "platform" {
 resource "aws_cognito_user" "demo_org" {
   user_pool_id = aws_cognito_user_pool.cp.id
   username     = "admin@xyzorg.local"
-  password     = var.seed_user_password
+  # Distinct from the platform seed password: a leak of one seeded account must
+  # not hand over the other. The platform user is a cross-org super-admin, so it
+  # never shares a credential with the org-scoped demo admin.
+  password = var.seed_demo_password
   attributes = {
     email          = "admin@xyzorg.local"
     email_verified = true
@@ -811,12 +821,22 @@ resource "aws_cognito_user" "demo_org" {
 }
 
 variable "seed_user_password" {
-  description = "Initial password for the seeded platform_admin users. No default on purpose: any default committed here is published in the repo and would silently become the password of an account that can change budgets and read cost data. Set it via TF_VAR_seed_user_password."
+  description = "Initial password for the seeded platform_admin user (admin@aiplat.local). No default on purpose: any default committed here is published in the repo and would silently become the password of an account that can change budgets and read cost data. Set it via TF_VAR_seed_user_password."
   type        = string
   sensitive   = true
   validation {
     condition     = length(var.seed_user_password) >= 16
     error_message = "seed_user_password must be at least 16 characters."
+  }
+}
+
+variable "seed_demo_password" {
+  description = "Initial password for the seeded org-scoped demo admin (admin@xyzorg.local). Separate from seed_user_password on purpose: the two seeded accounts must not share a credential, so a leak of one does not compromise the other. No default on purpose. Set it via TF_VAR_seed_demo_password."
+  type        = string
+  sensitive   = true
+  validation {
+    condition     = length(var.seed_demo_password) >= 16
+    error_message = "seed_demo_password must be at least 16 characters."
   }
 }
 
