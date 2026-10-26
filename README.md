@@ -431,12 +431,11 @@ logic be tested without mocking AWS.
 Prerequisites: Terraform >= 1.9, Go >= 1.26, the AWS CLI configured, and Amazon Bedrock model
 access enabled in the region you deploy to.
 
-Two values have no default on purpose — a committed default becomes the real credential of an
-account that can change budgets and read cost data:
+`seed_user_password` has no default on purpose — a committed default becomes the real credential
+of an account that can change budgets and read cost data:
 
 ```bash
 export AWS_REGION=us-west-2
-export TF_VAR_admin_token="$(openssl rand -hex 24)"        # >= 32 chars
 export TF_VAR_seed_user_password="$(openssl rand -base64 18)"   # >= 16 chars
 ```
 

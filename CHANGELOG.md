@@ -12,6 +12,45 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-26
+
+Closes a cross-tenant privilege escalation reported through the AWS Vulnerability Reporting
+Program (SOC CloudOps TigerTeam-22377): because the console app client could write every
+Cognito attribute, any org member could set their own `custom:role` to `platform_admin` (or
+point `custom:org_id` at another org) and then administer every organization. A sweep for the
+same class of flaw also found a static break-glass token on the usage API that bypassed
+authorization entirely; it is removed here. Read **Security** and **Upgrade notes** before
+deploying.
+
+### Security
+
+- **The console can no longer rewrite its own authorization claims.** The Cognito app client
+  now declares `write_attributes = ["email", "name"]`. Without that list Cognito grants the
+  client write access to *all* attributes, so a member using the console's own
+  `USER_PASSWORD_AUTH` access token could call `UpdateUserAttributes` to elevate
+  `custom:role` to `platform_admin` or move themselves into another org via `custom:org_id`.
+  `org_id` and `role` are the source of truth for scope on every control-plane API, so they
+  must never be user-writable. Legitimate role/org changes are unaffected: they go through
+  config-api using the Lambda's `Admin*` credentials, and config-api still never assigns
+  `platform_admin`.
+- **The usage API's static `ADMIN_TOKEN` break-glass is removed.** A single shared secret in
+  the `x-admin-token` header bypassed all RBAC and per-org/team/app scoping for cost and usage
+  data. A request whose token carries no `role` claim is now refused (`401`) instead of
+  falling through unscoped. This brings the usage API in line with keyadmin and config-api,
+  which already rely solely on the API Gateway `COGNITO_USER_POOLS` authorizer.
+
+### Upgrade notes
+
+- **`TF_VAR_admin_token` is no longer used and can be dropped.** The `admin_token` variable is
+  removed from the observability module and its `poc` environment, and the usage-api Lambda no
+  longer receives an `ADMIN_TOKEN` env var. Exporting it at deploy time now has no effect;
+  remove it from your shell and CI.
+- **`/usage/*` now requires a Cognito token.** Any caller that reached the usage API with the
+  `x-admin-token` header must switch to a Cognito ID token (`Authorization: Bearer <token>`)
+  from a member with an appropriate role. Browser/console usage is unchanged.
+- **No user-pool recreation or data migration is required.** Adding `write_attributes` and
+  removing the token are in-place updates.
+
 ## [1.4.0] - 2026-09-19
 
 An optional second model transport: the router can now reach Anthropic models through an

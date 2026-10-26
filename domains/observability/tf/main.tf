@@ -34,16 +34,11 @@ variable "environment" {
   }
 }
 
-# PoC: static admin token (known technical debt — evolve to Cognito/SSO).
-variable "admin_token" {
-  description = "Admin token for the break-glass path. No default on purpose: a default would be applied silently and this value is published in the repo. Set it via TF_VAR_admin_token."
-  type        = string
-  sensitive   = true
-  validation {
-    condition     = length(var.admin_token) >= 32
-    error_message = "admin_token must be at least 32 characters."
-  }
-}
+# There is deliberately no admin_token variable here: the gate for the usage API
+# is the API Gateway COGNITO_USER_POOLS authorizer. The static break-glass token
+# was removed — a shared secret bypassed RBAC and per-org/team/app scoping — so
+# injecting one would suggest a second gate that no longer exists. This mirrors
+# core (keyadmin) and governance (config-api), which never carried the token.
 
 # Optional Environment Contract override (Req 4.5). Empty = read from governance's SSM.
 variable "cognito_user_pool_arn" {
@@ -220,8 +215,9 @@ resource "aws_lambda_function" "usage_api" {
   environment {
     variables = {
       COST_STORE_TABLE = aws_dynamodb_table.cost_store.name
-      ADMIN_TOKEN      = var.admin_token
-      CONSOLE_ORIGIN   = var.console_origin
+      # No ADMIN_TOKEN here on purpose: the gate for this API is the API Gateway
+      # COGNITO_USER_POOLS authorizer. The static break-glass token was removed.
+      CONSOLE_ORIGIN = var.console_origin
     }
   }
 

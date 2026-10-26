@@ -29,15 +29,8 @@ variable "environment" {
   type    = string
   default = "poc"
 }
-variable "admin_token" {
-  description = "Admin token for the break-glass path. No default on purpose: a default would be applied silently and this value is published in the repo. Set it via TF_VAR_admin_token."
-  type        = string
-  sensitive   = true
-  validation {
-    condition     = length(var.admin_token) >= 32
-    error_message = "admin_token must be at least 32 characters."
-  }
-}
+# No admin_token variable here: the usage API is gated by the API Gateway
+# COGNITO_USER_POOLS authorizer, and the module no longer injects ADMIN_TOKEN.
 variable "cognito_user_pool_arn" {
   type    = string
   default = null
@@ -55,7 +48,6 @@ module "domain" {
   project     = var.project
   environment = var.environment
   region      = var.region
-  admin_token = var.admin_token
   dist_path   = "${path.module}/../../dist"
 
   cognito_user_pool_arn = var.cognito_user_pool_arn

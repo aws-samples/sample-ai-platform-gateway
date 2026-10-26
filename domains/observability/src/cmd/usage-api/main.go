@@ -39,9 +39,8 @@ import (
 )
 
 var (
-	costStore  ports.CostStore
-	table      = os.Getenv("COST_STORE_TABLE")
-	adminToken = os.Getenv("ADMIN_TOKEN")
+	costStore ports.CostStore
+	table     = os.Getenv("COST_STORE_TABLE")
 
 	// A direct client for the ALERTLOG#<org> partition. It deliberately does not go
 	// through ports.CostStore: that port models the Usage_Record (the usage series), and
@@ -166,7 +165,7 @@ func originOf(headers map[string]string) string {
 func getCORSHeaders(reqOrigin string) map[string]string {
 	cors := map[string]string{
 		"access-control-allow-methods": "GET,OPTIONS",
-		"access-control-allow-headers": "content-type,authorization,x-admin-token",
+		"access-control-allow-headers": "content-type,authorization",
 		"content-type":                 "application/json",
 	}
 	h := mergeHeaders(cors, getSecurityHeaders())
@@ -220,17 +219,17 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 
 	q := req.QueryStringParameters
 
-	// Break-glass: static admin token for initial setup (known technical debt).
+	// Every caller must carry a role claim, set by Cognito and validated by the
+	// API Gateway COGNITO_USER_POOLS authorizer. A token with no role is not a
+	// valid control-plane identity, so it is refused outright.
+	//
+	// There is deliberately NO shared-secret break-glass (the old static
+	// x-admin-token / ADMIN_TOKEN path): a single static string bypassed the whole
+	// RBAC and org/team/app scoping, and an empty role would otherwise fall through
+	// unscoped and read the entire deployment's usage. The other control-plane APIs
+	// (config-api, keyadmin) dropped this same token for the same reason.
 	if role == "" {
-		token := ""
-		for k, v := range req.Headers {
-			if strings.ToLower(k) == "x-admin-token" {
-				token = v
-			}
-		}
-		if token == "" || token != adminToken {
-			return resp(reqOrigin, 401, map[string]string{"error": "unauthorized"})
-		}
+		return resp(reqOrigin, 401, map[string]string{"error": "unauthorized"})
 	}
 	now := time.Now().UTC()
 
