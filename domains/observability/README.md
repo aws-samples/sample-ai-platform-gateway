@@ -22,7 +22,7 @@ observability/
 - Usage API (HTTP API): **`https://<usage-api-id>.execute-api.us-west-2.amazonaws.com`**
 
 ## Cost-correlation layer + ROI ledger (the differentiator)
-`GET /usage/summary?tenant=<t>&from=<iso>&to=<iso>&bucket=day|hour` (header `x-admin-token`) returns, from the real Cost_Store data, the **unified across-LLMs** view per tenant:
+`GET /usage/summary?from=<iso>&to=<iso>&bucket=day|hour` (authenticated with a Cognito ID token: `Authorization: Bearer <token>`) returns, from the real Cost_Store data, the **unified across-LLMs** view:
 - `totals` — cost, **saved_usd**, **gross_usd**, **saved_pct** (ROI), requests, tokens, cache hits, average latency
 - `by_provider`, `by_model`, `by_app`, `by_feature` — breakdown ordered by cost
 - `savings_by_reason` — savings by reason (`auto_cheapest`, `fallback`, `cache`)
@@ -31,8 +31,8 @@ observability/
 The Usage_Record carries `feature`, `saved_usd`, and `savings_reason` (produced by the gateway): savings are measured per request (cost of the requested model − cost of the model actually used; plus cost avoided by the cache) and aggregated here as an auditable ledger.
 
 ```bash
-curl -s "https://<usage-api-id>.execute-api.us-west-2.amazonaws.com/usage/summary?tenant=acme" \
-  -H "x-admin-token: <admin-token>"
+curl -s "https://<usage-api-id>.execute-api.us-west-2.amazonaws.com/usage/summary" \
+  -H "Authorization: Bearer <cognito-id-token>"
 ```
 
 ## Contracts (EDA boundaries)

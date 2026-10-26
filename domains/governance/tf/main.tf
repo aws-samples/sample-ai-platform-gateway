@@ -745,6 +745,17 @@ resource "aws_cognito_user_pool_client" "console" {
     "ALLOW_USER_PASSWORD_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH",
   ]
+
+  # SECURITY: the attributes this app client may write on the user's OWN behalf
+  # (via UpdateUserAttributes with the user's access token). It is restricted to
+  # email and name on purpose. org_id and role are the authorization claims that
+  # scope every control-plane API (source of truth for org and role), so they
+  # MUST NOT be user-writable — otherwise any member could set custom:role to
+  # platform_admin or custom:org_id to another org and escalate across tenants.
+  # Without this list Cognito grants write access to ALL attributes, which is the
+  # default that caused the escalation. Member role/org changes still go through
+  # config-api using the Lambda's Admin* credentials, which are unaffected by this.
+  write_attributes       = ["email", "name"]
   access_token_validity  = 8
   id_token_validity      = 8
   refresh_token_validity = 30
