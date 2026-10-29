@@ -402,6 +402,26 @@ func TestBuildChain(t *testing.T) {
 	}
 }
 
+// --- decorateGatewayOwnership(): Phase 4 reconciliation marking -----------------
+
+func TestDecorateGatewayOwnership(t *testing.T) {
+	// A gateway-owned (gateway_fallback) row is flagged provisional for the reconciler.
+	owned := map[string]interface{}{}
+	decorateGatewayOwnership(owned, true)
+	if owned["gateway_owned"] != true || owned["reconcile_state"] != "pending" {
+		t.Fatalf("gateway-owned row must be gateway_owned=true, reconcile_state=pending: %+v", owned)
+	}
+	// Every other row omits the fields entirely — absence means AIPlat owns and knows it.
+	notOwned := map[string]interface{}{}
+	decorateGatewayOwnership(notOwned, false)
+	if _, ok := notOwned["gateway_owned"]; ok {
+		t.Fatalf("non-gateway row must not carry gateway_owned: %+v", notOwned)
+	}
+	if _, ok := notOwned["reconcile_state"]; ok {
+		t.Fatalf("non-gateway row must not carry reconcile_state: %+v", notOwned)
+	}
+}
+
 // --- defaultModel(): still the handler's responsibility -----------------------
 
 func TestDefaultModel(t *testing.T) {

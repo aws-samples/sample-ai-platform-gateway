@@ -763,6 +763,10 @@ func callProvider(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef,
 type invocation struct {
 	MaxOutputTokens int
 	Params          ports.InferenceParams
+	// RequestID is AIPlat's request id, carried so adapters can forward it as a
+	// correlation header to a destination that vends its own logs (the AgentCore Gateway),
+	// for later ledger reconciliation.
+	RequestID string
 }
 
 func (i invocation) input(msgs []chatMsg, tools []toolDef) ports.InvokeInput {
@@ -771,6 +775,7 @@ func (i invocation) input(msgs []chatMsg, tools []toolDef) ports.InvokeInput {
 		Tools:           toPortsTools(tools),
 		MaxOutputTokens: i.MaxOutputTokens,
 		Inference:       i.Params,
+		RequestID:       i.RequestID,
 	}
 }
 
@@ -1418,6 +1423,23 @@ func decorateSwap(m map[string]interface{}, class, servedModelID string) {
 	m["swap_class"] = class
 	if servedModelID != "" {
 		m["served_model_id"] = servedModelID
+	}
+}
+
+// decorateGatewayOwnership marks a Usage_Record whose resilience the AgentCore Gateway
+// owns — a route with "gateway_fallback": true (buildChain gave it a single-step chain, so
+// the gateway's own rule tries the primary and its TargetFallback, Phase 2). For such a row
+// AIPlat does NOT know the TRUE served model or how many attempts the gateway made: that
+// lives only in the gateway's vended routing log. So the row is flagged provisional
+// (reconcile_state = "pending", served_model_id here is AIPlat's REQUESTED model, not
+// necessarily what served), and the observability reconciler later fills the real served
+// target and flips it to "reconciled". The fields are OMITTED on every other route, so
+// absence means "AIPlat owns and fully knows this row" — the reconcile dimension evolves by
+// addition, like the rest of the Usage_Record.
+func decorateGatewayOwnership(m map[string]interface{}, gatewayOwned bool) {
+	if gatewayOwned {
+		m["gateway_owned"] = true
+		m["reconcile_state"] = "pending"
 	}
 }
 
@@ -2210,6 +2232,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	stops := stopSequences(body.Stop)
 	inf := invocation{
 		MaxOutputTokens: maxTok,
+		RequestID:       req.RequestID,
 		Params: ports.InferenceParams{
 			Temperature: body.Temperature,
 			TopP:        body.TopP,
@@ -2578,6 +2601,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			decorateReasoningRequest(rec, rplan)
 			rec["price_source"] = priceSourceOf(c, usedName, now)
 			routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
+			decorateGatewayOwnership(rec, c.Routing[usedName].GatewayFallback)
 			emitUsageFn(ctx, rec)
 
 			// Mirrors the aiplat block of the non-streaming response, so the SAME client
@@ -2716,6 +2740,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		rec["price_source"] = priceSourceOf(c, usedName, now)
 		routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
 		routing.DecorateEscalation(rec, escalated, escReason, escOutcome, attempts, dec.RequestedCostUSD, cost)
+		decorateGatewayOwnership(rec, usedRoute.GatewayFallback)
 		emitUsageFn(ctx, rec)
 		return jbody(reqOrigin, 200, out)
 	}

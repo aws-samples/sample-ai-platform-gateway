@@ -41,6 +41,9 @@ func (a *Adapter) OpenStream(ctx context.Context, in ports.InvokeInput) (ports.P
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/vnd.amazon.eventstream")
+	if in.RequestID != "" {
+		req.Header.Set(correlationHeader, in.RequestID)
+	}
 	if err := a.Signer.SignRequest(ctx, req, payload, SigningService, a.Region); err != nil {
 		return nil, err
 	}

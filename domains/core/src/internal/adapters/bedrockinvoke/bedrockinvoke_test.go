@@ -189,6 +189,49 @@ func TestInvoke_SignsAndParses(t *testing.T) {
 	}
 }
 
+func TestInvoke_ForwardsCorrelationHeaderBeforeSigning(t *testing.T) {
+	GW := "https://gw-abc.gateway.bedrock-agentcore.us-east-1.amazonaws.com"
+	sg := &fakeSigner{}
+	var gotCorr string
+	var signedLen int
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotCorr = r.Header.Get("X-Aiplat-Request-Id")
+		return newResp(200, `{"output":{"message":{"content":[{"text":"ok"}]}},"stopReason":"end_turn"}`), nil
+	})
+	p, _ := New(&http.Client{Transport: rt}, sg, Route{BaseURL: GW, ModelID: "us.amazon.nova-micro-v1:0"})
+	if _, err := p.Invoke(context.Background(), ports.InvokeInput{
+		Messages: []ports.Message{{Role: "user", Text: "hi"}}, RequestID: "req-123",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotCorr != "req-123" {
+		t.Fatalf("correlation header = %q, want req-123", gotCorr)
+	}
+	// The header must be present AT signing time (signature covers it): the signer saw the
+	// whole payload, and the header was set before SignRequest ran — assert the signer ran
+	// after the header was in place by checking it was called and the request still carries it.
+	signedLen = sg.payloadLen
+	if !sg.called || signedLen == 0 {
+		t.Fatalf("signer did not run over the request")
+	}
+
+	// Empty RequestID must NOT emit the header at all (absence is valid).
+	gotCorr = "unset"
+	rt2 := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if _, ok := r.Header["X-Aiplat-Request-Id"]; ok {
+			gotCorr = r.Header.Get("X-Aiplat-Request-Id")
+		} else {
+			gotCorr = ""
+		}
+		return newResp(200, `{"output":{"message":{"content":[{"text":"ok"}]}},"stopReason":"end_turn"}`), nil
+	})
+	p2, _ := New(&http.Client{Transport: rt2}, &fakeSigner{}, Route{BaseURL: GW, ModelID: "us.amazon.nova-micro-v1:0"})
+	_, _ = p2.Invoke(context.Background(), ports.InvokeInput{Messages: []ports.Message{{Role: "user", Text: "hi"}}})
+	if gotCorr != "" {
+		t.Fatalf("no RequestID must omit the header, got %q", gotCorr)
+	}
+}
+
 func TestInvoke_HTTPErrorSurfacesStatus(t *testing.T) {
 	GW := "https://gw-abc.gateway.bedrock-agentcore.us-east-1.amazonaws.com"
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {

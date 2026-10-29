@@ -65,6 +65,12 @@ type InvokeInput struct {
 	Model    string
 	Messages []Message
 	Tools    []ToolDef
+	// RequestID is AIPlat's own request id (from API Gateway). Adapters that reach a
+	// destination which vends its own logs — today the AgentCore Gateway — forward it as a
+	// correlation header so a later reconciler can join the destination's routing log back
+	// to this request's ledger row. Empty is valid (no correlation available); an adapter
+	// simply omits the header then.
+	RequestID string
 	// MaxOutputTokens is the client's output ceiling (0 = not informed).
 	//
 	// It lived here UNREAD by every adapter: the field existed, the routing layer used it

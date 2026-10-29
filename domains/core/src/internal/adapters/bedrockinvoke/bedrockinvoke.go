@@ -57,6 +57,11 @@ import (
 // path, but one signing name across transports is simpler to reason about.)
 const SigningService = "bedrock-agentcore"
 
+// correlationHeader carries AIPlat's request id to the gateway so its vended routing log
+// can be joined back to this request's ledger row (Phase 4 reconciliation). It MUST be set
+// before SigV4 signing, because the signature covers the headers present at signing time.
+const correlationHeader = "X-Aiplat-Request-Id"
+
 // invokePath builds the gateway's native InvokeModel path for a model id. The "/inference"
 // prefix is what selects inference targets, and the id travels in the path, which is what
 // lets a ':' through (see the package doc).
@@ -147,6 +152,9 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	}
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("accept", "application/json")
+	if in.RequestID != "" {
+		req.Header.Set(correlationHeader, in.RequestID)
+	}
 	if err := a.Signer.SignRequest(ctx, req, payload, SigningService, a.Region); err != nil {
 		return ports.Result{}, err
 	}
