@@ -37,8 +37,8 @@ DOCS (date) means only the AWS doc asserts it. UNVERIFIED means not yet measured
 | Aggregated model list `/inference/v1/models` | DOCS 2026-10-26 | Console discovery uses Bedrock List APIs plus AIPlat price table | Evaluate (Phase 3), merge with price table | None. Models without a price still excluded from auto-cheapest (G2/G3) | Low |
 | Rule `matchModels` plus `routeToTarget` staticRoute with model rewrite | DOCS 2026-10-26, shape UNVERIFIED (B7) | AIPlat picks model and target in `routing.Decide` | Adapt (Phase 2), AIPlat stays the cost owner (C4) | Served model can differ from requested. Must reconcile (C2) | High |
 | `weightedRoute` (A/B, canary) | DOCS 2026-10-26 | AIPlat has its own canary (`FeaturePolicy.Canary`) | Evaluate (Phase 2). Risk of two canary owners | Canary already has ledger fields. Two owners would double-count | High |
-| Fallback chain `targetFallback`, `triggerOn`, `firstByteTimeoutMilliseconds` | DOCS 2026-10-26 | AIPlat has its own fallback ladder (`buildChain`) | Adapt (Phase 2), one ladder per route (C4) | One row per attempt, each a Gateway charge (C2) | High |
-| Circuit breaker (ENABLED default) | DOCS 2026-10-26, open/close timing UNVERIFIED (B4) | None | Adopt with fallback (Phase 2) | Skipped primary is not billed. Ledger must not invent a row for it | Medium |
+| Fallback chain `targetFallback`, `triggerOn`, `firstByteTimeoutMilliseconds` | MEASURED 2026-10-26 (B4, 5.6): fallback fires, client-transparent | AIPlat has its own fallback ladder (`buildChain`) | Adapt (Phase 2), one ladder per route (C4) | One row per attempt, each a Gateway charge (C2) | High |
+| Circuit breaker (ENABLED default) | PARTIAL 2026-10-26 (B4, 5.6): latency trend consistent with breaker opening; open/close timing needs routing logs (B5) | None | Adopt with fallback (Phase 2) | Skipped primary is not billed. Ledger must not invent a row for it | Medium |
 | Per-attempt billing | DOCS 2026-10-26 (every outbound attempt is one gateway invocation) | AIPlat bills model cost per served request, plus escalation attempts | Adopt accounting (Phase 2/4) | New charge line per attempt. Gateway fee per invocation UNVERIFIED (price) | High |
 | Routing logs (served target and model) | DOCS 2026-10-26, latency and join key UNVERIFIED (B5) | None. AIPlat records served model from its own decision | Adopt (Phase 4) for reconciliation | The only source of served target under Gateway fallback (C2) | High |
 | Response identifies served target or model | UNVERIFIED (B6). Docs say the caller gets no indicator | AIPlat knows the served model because it chose it | Drives reconciliation design | If nothing identifies it, every Gateway-fallback row starts `unreconciled` (C2) | High |
@@ -260,6 +260,47 @@ target). This keeps provisioning in the same IaC, needs no provisioning Lambda, 
 open/close timing, per-attempt billing) is still the costed batch B4, which intentionally
 generates billed failed-primary attempts and is therefore NOT run until the human approves
 the spend.
+
+### 5.6 B4 model fallback + circuit breaker. MEASURED 2026-10-26
+
+Provisioned a real inference rule via CloudFormation (`AWS::BedrockAgentCore::GatewayRule`,
+stack `aiplat-b4-fallback-rule`, us-east-1) against the live gateway and exercised it with
+direct SigV4 calls to `/inference/model/{model}/invoke` (no router involved), then deleted
+the stack. Rule: `MatchModels [fallback-probe]` → `StaticRoute { TargetName: invoke, Model:
+us.amazon.nova-micro-BADID-v1:0 (deliberately invalid), Fallback { TriggerOn StatusCodes
+[4XX,5XX,429] + Errors [...], FirstByteTimeoutMilliseconds 5000, TargetFallback [{ invoke,
+us.amazon.nova-micro-v1:0 }], CircuitBreaker ENABLED } }`.
+
+Findings:
+
+- PROVISIONING CONFIRMED. The CloudFormation type created the inference rule cleanly
+  (CREATE_COMPLETE), attached by `GatewayIdentifier`. This validates the Phase 2 path end to
+  end: `aws_cloudformation_stack` from Terraform is viable, no provisioning Lambda, no awscc.
+- MODEL FALLBACK CONFIRMED (client-transparent). Baseline: `fallback-probe` with no rule →
+  HTTP 404 "not found on any target". A bad model id on the target → HTTP 400 "model
+  identifier is invalid". WITH the rule, `fallback-probe` → HTTP 200 with a valid Nova
+  answer. The only path to 200 is: rule matched → primary (invalid id) returned 400 →
+  TriggerOn 4XX fired → fell back to the healthy Nova destination. The caller sees one clean
+  response and no indicator of which destination served it, exactly as documented.
+- CIRCUIT BREAKER: DIRECTIONAL, not conclusive from the client. Across a 10-call burst,
+  latency drifted from ~1.15s on the first calls to ~1.0s and held — consistent with the
+  breaker opening after consecutive primary failures and then SKIPPING the ~0.15s failed-
+  primary attempt. Conclusive confirmation (and the per-skip accounting) needs the vended
+  routing logs, which note when the breaker skipped a destination — that is batch B5 and the
+  logs were not enabled here.
+- PER-ATTEMPT BILLING: AWS-DOCUMENTED, not independently measured. The devguide states each
+  outbound attempt (including the failed primary before fallback) is one gateway invocation,
+  and the breaker reduces this by skipping a known-failing primary. No CloudWatch metric
+  namespace for the gateway was populated in this account (checked AWS/BedrockAgentCore and
+  variants — empty), so the invocation count could not be read here; it is a routing-log /
+  billing-report confirmation (B5) rather than a client-side one.
+
+Cost of B4: ~13 gateway calls (3 baseline + 10 burst), each successful fallback request up
+to 2 invocations, plus a few hundred Nova tokens — a fraction of one cent in model spend.
+The inference per-invocation gateway fee remains UNVERIFIED (price), see 5.2.
+
+The rule stack and the probe were deleted afterward; the gateway is back to default routing
+(`fallback-probe` → 404 re-confirmed).
 
 ## 6. Open questions
 
