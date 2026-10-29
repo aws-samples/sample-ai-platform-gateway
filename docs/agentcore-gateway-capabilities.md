@@ -230,6 +230,37 @@ B2 findings (2026-10-26):
   cacheReadInputTokenCount,cacheWriteInputTokenCount}`). Meta Llama has a divergent native
   schema (`prompt`/`generation`) and is added only if a route needs it.
 
+### 5.5 Phase 2 provisioning spike (gateway rules / fallback). MEASURED 2026-10-26, no cost
+
+Resolves the Phase 2 open question (which of `awscc` / CloudFormation / a provisioning Lambda
+carries the inference rule shape). No resources were created and no calls were billed — this
+is a schema inspection only.
+
+- `aws` provider 6.71.0 `aws_bedrockagentcore_gateway_rule`: GENERIC only (match_paths /
+  match_principals → route_to_target / configuration_bundle). No inference fields. (5.1)
+- `awscc` provider `awscc_bedrockagentcore_gateway_rule` (pulled latest): ALSO generic —
+  has `weighted_route` / `route_to_target` / `static_route` but NO `match_models`,
+  `fallback`, `circuit_breaker`, `trigger_on`, or `first_byte_timeout`. awscc does not expose
+  the inference rule either.
+- CloudFormation registry type `AWS::BedrockAgentCore::GatewayRule` (us-east-1): HAS the full
+  inference feature. Confirmed definitions and field shapes:
+  - `Conditions`: `MatchModels { AnyOf: [{ Value, Operator: StringEquals|StringLike }] }`
+    (also MatchPaths / MatchPrincipals).
+  - `Actions`: `RouteToTarget { StaticRoute { TargetName, Model?, Fallback } | WeightedRoute }`
+    (also ConfigurationBundle).
+  - `Fallback { TargetFallback: [{ TargetName, Model?, TriggerOn, FirstByteTimeoutMilliseconds }]
+    (1-2 entries), TriggerOn: { StatusCodes: ["4XX".."5XX"/429...], Errors:
+    [CONNECTION_ERROR|FIRST_BYTE_TIMEOUT|UNROUTABLE] }, FirstByteTimeoutMilliseconds (50-900000),
+    CircuitBreaker { Mode: ENABLED|DISABLED (default ENABLED) } }`.
+
+DECISION: provision Phase 2 rules via CloudFormation, driven from Terraform with an
+`aws_cloudformation_stack` resource (gated by its own off-by-default flag, like the invoke
+target). This keeps provisioning in the same IaC, needs no provisioning Lambda, and no
+`awscc` dependency. The data-plane BEHAVIOR (actual fallback triggers, circuit-breaker
+open/close timing, per-attempt billing) is still the costed batch B4, which intentionally
+generates billed failed-primary attempts and is therefore NOT run until the human approves
+the spend.
+
 ## 6. Open questions
 
 Resolved 2026-10-26:
@@ -237,9 +268,11 @@ Resolved 2026-10-26:
 - Terraform support (was B7). RESOLVED. `aws` provider 6.71.0 has
   `aws_bedrockagentcore_gateway_rule`, `connector` and `operations` on the target, and
   `aws_bedrockagentcore_policy`. All provisioning stays in Terraform. See 5.1.
-- Rule request shape. The exact `matchModels`/`routeToTarget` shape is now the provider's
-  `aws_bedrockagentcore_gateway_rule` schema, so the generic-vs-inference API-reference
-  discrepancy is moot for provisioning. The data-plane behavior is still measured in B4.
+- Rule request shape AND provisioning path. RESOLVED (5.5). The inference rule
+  (`MatchModels` + `RouteToTarget` + `Fallback` + `CircuitBreaker`) is NOT in the `aws` or
+  `awscc` providers; it IS in the CloudFormation type `AWS::BedrockAgentCore::GatewayRule`.
+  Phase 2 provisions it via `aws_cloudformation_stack` from Terraform. The data-plane
+  behavior is still measured in B4 (costed).
 
 Still open (measured in the batches):
 
