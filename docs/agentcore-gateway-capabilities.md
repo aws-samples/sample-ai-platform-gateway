@@ -29,8 +29,8 @@ DOCS (date) means only the AWS doc asserts it. UNVERIFIED means not yet measured
 | Gateway capability | Supported | AIPlat today | Proposal | Impact on the ledger | Risk |
 |---|---|---|---|---|---|
 | `/inference/v1/messages` Anthropic dialect | MEASURED by 1.4.0 (code comment, undated) RE-VERIFY | Used by `bedrock_gateway` provider, Claude only | Keep | None. Current path, cache counters already honest | Low |
-| InvokeModel `/inference/model/{model}/invoke` | DOCS 2026-10-26 | Not used | Adopt (Phase 1) | New transport. Cost still computed from AIPlat price table, no change to attribution | Medium, pending C3 cache test |
-| `/invoke-with-response-stream` | DOCS 2026-10-26 | Not used (gateway path); `bedrock` uses ConverseStream direct | Adopt (Phase 1) | Same as above. Streaming usage-frame shape UNVERIFIED | Medium |
+| InvokeModel `/inference/model/{model}/invoke` | MEASURED 2026-10-26 (router E2E, 5.4) | Used by `bedrock_invoke` provider (Nova) | Adopt (Phase 1) DONE | New transport. Cost computed from AIPlat price table, attribution verified in cost-store | Medium, pending C3 cache test |
+| `/invoke-with-response-stream` | MEASURED 2026-10-26 (router E2E, 5.4) | Used by `bedrock_invoke` provider (Nova) | Adopt (Phase 1) DONE | Same as above. Streaming usage-frame is Converse event-stream, parsed by the adapter | Medium |
 | `bedrock-runtime` connector target | DOCS 2026-10-26, console did not list it on 2026-10-25 | Not present. Repo has `mantle` and `runtime` provider targets | Adopt via API or IaC (Phase 1) | None directly | Medium, IaC support UNVERIFIED (B7) |
 | Versioned ids with `:` on InvokeModel path | MEASURED 2026-10-26 YES | Rejected on `/v1/messages`, documented in agentcore.tf and bedrockgateway.go | ADOPT. Widen Nova and Llama routes to the gateway InvokeModel transport (R1.2) | None. Enables more routes on the gateway transport | Low (measured) |
 | Dialect translation (Bedrock, OpenAI, Anthropic) | DOCS 2026-10-26 | Not used. AIPlat already owns dialects per adapter | Reject for now (see 3) | Would hide the served dialect from the adapter | Medium |
@@ -177,7 +177,39 @@ B1 ran 2026-10-26 against the deployed `invoke` target (us-east-1 gateway). Find
 | B1 id with colon | /inference/model/{id}/invoke | us.amazon.nova-micro-v1:0 | 1 | fast (~1s) | 1 invocation (price UNVERIFIED) | ~$0.0000004 | fields present, 0 on uncached | n/a (direct probe) |
 | B2 OpenAI-dialect | /inference/v1/chat/completions | us.amazon.nova-micro-v1:0 | 1 | n/a | 0 | 0 | n/a | HTTP 400, Nova rejects `max_tokens` on the translated path |
 | B2 native stream | /inference/model/{id}/invoke-with-response-stream | us.amazon.nova-micro-v1:0 | 1 | ~1s TTFB | 1 invocation | ~$0.0000004 | Converse-style event-stream (`application/vnd.amazon.eventstream`) | n/a (direct probe) |
+| E2E non-stream (via router) | router `/v1/chat/completions` → `bedrock_invoke` → /invoke | us.amazon.nova-micro-v1:0 | 1 | 1217 ms | 1 invocation | $0.000001155 (9 in, 6 out) | reported, 0 (uncached) | success, recorded in cost-store |
+| E2E stream (via router) | router `/v1/chat/completions` stream:true → /invoke-with-response-stream | us.amazon.nova-micro-v1:0 | 1 | 759 ms | 1 invocation | $0.00000868 (8 in, 60 out) | reported | success, recorded in cost-store |
 | (pending B3 cached, B4, B5) | | | | | | | | |
+
+### 5.4 Router end-to-end. MEASURED 2026-10-26
+
+The full path — deployed poc router → `bedrock_invoke` adapter → AgentCore Gateway `invoke`
+target → Amazon Nova — was exercised live against `https://1yhzvlxl3m.execute-api.us-west-2
+.amazonaws.com/prod/v1/chat/completions` with a scoped API key, after adding a
+`gw-nova-micro` route (provider `bedrock_invoke`, `provider_model_id us.amazon.nova-micro-v1:0`,
+base_url the gateway, region us-east-1) to the poc config. Findings:
+
+- Non-streaming returns HTTP 200 with the OpenAI-shaped body, `provider: bedrock_invoke`,
+  `served_model_id: us.amazon.nova-micro-v1:0`, and `usage` (prompt 9 / completion 6).
+- Streaming (`stream: true`) returns the SSE frames token by token, a terminal
+  `finish_reason: stop`, a trailing `aiplat` usage frame (prompt 8 / completion 60), then
+  `[DONE]`. This is the new `bedrockinvoke` `StreamProvider` path
+  (`OpenStream` → `/invoke-with-response-stream` → event-stream decode → SSE).
+- Ledger parity (honesty check): both calls were written to `aiplat-poc-obs-cost-store` with
+  `status: success`, `provider: bedrock_invoke`, `served_model_id us.amazon.nova-micro-v1:0`,
+  token counts identical to the response, `price_source: list`, and the gateway host recorded
+  as `upstream`. The cache counters were `reported` (0 on an uncached call), preserving the
+  reported-vs-absent distinction. A deliberately-induced provider failure (the router was hit
+  once before its code was redeployed, so the provider case was missing) was recorded as
+  `status: error`, `reason: provider_error`, `sli_eligible: true`, zero cost — no phantom
+  spend row.
+- Total measured model spend for the two E2E calls: ~$0.0000098, plus 2 gateway invocations
+  (fee UNVERIFIED, see 5.2). The failed attempt made 0 gateway calls (it failed in
+  `providerFor` before signing).
+
+Test fixtures used (poc, to clean up after the full test pass): the additive `gw-nova-micro`
+entry in `ORG#XYZ_ORG` config (routing + pricing + model_order + allowed_models) and one
+API-key record in `aiplat-poc-inf-api-keys` (note field marks it as the e2e test key).
 
 B2 findings (2026-10-26):
 
