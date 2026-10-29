@@ -34,15 +34,15 @@ DOCS (date) means only the AWS doc asserts it. UNVERIFIED means not yet measured
 | `bedrock-runtime` connector target | DOCS 2026-10-26, console did not list it on 2026-10-25 | Not present. Repo has `mantle` and `runtime` provider targets | Adopt via API or IaC (Phase 1) | None directly | Medium, IaC support UNVERIFIED (B7) |
 | Versioned ids with `:` on InvokeModel path | MEASURED 2026-10-26 YES | Rejected on `/v1/messages`, documented in agentcore.tf and bedrockgateway.go | ADOPT. Widen Nova and Llama routes to the gateway InvokeModel transport (R1.2) | None. Enables more routes on the gateway transport | Low (measured) |
 | Dialect translation (Bedrock, OpenAI, Anthropic) | DOCS 2026-10-26 | Not used. AIPlat already owns dialects per adapter | Reject for now (see 3) | Would hide the served dialect from the adapter | Medium |
-| Aggregated model list `/inference/v1/models` | DOCS 2026-10-26 | Console discovery uses Bedrock List APIs plus AIPlat price table | Evaluate (Phase 3), merge with price table | None. Models without a price still excluded from auto-cheapest (G2/G3) | Low |
+| Aggregated model list `/inference/v1/models` | RESOLVED 2026-10-26 (Phase 3): REJECT as catalog source | Console discovery uses Bedrock List APIs plus AIPlat price table | Reject — catalog is price-table-gated; an unpriced model is excluded from auto-cheapest regardless (G2/G3) | None | Low |
 | Rule `matchModels` plus `routeToTarget` staticRoute with model rewrite | DOCS 2026-10-26, shape UNVERIFIED (B7) | AIPlat picks model and target in `routing.Decide` | Adapt (Phase 2), AIPlat stays the cost owner (C4) | Served model can differ from requested. Must reconcile (C2) | High |
-| `weightedRoute` (A/B, canary) | DOCS 2026-10-26 | AIPlat has its own canary (`FeaturePolicy.Canary`) | Evaluate (Phase 2). Risk of two canary owners | Canary already has ledger fields. Two owners would double-count | High |
+| `weightedRoute` (A/B, canary) | RESOLVED 2026-10-26 (Phase 3): REJECT for canary | AIPlat has its own canary (`FeaturePolicy.Canary`) | Reject — AIPlat owns canary (has ledger linkage); gateway weightedRoute canary has none and would double-count | Canary already has ledger fields. Two owners would double-count | High |
 | Fallback chain `targetFallback`, `triggerOn`, `firstByteTimeoutMilliseconds` | MEASURED 2026-10-26 (B4, 5.6): fallback fires, client-transparent | AIPlat has its own fallback ladder (`buildChain`) | Adapt (Phase 2), one ladder per route (C4) | One row per attempt, each a Gateway charge (C2) | High |
 | Circuit breaker (ENABLED default) | PARTIAL 2026-10-26 (B5, 5.7): did NOT open across 25 deterministic 4XX invalid-model failures (behaves like UNROUTABLE, does not feed the breaker); opening needs a 5XX/connection failure, not yet measured | None | Adopt with fallback (Phase 2) | Skipped primary is not billed. Ledger must not invent a row for it | Medium |
 | Per-attempt billing | MEASURED 2026-10-26 (B5, 5.7): a fallback request logs 2 outbound attempts (failed primary + fallback) | AIPlat bills model cost per served request, plus escalation attempts | Adopt accounting (Phase 2/4) | New charge line per attempt. Gateway fee per invocation UNVERIFIED (price) | High |
 | Routing logs (served target and model) | MEASURED 2026-10-26 (B5, 5.7): vended APPLICATION_LOGS carry requestedModelId→resolvedModelId, targetName, reason servedViaFallbackHop:N; ~1-2 min latency; join by trace_id | None. AIPlat records served model from its own decision | Adopt (Phase 4) for reconciliation | The only source of served target under Gateway fallback (C2) | High |
 | Response identifies served target or model | MEASURED 2026-10-26 (B6 via B5, 5.7): caller RESPONSE carries no indicator, but the vended routing LOG names resolvedModelId + targetName + servedViaFallbackHop | AIPlat knows the served model because it chose it | Drives reconciliation design: join the routing log by trace_id (C2) | If nothing identifies it, every Gateway-fallback row starts `unreconciled` (C2) | High |
-| AgentCore Policy and Bedrock Guardrails at gateway | DOCS 2026-10-26 | AIPlat guardrails (PII mask, secret block, injection heuristic) run before the provider call | Evaluate (Phase 3), one owner per check (C4) | None directly. Double masking must be avoided | Medium |
+| AgentCore Policy and Bedrock Guardrails at gateway | RESOLVED 2026-10-26 (Phase 3): guardrails stay in AIPlat; AgentCore Policy deferred | AIPlat guardrails (PII mask, secret block, injection heuristic) run before the provider call | Keep PII/secrets/injection in AIPlat (deterministic, mutate the prompt); defer AgentCore Policy (Cedar) for later cross-provider rules | None directly. Double masking avoided by one owner | Medium |
 | Bedrock guardrail on a translated route | DOCS 2026-10-26: rejected with 400 | Not used | Reject on translated routes | None | Low |
 | Rate limits per target, per caller, per tool | DOCS (gateway-rate-limits best practices, not yet fetched) UNVERIFIED | AIPlat enforces per-scope RPM and TPM | Keep AIPlat as enforcer (R3.2) unless a forwardable key exists | None | Medium |
 | No fallback once streaming started | DOCS 2026-10-26 | AIPlat resolves the fallback chain before the first byte on stream | Align. Matches AIPlat's existing rule | A streamed attempt that fails mid-stream is one row, status error | Medium |
@@ -75,9 +75,29 @@ DOCS (date) means only the AWS doc asserts it. UNVERIFIED means not yet measured
   `aws_cloudformation_stack` in agentcore.tf, gated by `agentcore_rules_enabled`, OFF by
   default. One owner per route, enforced in code and provisioned in IaC.
 - Canary: exactly one of AIPlat `FeaturePolicy.Canary` or Gateway `weightedRoute` per route.
-- Guardrails: name the owner per check. PII and secrets likely stay in AIPlat (deterministic,
-  already measured). AgentCore Policy evaluated for cross-provider content rules.
+  RESOLVED 2026-10-26 (Phase 3): AIPlat keeps canary ownership. `FeaturePolicy.Canary`
+  already has ledger fields (`canary`, `canary_route`) that exclude experiment traffic from
+  the baseline it is compared against; a Gateway `weightedRoute` canary has no such ledger
+  linkage, so two owners would double-count. Gateway `weightedRoute` is therefore NOT
+  adopted for canary. (A `weightedRoute` could still be used for pure load-split with no
+  experiment semantics; that is out of scope here.)
+- Guardrails: name the owner per check. RESOLVED 2026-10-26 (Phase 3): PII masking, secret
+  blocking and the injection heuristic STAY in AIPlat (deterministic, run before the provider
+  call, already measured, and they must mutate the prompt which a gateway-side check cannot do
+  without seeing content twice). AgentCore Policy / Bedrock Guardrails at the gateway are NOT
+  adopted now — a Bedrock guardrail on a translated route is rejected 400 by design (section
+  2), and double-masking is the failure mode to avoid. AgentCore Policy (Cedar) is deferred:
+  the `aws` provider has `aws_bedrockagentcore_policy`, so it is adoptable later for
+  cross-provider content rules, but it buys nothing over AIPlat's deterministic checks today.
+- Aggregated model list `/inference/v1/models`: RESOLVED 2026-10-26 (Phase 3): NOT adopted as
+  the catalog source. AIPlat's catalog is gated by the PRICE TABLE, not by what an endpoint
+  lists — a model without a price is excluded from auto-cheapest (G2/G3) regardless of whether
+  the gateway advertises it. Merging the gateway list would add names AIPlat cannot price or
+  rank, so it adds no FinOps value. Discovery stays price-table-driven.
 - Rate limits: AIPlat stays the per-scope enforcer unless B-rate proves a forwardable key.
+  RESOLVED 2026-10-26 (Phase 3): AIPlat remains the enforcer (per-scope RPM/TPM in
+  `limits.go`); gateway rate limits are not adopted because AIPlat's limits are per
+  team/app/org scope and the gateway key is per target, which cannot express the same scopes.
 
 ## 4. Measurement plan (costed, per C8)
 
