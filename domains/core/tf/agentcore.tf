@@ -336,3 +336,77 @@ resource "aws_iam_role_policy" "agentcore_invoke_discovery" {
     ]
   })
 }
+
+# Phase 2: model-fallback RULE, provisioned via CloudFormation.
+#
+# WHY CLOUDFORMATION AND NOT THE aws PROVIDER
+#
+# The 2026-10-22 inference rule (MatchModels + routeToTarget + Fallback + CircuitBreaker) is
+# NOT in the aws provider 6.71.0 nor in awscc — both expose only the GENERIC rule
+# (match_paths/match_principals, no match_models/fallback). It IS in the CloudFormation type
+# AWS::BedrockAgentCore::GatewayRule (schema verified 2026-10-26, docs 5.5). So the rule is
+# provisioned through an aws_cloudformation_stack, which keeps it in the same Terraform run —
+# no provisioning Lambda, no awscc dependency. When the aws provider gains the inference
+# rule, this can migrate to a native resource with no behaviour change.
+#
+# OWNERSHIP (C4): the rule is the fallback OWNER for the models it matches. A config route
+# for such a model sets "gateway_fallback": true, and the router's buildChain then emits a
+# single-step chain for it (gateway.go). That is the one-owner invariant: without it, the
+# gateway's chain and AIPlat's ladder would both retry — double attempts, double gateway
+# invocations, and a served target neither could reconcile alone.
+#
+# The example rule routes agentcore_rule_match_model to the invoke target and falls back to a
+# second model on the SAME target, with the circuit breaker on (ENABLED is the service
+# default). firstByteTimeoutMilliseconds and the trigger set are the documented defaults made
+# explicit. Everything is gated by agentcore_rules_enabled and defaults OFF.
+resource "aws_cloudformation_stack" "agentcore_rules" {
+  count    = var.agentcore_gateway_enabled && var.agentcore_invoke_enabled && var.agentcore_rules_enabled ? 1 : 0
+  provider = aws.agentcore
+
+  name = "${local.name}-agentcore-rules"
+
+  template_body = jsonencode({
+    AWSTemplateFormatVersion = "2010-09-09"
+    Description              = "AIPlat AgentCore Gateway model-fallback rule(s)"
+    Resources = {
+      ModelFallbackRule = {
+        Type = "AWS::BedrockAgentCore::GatewayRule"
+        Properties = {
+          GatewayIdentifier = aws_bedrockagentcore_gateway.inference[0].gateway_id
+          Priority          = 100
+          Description       = "AIPlat: ${var.agentcore_rule_match_model} with model fallback + circuit breaker"
+          Conditions = [
+            { MatchModels = { AnyOf = [{ Value = var.agentcore_rule_match_model }] } }
+          ]
+          Actions = [
+            {
+              RouteToTarget = {
+                StaticRoute = {
+                  TargetName = "invoke"
+                  Model      = var.agentcore_rule_primary_model
+                  Fallback = {
+                    CircuitBreaker               = { Mode = "ENABLED" }
+                    FirstByteTimeoutMilliseconds = 5000
+                    TriggerOn = {
+                      StatusCodes = ["5XX", "429"]
+                      Errors      = ["CONNECTION_ERROR", "FIRST_BYTE_TIMEOUT", "UNROUTABLE"]
+                    }
+                    TargetFallback = [
+                      { TargetName = "invoke", Model = var.agentcore_rule_fallback_model }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+    Outputs = {
+      RuleId = { Value = { "Fn::GetAtt" = ["ModelFallbackRule", "RuleId"] } }
+    }
+  })
+
+  # The rule references the invoke target by name, so the target must exist first.
+  depends_on = [aws_bedrockagentcore_gateway_target.invoke]
+}

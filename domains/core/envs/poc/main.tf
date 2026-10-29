@@ -48,4 +48,9 @@ module "domain" {
   # Optional native InvokeModel target (Nova, Llama, versioned ids). Same forwarding rule:
   # a variable declared in the module but not listed here silently takes the module default.
   agentcore_invoke_enabled = var.agentcore_invoke_enabled
+
+  # Optional Phase 2 model-fallback rule (CloudFormation). Same forwarding rule. The rule's
+  # match/primary/fallback models take the module defaults (nova-micro primary, nova-lite
+  # fallback) unless overridden.
+  agentcore_rules_enabled = var.agentcore_rules_enabled
 }

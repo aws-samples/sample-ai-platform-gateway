@@ -358,6 +358,23 @@ func TestBuildChain(t *testing.T) {
 			want:   []string{"a", "c"},
 		},
 		{
+			// One owner per route (C4): a gateway_fallback route delegates resilience to
+			// the AgentCore Gateway rule, so AIPlat's chain is the chosen step alone —
+			// even though model_order [a,b,c] would otherwise append b and c.
+			name: "gateway_fallback route gets a single-step chain",
+			c: cfg(routes, nil, func(c *Config) {
+				c.ModelOrder = []string{"a", "b", "c"}
+				// Fresh map so this case does not mutate the shared `routes` fixture.
+				c.Routing = map[string]Route{
+					"a": {Provider: "bedrock", ProviderModelID: "ida", Fallback: []string{"b"}, GatewayFallback: true},
+					"b": route("bedrock", "idb", "c"),
+					"c": route("bedrock", "idc"),
+				}
+			}),
+			chosen: "a",
+			want:   []string{"a"},
+		},
+		{
 			// Auto-cheapest reorders the chain by PRICE: chosen (the cheapest) first,
 			// then the next cheapest in the list. With input=0 the cost is ~output:
 			// b(0.003) < c(0.015) < a(0.030).

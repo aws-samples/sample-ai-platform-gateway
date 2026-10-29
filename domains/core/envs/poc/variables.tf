@@ -133,3 +133,12 @@ variable "agentcore_invoke_enabled" {
   default     = true
   description = "Create the AgentCore Gateway native InvokeModel target. This poc env opts in; the module default stays false."
 }
+
+variable "agentcore_rules_enabled" {
+  type = bool
+  # This poc env opts in to the model-fallback rule so Phase 2 is exercised end to end. The
+  # reusable module keeps its own default at false. A plan with this false shows zero changes
+  # (the CloudFormation stack simply is not created).
+  default     = true
+  description = "Provision the AgentCore Gateway model-fallback rule (CloudFormation). This poc env opts in; the module default stays false."
+}

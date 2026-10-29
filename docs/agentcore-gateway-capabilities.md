@@ -69,7 +69,11 @@ DOCS (date) means only the AWS doc asserts it. UNVERIFIED means not yet measured
 
 - Routing and cost: AIPlat owns model selection, auto-cheapest, budget, allowlist, scopes.
 - Resilience inside one dialect: the Gateway owns fallback and the circuit breaker, on
-  routes AIPlat marks for it. AIPlat's ladder skips those routes.
+  routes AIPlat marks for it. AIPlat's ladder skips those routes. IMPLEMENTED 2026-10-26
+  (Phase 2): a config route sets `"gateway_fallback": true`, and `buildChain` then emits a
+  single-step chain for it (unit-tested in characterization_test.go). The rule itself is an
+  `aws_cloudformation_stack` in agentcore.tf, gated by `agentcore_rules_enabled`, OFF by
+  default. One owner per route, enforced in code and provisioned in IaC.
 - Canary: exactly one of AIPlat `FeaturePolicy.Canary` or Gateway `weightedRoute` per route.
 - Guardrails: name the owner per check. PII and secrets likely stay in AIPlat (deterministic,
   already measured). AgentCore Policy evaluated for cross-provider content rules.

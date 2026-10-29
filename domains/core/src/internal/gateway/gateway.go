@@ -92,6 +92,13 @@ type Route struct {
 	// The sampling sibling of ReasoningStyle.
 	SamplingStyle string `json:"sampling_style,omitempty"`
 
+	// GatewayFallback marks a route whose resilience is owned by an AgentCore Gateway
+	// fallback RULE (provisioned in agentcore.tf), not by AIPlat's own ladder. When true,
+	// buildChain emits a SINGLE-step chain for this route so the two fallback owners never
+	// compete (see buildChain and docs/agentcore-gateway-capabilities.md, C4). Default
+	// false: AIPlat's ladder keeps owning fallback, exactly as before.
+	GatewayFallback bool `json:"gateway_fallback,omitempty"`
+
 	// Capabilities feeds the routing eligibility filter. Absence counts as
 	// incapable of tool use and multimodal — deliberately conservative, so we do
 	// not repeat the bug of sending tool use to a model that returns
@@ -1077,6 +1084,18 @@ type step struct {
 
 func buildChain(c *Config, pol routing.Policy, chosen string, route Route, shape routing.RequestShape, now time.Time) []step {
 	chain := []step{{chosen, route}}
+
+	// One owner per route (C4). A route that delegates resilience to the AgentCore
+	// Gateway's own fallback rule gets NO AIPlat-side fallback chain: the gateway tries
+	// the primary and its declared TargetFallback itself and returns a single response,
+	// so layering AIPlat's ladder on top would be a SECOND, competing owner — double
+	// attempts, double gateway invocations, and a served target that neither owner alone
+	// can reconcile against the ledger. The gateway owns it, so the chain is exactly the
+	// chosen step; if the gateway exhausts its own chain the error returns to the caller
+	// unretried, which is the contract the operator opted into by setting the flag.
+	if route.GatewayFallback {
+		return chain
+	}
 
 	// The chain answers to the SAME eligibility authority as the decision.
 	//

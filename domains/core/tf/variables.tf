@@ -162,3 +162,45 @@ variable "agentcore_invoke_enabled" {
     foundation-model/* and inference-profile/*.
   EOT
 }
+
+variable "agentcore_rules_enabled" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Provision AgentCore Gateway model-fallback RULES (MatchModels + StaticRoute + Fallback +
+    CircuitBreaker). OFF by default; also requires agentcore_gateway_enabled and
+    agentcore_invoke_enabled. A plan with it false shows zero changes.
+
+    The inference rule shape (the 2026-10-22 model-fallback feature) is NOT in the aws or
+    awscc provider as of aws 6.71.0 — only the GENERIC rule is. It IS in the CloudFormation
+    type AWS::BedrockAgentCore::GatewayRule, so this rule is provisioned through an
+    aws_cloudformation_stack, keeping provisioning in the same IaC (no provisioning Lambda,
+    no awscc dependency). See docs/agentcore-gateway-capabilities.md section 5.5/5.6.
+
+    OWNERSHIP (C4): a config route that sets "gateway_fallback": true delegates its fallback
+    to this rule, and the router's buildChain then emits a single-step chain for it — exactly
+    one fallback owner per route, no double attempts or double gateway invocations.
+  EOT
+}
+
+variable "agentcore_rule_match_model" {
+  type        = string
+  default     = "us.amazon.nova-micro-v1:0"
+  description = "Requested model id the fallback rule matches (MatchModels)."
+}
+
+variable "agentcore_rule_primary_model" {
+  type        = string
+  default     = "us.amazon.nova-micro-v1:0"
+  description = "Model the rule routes to first on the invoke target (StaticRoute.Model)."
+}
+
+variable "agentcore_rule_fallback_model" {
+  type        = string
+  default     = "us.amazon.nova-lite-v1:0"
+  description = <<-EOT
+    Model the rule falls back to on the invoke target when the primary returns a 5XX/429 or a
+    connection/first-byte-timeout/unroutable error. MUST differ from the primary (the gateway
+    rejects a rule whose destinations are not distinct).
+  EOT
+}
