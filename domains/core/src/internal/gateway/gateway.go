@@ -84,6 +84,14 @@ type Route struct {
 	// requests keep working — which is exactly how it was found.
 	ReasoningStyle string `json:"reasoning_style,omitempty"`
 
+	// SamplingStyle declares which sampling-parameter shape the model accepts, for the
+	// direct "bedrock" (Converse) provider. "" (default) sends every sampling parameter;
+	// "adaptive" omits temperature, which the newer Anthropic models (claude-sonnet-5 and
+	// later) reject with a ValidationException. Without it a plain request carrying a
+	// temperature 400s and the fallback ladder silently downgrades it to another model.
+	// The sampling sibling of ReasoningStyle.
+	SamplingStyle string `json:"sampling_style,omitempty"`
+
 	// Capabilities feeds the routing eligibility filter. Absence counts as
 	// incapable of tool use and multimodal — deliberately conservative, so we do
 	// not repeat the bug of sending tool use to a model that returns
@@ -807,10 +815,11 @@ func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
 			ext = "aiplat-" + deploymentOrg
 		}
 		p = &bedrock.Adapter{
-			Pool:        bedrockPool,
-			ModelID:     r.ProviderModelID,
-			Route:       bedrock.Route{RoleARN: r.RoleARN, ExternalID: ext, Region: r.Region},
-			CachePrefix: r.PromptCache,
+			Pool:          bedrockPool,
+			ModelID:       r.ProviderModelID,
+			Route:         bedrock.Route{RoleARN: r.RoleARN, ExternalID: ext, Region: r.Region},
+			CachePrefix:   r.PromptCache,
+			SamplingStyle: r.SamplingStyle,
 		}
 	case "bedrock_gateway":
 		// Amazon Bedrock AgentCore Gateway. Deliberately NOT folded into the "bedrock"

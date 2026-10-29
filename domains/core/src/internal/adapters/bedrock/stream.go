@@ -68,10 +68,10 @@ func (a *Adapter) OpenStream(ctx context.Context, in ports.InvokeInput) (ports.P
 	if a.Pool == nil {
 		return nil, fmt.Errorf("bedrock: no client pool configured")
 	}
-	return openStream(ctx, a.Pool.ClientFor(ctx, a.Route), a.ModelID, in, a.CachePrefix)
+	return openStream(ctx, a.Pool.ClientFor(ctx, a.Route), a.ModelID, in, a.CachePrefix, a.SamplingStyle)
 }
 
-func openStream(ctx context.Context, cli converseStreamAPI, modelID string, in ports.InvokeInput, cachePrefix bool) (ports.ProviderStream, error) {
+func openStream(ctx context.Context, cli converseStreamAPI, modelID string, in ports.InvokeInput, cachePrefix bool, samplingStyle string) (ports.ProviderStream, error) {
 	system, conv := convertMessages(in.Messages)
 	if cachePrefix && len(system) > 0 {
 		system = append(system, &btypes.SystemContentBlockMemberCachePoint{
@@ -88,7 +88,7 @@ func openStream(ctx context.Context, cli converseStreamAPI, modelID string, in p
 	// Same helper as the buffered path, on purpose: ConverseInput and ConverseStreamInput
 	// are distinct types with identical members, so two literals would drift and the
 	// drifting half would be whichever one has less coverage.
-	if cfg, extra := applyInference(in); cfg != nil || extra != nil {
+	if cfg, extra := applyInference(in, samplingStyle); cfg != nil || extra != nil {
 		input.InferenceConfig = cfg
 		input.AdditionalModelRequestFields = extra
 	}

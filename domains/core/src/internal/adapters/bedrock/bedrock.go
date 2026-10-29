@@ -125,13 +125,25 @@ type Adapter struct {
 	// (config.routing[model].prompt_cache) because the cache-write charges a premium
 	// and only pays off when the prefix does repeat across requests.
 	CachePrefix bool
+
+	// SamplingStyle declares which sampling-parameter SHAPE this model accepts.
+	// Blank (default) forwards every sampling parameter, which is correct for the
+	// established models. "adaptive" OMITS temperature, because the newer Anthropic
+	// generations (claude-sonnet-5 and later) reject it with a ValidationException —
+	// see applyInference. It is the sampling sibling of the Anthropic-dialect
+	// ReasoningStyle, set per route from config.routing[model].sampling_style.
+	SamplingStyle string
 }
+
+// samplingAdaptive is the SamplingStyle value for a model that manages temperature
+// itself and rejects a client-supplied one.
+const samplingAdaptive = "adaptive"
 
 var _ ports.Provider = (*Adapter)(nil) // compile-time assertion
 
 func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Result, error) {
 	cli := a.Pool.ClientFor(ctx, a.Route)
-	return callBedrock(ctx, cli, a.ModelID, in, a.CachePrefix)
+	return callBedrock(ctx, cli, a.ModelID, in, a.CachePrefix, a.SamplingStyle)
 }
 
 // converseAPI is the narrow slice of the Bedrock client the buffered path needs, so the
@@ -158,7 +170,7 @@ type converseAPI interface {
 // temperature of 0 makes the model deterministic and a max_tokens of 0 is rejected — so
 // "the client said nothing" has to reach the provider as an absent field, letting the
 // model's own default stand.
-func applyInference(in ports.InvokeInput) (*btypes.InferenceConfiguration, document.Interface) {
+func applyInference(in ports.InvokeInput, samplingStyle string) (*btypes.InferenceConfiguration, document.Interface) {
 	var cfg *btypes.InferenceConfiguration
 	ensure := func() *btypes.InferenceConfiguration {
 		if cfg == nil {
@@ -169,7 +181,16 @@ func applyInference(in ports.InvokeInput) (*btypes.InferenceConfiguration, docum
 	if in.MaxOutputTokens > 0 {
 		ensure().MaxTokens = aws.Int32(int32(in.MaxOutputTokens))
 	}
-	if t := in.Inference.Temperature; t != nil {
+	// temperature is OMITTED on an "adaptive" route. The newer Anthropic generations
+	// (e.g. claude-sonnet-5) REJECT it: Converse answers
+	// ValidationException "temperature is deprecated for this model", and the request
+	// never reaches the model. Measured 2026-10-26 against us.anthropic.claude-sonnet-5.
+	// This is the sampling analogue of ReasoningStyle "adaptive": a newer model whose
+	// request shape dropped a field the older ones required. Sending temperature anyway
+	// turned every such request into a provider error that the fallback ladder then
+	// silently downgraded to a cheaper model. topP and the rest still pass through — the
+	// model keeps managing temperature itself.
+	if t := in.Inference.Temperature; t != nil && samplingStyle != samplingAdaptive {
 		ensure().Temperature = aws.Float32(float32(*t))
 	}
 	if p := in.Inference.TopP; p != nil {
@@ -359,7 +380,7 @@ func convertMessages(msgs []ports.Message) (system []btypes.SystemContentBlock, 
 	return system, conv
 }
 
-func callBedrock(ctx context.Context, cli converseAPI, modelID string, in ports.InvokeInput, cachePrefix bool) (ports.Result, error) {
+func callBedrock(ctx context.Context, cli converseAPI, modelID string, in ports.InvokeInput, cachePrefix bool, samplingStyle string) (ports.Result, error) {
 	system, conv := convertMessages(in.Messages)
 
 	// Prompt caching (per-route opt-in): marks the end of system with a cache point.
@@ -378,7 +399,7 @@ func callBedrock(ctx context.Context, cli converseAPI, modelID string, in ports.
 	if tc := ConvertToolsToBedrockConfig(in.Tools); tc != nil {
 		input.ToolConfig = tc
 	}
-	if cfg, extra := applyInference(in); cfg != nil || extra != nil {
+	if cfg, extra := applyInference(in, samplingStyle); cfg != nil || extra != nil {
 		input.InferenceConfig = cfg
 		input.AdditionalModelRequestFields = extra
 	}

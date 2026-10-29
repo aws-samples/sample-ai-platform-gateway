@@ -33,7 +33,7 @@ func TestApplyInference_MapsEveryParameter(t *testing.T) {
 			TopP:        fp(0.8),
 			Stop:        []string{"STOP"},
 		},
-	})
+	}, "")
 	if cfg == nil {
 		t.Fatal("InferenceConfig is nil: every parameter the client sent would be dropped")
 	}
@@ -58,7 +58,7 @@ func TestApplyInference_MapsEveryParameter(t *testing.T) {
 // neutral act: temperature 0 makes the model deterministic and max_tokens 0 is rejected
 // outright, so "the client said nothing" has to reach Bedrock as an absent field.
 func TestApplyInference_AbsentMeansAbsent(t *testing.T) {
-	cfg, extra := applyInference(ports.InvokeInput{})
+	cfg, extra := applyInference(ports.InvokeInput{}, "")
 	if cfg != nil {
 		t.Errorf("InferenceConfig = %+v, want nil when the client sent no parameter", cfg)
 	}
@@ -70,7 +70,7 @@ func TestApplyInference_AbsentMeansAbsent(t *testing.T) {
 // temperature 0 is a real request for determinism and must survive as 0 — the exact case a
 // non-pointer field would make indistinguishable from "unset".
 func TestApplyInference_ZeroTemperatureIsSent(t *testing.T) {
-	cfg, _ := applyInference(ports.InvokeInput{Inference: ports.InferenceParams{Temperature: fp(0)}})
+	cfg, _ := applyInference(ports.InvokeInput{Inference: ports.InferenceParams{Temperature: fp(0)}}, "")
 	if cfg == nil || cfg.Temperature == nil {
 		t.Fatal("temperature 0 was dropped; 0 is deterministic, not unset")
 	}
@@ -79,11 +79,34 @@ func TestApplyInference_ZeroTemperatureIsSent(t *testing.T) {
 	}
 }
 
+// An "adaptive" route OMITS temperature, because the newer Anthropic models reject it
+// (ValidationException "temperature is deprecated for this model"). The OTHER sampling
+// parameters must still pass through — only temperature is dropped. topP, maxTokens and
+// stop are the model's to keep.
+func TestApplyInference_AdaptiveOmitsTemperatureOnly(t *testing.T) {
+	cfg, _ := applyInference(ports.InvokeInput{
+		MaxOutputTokens: 64,
+		Inference:       ports.InferenceParams{Temperature: fp(0), TopP: fp(0.9), Stop: []string{"X"}},
+	}, "adaptive")
+	if cfg == nil {
+		t.Fatal("InferenceConfig is nil; topP/maxTokens/stop must still be sent on an adaptive route")
+	}
+	if cfg.Temperature != nil {
+		t.Errorf("Temperature = %v, want nil (adaptive route must omit it)", aws.ToFloat32(cfg.Temperature))
+	}
+	if aws.ToFloat32(cfg.TopP) != 0.9 {
+		t.Errorf("TopP = %v, want 0.9 (only temperature is dropped)", cfg.TopP)
+	}
+	if aws.ToInt32(cfg.MaxTokens) != 64 || len(cfg.StopSequences) != 1 {
+		t.Errorf("maxTokens/stop must survive: %+v", cfg)
+	}
+}
+
 // thinkingDoc marshals the free-form document back to JSON so the shape sent to Bedrock can
 // be asserted the way the service will read it.
 func thinkingDoc(t *testing.T, in ports.InvokeInput) map[string]interface{} {
 	t.Helper()
-	_, extra := applyInference(in)
+	_, extra := applyInference(in, "")
 	if extra == nil {
 		return nil
 	}
@@ -164,7 +187,7 @@ func TestCallBedrock_AttachesInferenceToTheRequest(t *testing.T) {
 			Reasoning:   &ports.ReasoningRequest{Effort: "low", BudgetTokens: 1024},
 		},
 	}
-	if _, err := callBedrock(context.Background(), cc, "model-x", in, false); err != nil {
+	if _, err := callBedrock(context.Background(), cc, "model-x", in, false, ""); err != nil {
 		t.Fatalf("callBedrock: %v", err)
 	}
 	if cc.in == nil {
@@ -211,7 +234,7 @@ func TestOpenStream_CarriesTheSameInferenceConfig(t *testing.T) {
 		},
 	}
 	// The error is expected (no event stream); the input is what is under test.
-	_, _ = openStream(context.Background(), cs, "model-x", in, false)
+	_, _ = openStream(context.Background(), cs, "model-x", in, false, "")
 	if cs.in == nil {
 		t.Fatal("ConverseStream was never called")
 	}
