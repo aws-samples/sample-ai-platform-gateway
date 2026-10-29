@@ -38,10 +38,10 @@ DOCS (date) means only the AWS doc asserts it. UNVERIFIED means not yet measured
 | Rule `matchModels` plus `routeToTarget` staticRoute with model rewrite | DOCS 2026-10-26, shape UNVERIFIED (B7) | AIPlat picks model and target in `routing.Decide` | Adapt (Phase 2), AIPlat stays the cost owner (C4) | Served model can differ from requested. Must reconcile (C2) | High |
 | `weightedRoute` (A/B, canary) | DOCS 2026-10-26 | AIPlat has its own canary (`FeaturePolicy.Canary`) | Evaluate (Phase 2). Risk of two canary owners | Canary already has ledger fields. Two owners would double-count | High |
 | Fallback chain `targetFallback`, `triggerOn`, `firstByteTimeoutMilliseconds` | MEASURED 2026-10-26 (B4, 5.6): fallback fires, client-transparent | AIPlat has its own fallback ladder (`buildChain`) | Adapt (Phase 2), one ladder per route (C4) | One row per attempt, each a Gateway charge (C2) | High |
-| Circuit breaker (ENABLED default) | PARTIAL 2026-10-26 (B4, 5.6): latency trend consistent with breaker opening; open/close timing needs routing logs (B5) | None | Adopt with fallback (Phase 2) | Skipped primary is not billed. Ledger must not invent a row for it | Medium |
-| Per-attempt billing | DOCS 2026-10-26 (every outbound attempt is one gateway invocation) | AIPlat bills model cost per served request, plus escalation attempts | Adopt accounting (Phase 2/4) | New charge line per attempt. Gateway fee per invocation UNVERIFIED (price) | High |
-| Routing logs (served target and model) | DOCS 2026-10-26, latency and join key UNVERIFIED (B5) | None. AIPlat records served model from its own decision | Adopt (Phase 4) for reconciliation | The only source of served target under Gateway fallback (C2) | High |
-| Response identifies served target or model | UNVERIFIED (B6). Docs say the caller gets no indicator | AIPlat knows the served model because it chose it | Drives reconciliation design | If nothing identifies it, every Gateway-fallback row starts `unreconciled` (C2) | High |
+| Circuit breaker (ENABLED default) | PARTIAL 2026-10-26 (B5, 5.7): did NOT open across 25 deterministic 4XX invalid-model failures (behaves like UNROUTABLE, does not feed the breaker); opening needs a 5XX/connection failure, not yet measured | None | Adopt with fallback (Phase 2) | Skipped primary is not billed. Ledger must not invent a row for it | Medium |
+| Per-attempt billing | MEASURED 2026-10-26 (B5, 5.7): a fallback request logs 2 outbound attempts (failed primary + fallback) | AIPlat bills model cost per served request, plus escalation attempts | Adopt accounting (Phase 2/4) | New charge line per attempt. Gateway fee per invocation UNVERIFIED (price) | High |
+| Routing logs (served target and model) | MEASURED 2026-10-26 (B5, 5.7): vended APPLICATION_LOGS carry requestedModelId→resolvedModelId, targetName, reason servedViaFallbackHop:N; ~1-2 min latency; join by trace_id | None. AIPlat records served model from its own decision | Adopt (Phase 4) for reconciliation | The only source of served target under Gateway fallback (C2) | High |
+| Response identifies served target or model | MEASURED 2026-10-26 (B6 via B5, 5.7): caller RESPONSE carries no indicator, but the vended routing LOG names resolvedModelId + targetName + servedViaFallbackHop | AIPlat knows the served model because it chose it | Drives reconciliation design: join the routing log by trace_id (C2) | If nothing identifies it, every Gateway-fallback row starts `unreconciled` (C2) | High |
 | AgentCore Policy and Bedrock Guardrails at gateway | DOCS 2026-10-26 | AIPlat guardrails (PII mask, secret block, injection heuristic) run before the provider call | Evaluate (Phase 3), one owner per check (C4) | None directly. Double masking must be avoided | Medium |
 | Bedrock guardrail on a translated route | DOCS 2026-10-26: rejected with 400 | Not used | Reject on translated routes | None | Low |
 | Rate limits per target, per caller, per tool | DOCS (gateway-rate-limits best practices, not yet fetched) UNVERIFIED | AIPlat enforces per-scope RPM and TPM | Keep AIPlat as enforcer (R3.2) unless a forwardable key exists | None | Medium |
@@ -305,6 +305,45 @@ The inference per-invocation gateway fee remains UNVERIFIED (price), see 5.2.
 
 The rule stack and the probe were deleted afterward; the gateway is back to default routing
 (`fallback-probe` → 404 re-confirmed).
+
+### 5.7 B5 routing logs + B6 served-target attribution. MEASURED 2026-10-26
+
+Enabled the gateway's vended APPLICATION_LOGS via the standard CloudWatch delivery chain
+(`logs put-delivery-source` with the gateway ARN + log-type APPLICATION_LOGS →
+`put-delivery-destination` → `create-delivery`), log group
+`/aws/vendedlogs/bedrock-agentcore/gateway/APPLICATION_LOGS/<gateway_id>`. Then provisioned a
+probe fallback rule (priority 50, MatchModels `fallback-probe`, StaticRoute invoke/BADID with
+a healthy-Nova TargetFallback) and sent a 25-request burst. Logs appeared ~1-2 min later.
+
+Findings (all CONFIRMED from the logs):
+
+- PER-ATTEMPT BILLING CONFIRMED. Each request_id emits TWO
+  `Executing Http request for target <id> - RequestId: <rid>` lines — the failed primary
+  (invalid model id, HTTP 400) and the fallback — i.e. two outbound attempts, each billed as
+  one gateway invocation. This is the direct measurement the B4 note was missing.
+- SERVED-TARGET ATTRIBUTION CONFIRMED (B6 resolved). Each request emits a routing record:
+  `{"outcome":"QUALIFIED","matchType":"QUALIFIED_OVERRIDE","requestedModelId":"fallback-probe",
+  "resolvedModelId":"us.amazon.nova-micro-v1:0","targetName":"invoke",
+  "requestPath":"/model/fallback-probe/invoke","reason":"servedViaFallbackHop:1"}`. So while
+  the CALLER response carries no served-destination indicator, the vended log DOES — this is
+  the reconciliation source (C2). `reason: servedViaFallbackHop:N` names which hop served.
+- RULE MATCH LOGGED: `Action resolved from rule <ruleId> (priority 50.0): Route to target:
+  targetName=invoke`. The rule id and priority are in the log.
+- JOIN KEY / LATENCY. The gateway log carries `request_id`, `trace_id`, `span_id`. The join
+  to AIPlat's own request id is by `trace_id`/`span_id` or timestamp correlation (the gateway
+  does not see AIPlat's request id); when AIPlat calls the gateway it can propagate its id as
+  a header for a direct join (future work). Logs were queryable ~1-2 min after the traffic.
+- CIRCUIT BREAKER — did NOT open for this failure type. Across all 25 consecutive identical
+  failures every request still showed 2 attempts (primary not skipped). Consistent with the
+  primary failure being a deterministic 4XX "invalid model identifier", which behaves like
+  the documented UNROUTABLE case ("advances the chain but does not feed the circuit breaker").
+  Forcing the breaker open therefore needs a 5XX / connection-type failure (a stub primary
+  that returns 503), not run here to keep cost and scope bounded. Net: the breaker is real but
+  a 4XX invalid-model fallback pays the failed-primary invocation every time.
+
+B5 cost: 25 gateway calls × 2 attempts ≈ 50 invocations + a few hundred Nova tokens — a
+fraction of a cent. The probe rule, the log delivery, and the log group were all deleted
+afterward; the shipped Phase 2 module rule (nova-micro → nova-lite) remains.
 
 ## 6. Open questions
 
