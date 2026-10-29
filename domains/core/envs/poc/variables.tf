@@ -123,3 +123,13 @@ variable "agentcore_gateway_region" {
     ladder; us-west-2 serves only claude-haiku-4-5.
   EOT
 }
+
+variable "agentcore_invoke_enabled" {
+  type = bool
+  # This poc env opts in to the native InvokeModel target so Nova and Llama routes can use
+  # the gateway transport. The reusable module keeps its own default at false, so turning it
+  # on is this environment's deliberate choice. A plan with this set to false shows zero
+  # changes against the current state (the target simply is not created).
+  default     = true
+  description = "Create the AgentCore Gateway native InvokeModel target. This poc env opts in; the module default stays false."
+}

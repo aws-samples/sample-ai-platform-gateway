@@ -34,6 +34,7 @@ import (
 	"github.com/aiplat/core/internal/adapters/anthropic"
 	"github.com/aiplat/core/internal/adapters/bedrock"
 	"github.com/aiplat/core/internal/adapters/bedrockgateway"
+	"github.com/aiplat/core/internal/adapters/bedrockinvoke"
 	"github.com/aiplat/core/internal/adapters/ddbhints"
 	"github.com/aiplat/core/internal/adapters/google"
 	"github.com/aiplat/core/internal/adapters/openaicompat"
@@ -828,6 +829,22 @@ func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
 			return nil, err
 		}
 		p = gp
+	case "bedrock_invoke":
+		// Amazon Bedrock AgentCore Gateway, NATIVE InvokeModel path. Separate from
+		// "bedrock_gateway" (which is the Anthropic Messages path, Claude only): this
+		// reaches the families the Messages path cannot, because the model id travels in
+		// the URL and a ':' is accepted there (measured 2026-10-26). Signs with the SAME
+		// gateway signer. See adapters/bedrockinvoke.
+		ip, err := bedrockinvoke.New(httpc, gatewaySigner, bedrockinvoke.Route{
+			BaseURL:     r.BaseURL,
+			Region:      r.Region,
+			ModelID:     r.ProviderModelID,
+			PromptCache: r.PromptCache,
+		})
+		if err != nil {
+			return nil, err
+		}
+		p = ip
 	case "openai_compatible":
 		p = &openaicompat.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret)}
 	case "anthropic":

@@ -44,4 +44,8 @@ module "domain" {
   # credentials were wrong.
   agentcore_gateway_enabled = var.agentcore_gateway_enabled
   agentcore_gateway_region  = var.agentcore_gateway_region
+
+  # Optional native InvokeModel target (Nova, Llama, versioned ids). Same forwarding rule:
+  # a variable declared in the module but not listed here silently takes the module default.
+  agentcore_invoke_enabled = var.agentcore_invoke_enabled
 }

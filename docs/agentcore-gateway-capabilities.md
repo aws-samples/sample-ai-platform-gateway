@@ -1,0 +1,220 @@
+# AgentCore Gateway capabilities for AIPlat (Phase 0 discovery)
+
+Date started 2026-10-26. Branch `feat/agentcore-gateway-full`. This document is discovery
+only. It states what the Gateway offers, what AIPlat does today, and what AIPlat should
+adopt, adapt, or reject. Live-measurement cells are marked UNVERIFIED until a batch in the
+measurement plan has run and filled them with a date.
+
+Sources read for this draft:
+
+- Code at the repo HEAD on 2026-10-26: `domains/core/tf/agentcore.tf`,
+  `domains/core/src/internal/adapters/bedrockgateway/bedrockgateway.go`,
+  `domains/core/src/internal/gateway/gateway.go`, `domains/core/src/internal/routing/*`,
+  `domains/observability/src/cmd/usage-writer/main.go`, `demo/check-agentcore.mjs`.
+- AWS docs fetched 2026-10-26: gateway-targets-inference, gateway-target-inference-invokemodel,
+  gateway-rules-fallback, API_CreateGatewayRule, and the 2026-10-22 what is new post.
+
+A doc discrepancy to flag (C6): the generic `CreateGatewayRule` API reference (fetched
+2026-10-26) describes conditions as principal or path matching and actions as route-to-target
+or config-bundle override, while the inference fallback devguide shows `matchModels` and
+`routeToTarget` with a `fallback` block. The inference-specific devguide is the one that
+matches the brief. The exact request shape the deployed control plane accepts is UNVERIFIED
+and is batch B7 below.
+
+## 1. Feature matrix
+
+Supported column legend: MEASURED (date) means AIPlat confirmed it live in `envs/poc`.
+DOCS (date) means only the AWS doc asserts it. UNVERIFIED means not yet measured.
+
+| Gateway capability | Supported | AIPlat today | Proposal | Impact on the ledger | Risk |
+|---|---|---|---|---|---|
+| `/inference/v1/messages` Anthropic dialect | MEASURED by 1.4.0 (code comment, undated) RE-VERIFY | Used by `bedrock_gateway` provider, Claude only | Keep | None. Current path, cache counters already honest | Low |
+| InvokeModel `/inference/model/{model}/invoke` | DOCS 2026-10-26 | Not used | Adopt (Phase 1) | New transport. Cost still computed from AIPlat price table, no change to attribution | Medium, pending C3 cache test |
+| `/invoke-with-response-stream` | DOCS 2026-10-26 | Not used (gateway path); `bedrock` uses ConverseStream direct | Adopt (Phase 1) | Same as above. Streaming usage-frame shape UNVERIFIED | Medium |
+| `bedrock-runtime` connector target | DOCS 2026-10-26, console did not list it on 2026-10-25 | Not present. Repo has `mantle` and `runtime` provider targets | Adopt via API or IaC (Phase 1) | None directly | Medium, IaC support UNVERIFIED (B7) |
+| Versioned ids with `:` on InvokeModel path | MEASURED 2026-10-26 YES | Rejected on `/v1/messages`, documented in agentcore.tf and bedrockgateway.go | ADOPT. Widen Nova and Llama routes to the gateway InvokeModel transport (R1.2) | None. Enables more routes on the gateway transport | Low (measured) |
+| Dialect translation (Bedrock, OpenAI, Anthropic) | DOCS 2026-10-26 | Not used. AIPlat already owns dialects per adapter | Reject for now (see 3) | Would hide the served dialect from the adapter | Medium |
+| Aggregated model list `/inference/v1/models` | DOCS 2026-10-26 | Console discovery uses Bedrock List APIs plus AIPlat price table | Evaluate (Phase 3), merge with price table | None. Models without a price still excluded from auto-cheapest (G2/G3) | Low |
+| Rule `matchModels` plus `routeToTarget` staticRoute with model rewrite | DOCS 2026-10-26, shape UNVERIFIED (B7) | AIPlat picks model and target in `routing.Decide` | Adapt (Phase 2), AIPlat stays the cost owner (C4) | Served model can differ from requested. Must reconcile (C2) | High |
+| `weightedRoute` (A/B, canary) | DOCS 2026-10-26 | AIPlat has its own canary (`FeaturePolicy.Canary`) | Evaluate (Phase 2). Risk of two canary owners | Canary already has ledger fields. Two owners would double-count | High |
+| Fallback chain `targetFallback`, `triggerOn`, `firstByteTimeoutMilliseconds` | DOCS 2026-10-26 | AIPlat has its own fallback ladder (`buildChain`) | Adapt (Phase 2), one ladder per route (C4) | One row per attempt, each a Gateway charge (C2) | High |
+| Circuit breaker (ENABLED default) | DOCS 2026-10-26, open/close timing UNVERIFIED (B4) | None | Adopt with fallback (Phase 2) | Skipped primary is not billed. Ledger must not invent a row for it | Medium |
+| Per-attempt billing | DOCS 2026-10-26 (every outbound attempt is one gateway invocation) | AIPlat bills model cost per served request, plus escalation attempts | Adopt accounting (Phase 2/4) | New charge line per attempt. Gateway fee per invocation UNVERIFIED (price) | High |
+| Routing logs (served target and model) | DOCS 2026-10-26, latency and join key UNVERIFIED (B5) | None. AIPlat records served model from its own decision | Adopt (Phase 4) for reconciliation | The only source of served target under Gateway fallback (C2) | High |
+| Response identifies served target or model | UNVERIFIED (B6). Docs say the caller gets no indicator | AIPlat knows the served model because it chose it | Drives reconciliation design | If nothing identifies it, every Gateway-fallback row starts `unreconciled` (C2) | High |
+| AgentCore Policy and Bedrock Guardrails at gateway | DOCS 2026-10-26 | AIPlat guardrails (PII mask, secret block, injection heuristic) run before the provider call | Evaluate (Phase 3), one owner per check (C4) | None directly. Double masking must be avoided | Medium |
+| Bedrock guardrail on a translated route | DOCS 2026-10-26: rejected with 400 | Not used | Reject on translated routes | None | Low |
+| Rate limits per target, per caller, per tool | DOCS (gateway-rate-limits best practices, not yet fetched) UNVERIFIED | AIPlat enforces per-scope RPM and TPM | Keep AIPlat as enforcer (R3.2) unless a forwardable key exists | None | Medium |
+| No fallback once streaming started | DOCS 2026-10-26 | AIPlat resolves the fallback chain before the first byte on stream | Align. Matches AIPlat's existing rule | A streamed attempt that fails mid-stream is one row, status error | Medium |
+
+## 2. What AIPlat will NOT adopt (preliminary, pending measurement)
+
+- Gateway dialect translation across providers. AIPlat already owns each dialect in its own
+  adapter, and the per-dialect usage traps (Anthropic two-event usage, Gemini cumulative
+  usage, cache-token inclusivity) are handled per adapter today. Letting the Gateway
+  translate would hide which dialect actually served the request, which is the exact
+  information the cost model needs to read token counters correctly (risk to G1 and G2).
+- Bedrock Guardrails on translated routes. The AWS doc (2026-10-26) states the Gateway
+  rejects a Bedrock InvokeModel request that carries a customer guardrail on a translated
+  route with 400 ValidationException. Not usable there by design.
+- A second fallback ladder on a route that already uses the AIPlat ladder (C4). Enabling
+  Gateway fallback on such a route is rejected until the design names one owner.
+- Relying on the caller-visible response to learn the served target. The AWS doc
+  (2026-10-26) states the Gateway adds no caller-facing indicator of which destination
+  served. Reconciliation from routing logs is the only honest source (C2).
+- `/inference/v1/chat/completions` for any route with prompt cache. Already rejected in
+  1.4.0 because that path returns no cache counters. Re-stated here for completeness.
+
+## 3. Ownership decisions to confirm in design.md (checkpoint 2)
+
+- Routing and cost: AIPlat owns model selection, auto-cheapest, budget, allowlist, scopes.
+- Resilience inside one dialect: the Gateway owns fallback and the circuit breaker, on
+  routes AIPlat marks for it. AIPlat's ladder skips those routes.
+- Canary: exactly one of AIPlat `FeaturePolicy.Canary` or Gateway `weightedRoute` per route.
+- Guardrails: name the owner per check. PII and secrets likely stay in AIPlat (deterministic,
+  already measured). AgentCore Policy evaluated for cross-provider content rules.
+- Rate limits: AIPlat stays the per-scope enforcer unless B-rate proves a forwardable key.
+
+## 4. Measurement plan (costed, per C8)
+
+All batches run in `envs/poc`, region us-west-2 for the deployment and us-east-1 for the
+gateway (the gateway region today, see agentcore.tf). Models: Claude Haiku 4.5 and Amazon
+Nova Micro. Token cost per test call is a few hundred tokens, which is a fraction of one
+cent. The dominant unknown is the Gateway per-invocation fee, marked UNVERIFIED (price), to
+confirm from the Bedrock AgentCore pricing page before B1. No batch runs until the human
+approves this plan (checkpoint 1).
+
+| Batch | Goal | Creates | Calls | Models | Est. model spend |
+|---|---|---|---|---|---|
+| B1 | InvokeModel path works, and whether `:` ids work on it | 1 bedrock-runtime connector target | ~8 | Nova Micro, 1 Llama, 1 Cohere embed, 1 Claude `-v1:0` | < $0.05 plus 8 gateway invocations |
+| B2 | Streaming on `/invoke-with-response-stream`, first vs last token, usage-frame shape | reuses B1 target | ~4 | Haiku 4.5 | < $0.05 plus 4 invocations |
+| B3 | Cache counters byte-identical to direct Bedrock, per path (C3) | none new | ~6 | Haiku 4.5 | < $0.10 plus 6 invocations, prompt cache write adds a premium |
+| B4 | Fallback triggers (503, 429, first-byte timeout) and circuit breaker open and close timing, and per-attempt billing | 1 stub primary Lambda (503/sleep/OK by env var), 1 provider target for it, 1 gateway rule with fallback | ~15 | Haiku 4.5 as the healthy fallback | < $0.10 plus up to ~25 invocations (failed primaries count) |
+| B5 | Routing logs: fields, latency until available, join key to the AIPlat request id | enable routing logs sink | ~6 | Haiku 4.5 | < $0.05 plus 6 invocations |
+| B6 | Response headers and body: does anything identify the served target or model | folded into B1 and B4 | 0 extra | n/a | $0 |
+| B7 | Terraform support: which `aws` provider version covers the bedrock-runtime connector and gateway rules, or whether to use awscc, CloudFormation, or a provisioning Lambda | none (read provider schema and docs) | 0 | n/a | $0 |
+
+Total estimated model spend across B1 to B5 is under $0.40. The gateway invocation fee is
+UNVERIFIED (price) and must be confirmed first. Fallback batches intentionally generate
+failed primary attempts, which the AWS doc (2026-10-26) says are billed as gateway
+invocations, so B4 is the batch to watch for cost.
+
+## 5. Results
+
+### 5.1 B7 Terraform support. MEASURED 2026-10-26 (provider schema of `aws` 6.71.0)
+
+Inspected the real `aws` 6.71.0 resource schemas. The result is split, not uniform.
+
+TERRAFORM-SUPPORTED (Phase 1 and Phase 3 provisioning stays in `agentcore.tf`):
+
+- `aws_bedrockagentcore_gateway_target` has `target_configuration { inference { provider {
+  endpoint, operation { path, provider_path, model { model } } } } }` and also a
+  `connector { source { connector_id } }` form. The InvokeModel target is a PROVIDER config
+  with operations `/model/{model}/invoke` and `/model/{model}/invoke-with-response-stream`,
+  NOT the connector. Reason: the repo already uses provider targets on purpose. A connector
+  runs model discovery at creation time as an AWS-owned principal that does not satisfy the
+  confused-deputy `aws:SourceAccount`/`aws:SourceArn` conditions on the execution role (see
+  the comment on the `mantle` target in `agentcore.tf`). Keeping a provider config preserves
+  those conditions and needs no new IAM (the role already grants `bedrock:InvokeModel` and
+  `bedrock:InvokeModelWithResponseStream` on `foundation-model/*` and `inference-profile/*`).
+- `aws_bedrockagentcore_policy` (with a `definition { cedar { statement } }`) and
+  `aws_bedrockagentcore_policy_engine` are present, so AgentCore Policy for Phase 3 is
+  Terraform.
+
+NOT TERRAFORM-SUPPORTED YET (Phase 2 fallback needs another path):
+
+- `aws_bedrockagentcore_gateway_rule` 6.71.0 is the GENERIC rule, not the inference rule.
+  Its `condition` has only `match_paths` and `match_principals`. Its `action` has
+  `route_to_target { static_route { target_name } | weighted_route { traffic_split } }` and
+  `configuration_bundle`. There is NO `match_models`, NO `fallback` / `targetFallback` /
+  `triggerOn` / `firstByteTimeoutMilliseconds` / `circuitBreaker`, and `static_route` has no
+  model rewrite. So the 2026-10-22 inference fallback feature is not yet in the provider.
+  Phase 2 options, to decide in Phase 2 with a short spike: the `awscc` provider (check
+  whether it carries the inference rule shape), a CloudFormation resource, or a small
+  provisioning Lambda that calls `CreateGatewayRule`. The local AWS CLI cannot be used for a
+  one-off here (it predates AgentCore, no `bedrock-agentcore-control` command).
+
+Environment note (2026-10-26): the AWS CLI on this workstation predates AgentCore, so
+ad-hoc control-plane calls via the CLI do not work here. Provisioning of targets and policy
+is Terraform. Data-plane measurement calls go through the AIPlat router, which already signs
+SigV4 for service `bedrock-agentcore`.
+
+### 5.2 Pricing. PARTIAL 2026-10-26
+
+The public AgentCore pricing page (fetched 2026-10-26) lists Gateway tool pricing
+(InvokeTool at $5 per million, Search at $25 per million, Web Search at $7 per 1,000). It
+does not list a separate per-invocation price for inference targets. The inference-target
+invocation fee is therefore UNVERIFIED (price). Conservative assumption for the cost guard:
+even at the tool rate of $5 per million, a few hundred measurement calls cost a fraction of
+one cent in gateway fees, so model-token spend (under $0.40 total across B1 to B5) is the
+binding cost. Confirm the real inference invocation price before Phase 2 production use.
+
+### 5.3 Live scenarios
+
+B1 ran 2026-10-26 against the deployed `invoke` target (us-east-1 gateway). Findings:
+
+- The `:` in a model id is NOT rejected on the InvokeModel path. `us.amazon.nova-micro-v1:0`
+  returned HTTP 200 with a valid response. The restriction documented for `/v1/messages`
+  does not apply when the model id travels in the URL path.
+- Both SigV4 signing services work: `bedrock-agentcore` and `bedrock` each returned 200. The
+  adapter will keep `bedrock-agentcore` for consistency with the Messages transport.
+- The response is the NATIVE Bedrock schema for the family, not the Anthropic Messages
+  shape. Nova returned `{"output":{"message":{"content":[{"text":...}]}},"stopReason":...,
+  "usage":{"inputTokens","outputTokens","totalTokens","cacheReadInputTokenCount",
+  "cacheWriteInputTokenCount"}}`. So the InvokeModel transport needs its own response parser
+  (per-family native), it cannot reuse the Anthropic adapter. Cache counter FIELDS are
+  present on this path (value 0 on an uncached call). Byte-identity vs a direct Bedrock
+  InvokeModel call is B3.
+- A FAILED-then-fixed operational finding: a bedrock-runtime InvokeModel target runs a model
+  catalog scan at creation AS the execution role, so it needs `bedrock:ListFoundationModels`
+  (and the sibling list actions). Added in `aws_iam_role_policy.agentcore_invoke_discovery`.
+  IAM is eventually consistent, so the first apply after adding the grant can still 403. A
+  `time_sleep` between the grant and the target is the one-shot fix (tracked for the test
+  pass).
+
+| Scenario | Path | Model | Attempts | Latency | Gateway charge | Model cost | Cache counters | Ledger row status |
+|---|---|---|---|---|---|---|---|---|
+| B1 id with colon | /inference/model/{id}/invoke | us.amazon.nova-micro-v1:0 | 1 | fast (~1s) | 1 invocation (price UNVERIFIED) | ~$0.0000004 | fields present, 0 on uncached | n/a (direct probe) |
+| B2 OpenAI-dialect | /inference/v1/chat/completions | us.amazon.nova-micro-v1:0 | 1 | n/a | 0 | 0 | n/a | HTTP 400, Nova rejects `max_tokens` on the translated path |
+| B2 native stream | /inference/model/{id}/invoke-with-response-stream | us.amazon.nova-micro-v1:0 | 1 | ~1s TTFB | 1 invocation | ~$0.0000004 | Converse-style event-stream (`application/vnd.amazon.eventstream`) | n/a (direct probe) |
+| (pending B3 cached, B4, B5) | | | | | | | | |
+
+B2 findings (2026-10-26):
+
+- The gateway OpenAI-dialect path `/inference/v1/chat/completions` is NOT a clean reuse for
+  Nova. A standard OpenAI body with `max_tokens` returns HTTP 400 "extraneous key
+  [max_tokens] is not permitted" (the gateway validates against the Nova schema after
+  relocating the id). So the `openaicompat` adapter cannot be reused as-is for Nova on the
+  gateway. Decision: the InvokeModel transport uses the NATIVE path, not the OpenAI-dialect
+  path.
+- The native `/model/{id}/invoke-with-response-stream` returns the AWS binary event-stream
+  (`application/vnd.amazon.eventstream`) with Converse-shaped chunks (`messageStart`,
+  `contentBlockDelta.delta.text`, `contentBlockStop`, and a trailing metadata chunk with
+  usage). This is the shape the existing `bedrock` ConverseStream parser already understands,
+  so the new adapter reuses that parsing rather than inventing one.
+- Design decision for the InvokeModel adapter: native path, per model family. Start with
+  Amazon Nova (native InvokeModel body is the messages/inferenceConfig shape, response is
+  `output.message.content[].text` plus `usage.{inputTokens,outputTokens,
+  cacheReadInputTokenCount,cacheWriteInputTokenCount}`). Meta Llama has a divergent native
+  schema (`prompt`/`generation`) and is added only if a route needs it.
+
+## 6. Open questions
+
+Resolved 2026-10-26:
+
+- Terraform support (was B7). RESOLVED. `aws` provider 6.71.0 has
+  `aws_bedrockagentcore_gateway_rule`, `connector` and `operations` on the target, and
+  `aws_bedrockagentcore_policy`. All provisioning stays in Terraform. See 5.1.
+- Rule request shape. The exact `matchModels`/`routeToTarget` shape is now the provider's
+  `aws_bedrockagentcore_gateway_rule` schema, so the generic-vs-inference API-reference
+  discrepancy is moot for provisioning. The data-plane behavior is still measured in B4.
+
+Still open (measured in the batches):
+
+- Inference-target per-invocation price (UNVERIFIED price). See 5.2.
+- `:` in model ids on the InvokeModel path (B1).
+- Cache counters byte-identical on `/invoke` and `/invoke-with-response-stream` (B3).
+- Streaming usage-frame shape on `/invoke-with-response-stream` (B2).
+- Fallback triggers, circuit breaker timing, per-attempt billing (B4).
+- Routing-log fields, latency until available, join key to the AIPlat request id (B5).
+- Whether any response field identifies the served target or model (B6).

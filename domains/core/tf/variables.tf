@@ -145,3 +145,20 @@ variable "agentcore_gateway_region" {
     error_message = "invalid region."
   }
 }
+
+variable "agentcore_invoke_enabled" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Add an AgentCore Gateway inference target for the native Amazon Bedrock InvokeModel API
+    (/inference/model/{model}/invoke and /inference/model/{model}/invoke-with-response-stream).
+    It reaches the model families the Anthropic Messages path cannot (Amazon Nova, Meta
+    Llama, and versioned Bedrock ids ending in -v1:0). OFF by default and also requires
+    agentcore_gateway_enabled. It is a PROVIDER target, not the bedrock-runtime connector,
+    so the execution role's confused-deputy trust conditions stay intact (a connector
+    discovers models at creation time as an AWS-owned principal that fails those conditions,
+    see the mantle target comment in agentcore.tf). It needs no new IAM: the execution role
+    already grants bedrock:InvokeModel and bedrock:InvokeModelWithResponseStream on
+    foundation-model/* and inference-profile/*.
+  EOT
+}
