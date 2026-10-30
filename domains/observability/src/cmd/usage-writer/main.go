@@ -101,7 +101,13 @@ type usage struct {
 	// very baseline it is being compared against.
 	Canary      bool   `json:"canary"`
 	CanaryRoute string `json:"canary_route"`
-	Ts          string `json:"ts"`
+	// GatewayOwned marks a row whose resilience the AgentCore Gateway owns (a
+	// gateway_fallback route): the served model and attempt count are not known to AIPlat
+	// and live only in the gateway's routing log. ReconcileState is "pending" for such a
+	// row. Both are absent on every other row — absence means AIPlat owns and knows it.
+	GatewayOwned   bool   `json:"gateway_owned"`
+	ReconcileState string `json:"reconcile_state"`
+	Ts             string `json:"ts"`
 }
 
 func s(v string) *ddbtypes.AttributeValueMemberS { return &ddbtypes.AttributeValueMemberS{Value: v} }
@@ -197,6 +203,15 @@ func buildItem(u usage) map[string]ddbtypes.AttributeValue {
 		if u.CanaryRoute != "" {
 			item["canary_route"] = s(u.CanaryRoute)
 		}
+	}
+	// Written only when set, so absence stays distinct from "owned and known": a
+	// gateway_fallback row is provisional until the gateway-fact table (pk=GATEWAY) is
+	// consulted for the true served target. See the reconciler (core/cmd/usage-reconciler).
+	if u.GatewayOwned {
+		item["gateway_owned"] = &ddbtypes.AttributeValueMemberBOOL{Value: true}
+	}
+	if u.ReconcileState != "" {
+		item["reconcile_state"] = s(u.ReconcileState)
 	}
 	if u.Reason != "" {
 		item["reason"] = s(u.Reason)

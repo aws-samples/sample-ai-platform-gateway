@@ -160,3 +160,22 @@ func TestChar_TTLFallsBackToNowOnBadTs(t *testing.T) {
 		t.Errorf("expires_at = %d, want within [%d, %d] (now + hotRetention)", got, lo, hi)
 	}
 }
+
+// TestChar_GatewayOwnedReconcile: a gateway_fallback row carries gateway_owned=true and
+// reconcile_state=pending; every other row omits BOTH (absence = AIPlat owns and knows it).
+func TestChar_GatewayOwnedReconcile(t *testing.T) {
+	owned := buildItem(usage{RequestID: "r1", Ts: "2026-01-01T00:00:00Z", GatewayOwned: true, ReconcileState: "pending"})
+	if !bv(owned["gateway_owned"]) {
+		t.Errorf("gateway_owned should be true")
+	}
+	if sv(owned["reconcile_state"]) != "pending" {
+		t.Errorf("reconcile_state = %q, want pending", sv(owned["reconcile_state"]))
+	}
+	plain := buildItem(usage{RequestID: "r2", Ts: "2026-01-01T00:00:00Z"})
+	if _, ok := plain["gateway_owned"]; ok {
+		t.Errorf("non-gateway row must omit gateway_owned")
+	}
+	if _, ok := plain["reconcile_state"]; ok {
+		t.Errorf("non-gateway row must omit reconcile_state")
+	}
+}
