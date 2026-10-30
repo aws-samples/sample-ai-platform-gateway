@@ -73,7 +73,10 @@ func (a *Adapter) buildRequest(ctx context.Context, in ports.InvokeInput, stream
 	// Conditional, all of them: an absent field lets the model's own default stand, while a
 	// zero we invented would change the output. temperature 0 is a real request for
 	// determinism and must stay distinguishable from "not informed".
-	if t := in.Inference.Temperature; t != nil {
+	// temperature is OMITTED on an adaptive route: the newer models reject it with a 400
+	// ("temperature is deprecated for this model"), the same rejection the direct bedrock
+	// adapter handles. top_p and the rest still pass through.
+	if t := in.Inference.Temperature; t != nil && a.Transport.SamplingStyle != SamplingStyleAdaptive {
 		payload["temperature"] = *t
 	}
 	if p := in.Inference.TopP; p != nil {

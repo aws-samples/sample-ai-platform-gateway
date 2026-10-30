@@ -38,7 +38,9 @@ live measurements and rejected options are in `docs/agentcore-gateway-capabiliti
 
 - **`temperature` is omitted for models that deprecate it (`sampling_style: "adaptive"`).**
   Newer Anthropic models reject `temperature` with a ValidationException; previously such a
-  request failed at the provider and was silently downgraded to another model.
+  request failed at the provider and was silently downgraded to another model. Honoured on
+  every path a temperature-rejecting model can be reached: the direct `bedrock` (Converse)
+  adapter and the Messages dialect (`bedrock_gateway` and native `anthropic`).
 
 ### Upgrade notes
 

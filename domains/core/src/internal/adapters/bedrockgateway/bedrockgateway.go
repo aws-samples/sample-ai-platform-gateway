@@ -132,6 +132,10 @@ type Route struct {
 	// for a gateway that fronts several model families at once — see
 	// anthropic.ReasoningStyleBudget / ReasoningStyleAdaptive.
 	ReasoningStyle string
+	// SamplingStyle declares which sampling-parameter shape this MODEL accepts, forwarded
+	// to the anthropic Transport. "adaptive" omits temperature for models that reject it
+	// (claude-sonnet-5 and later). Per-model fact, cannot be defaulted.
+	SamplingStyle string
 }
 
 // New builds the provider for a gateway route.
@@ -165,6 +169,7 @@ func New(httpc *http.Client, signer Signer, r Route) (ports.Provider, error) {
 			BodyVersion:    BodyVersion,
 			Label:          "bedrock_gateway",
 			ReasoningStyle: r.ReasoningStyle,
+			SamplingStyle:  r.SamplingStyle,
 			Sign: func(ctx context.Context, req *http.Request, payload []byte) error {
 				return signer.SignRequest(ctx, req, payload, SigningService, region)
 			},

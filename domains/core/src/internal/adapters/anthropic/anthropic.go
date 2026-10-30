@@ -63,6 +63,14 @@ type Transport struct {
 	// ReasoningStyle selects which extended-thinking request shape this MODEL accepts.
 	// Empty = ReasoningStyleBudget. See the constants for why this cannot be inferred.
 	ReasoningStyle string
+	// SamplingStyle selects which sampling-parameter shape this MODEL accepts. Empty sends
+	// every parameter; SamplingStyleAdaptive OMITS temperature, which the newer Anthropic
+	// models (claude-sonnet-5 and later) reject with a 400 "temperature is deprecated for
+	// this model". Like ReasoningStyle it is a per-model fact that cannot be inferred from
+	// the id, so it is declared per route. The same flag the direct bedrock (Converse)
+	// adapter honours, applied here so a model reached over the Messages dialect
+	// (bedrock_gateway or native Anthropic) behaves identically.
+	SamplingStyle string
 	// BodyVersion, when non-empty, sends `anthropic_version` in the BODY and omits the
 	// `anthropic-version` HEADER. Anthropic's own API takes the header; the Bedrock
 	// family requires the field in the body and rejects a request without it
@@ -100,6 +108,11 @@ const (
 	// one, output_config:{effort:...}. The model decides how much to think.
 	ReasoningStyleAdaptive = "adaptive"
 )
+
+// SamplingStyleAdaptive is the SamplingStyle value for a model that manages temperature
+// itself and rejects a client-supplied one (claude-sonnet-5 and later). Same string value
+// and meaning as the direct bedrock adapter's samplingAdaptive.
+const SamplingStyleAdaptive = "adaptive"
 
 // path returns the endpoint path for this transport.
 func (t Transport) path() string {

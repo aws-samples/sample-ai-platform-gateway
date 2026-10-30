@@ -845,6 +845,7 @@ func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
 			ModelID:        r.ProviderModelID,
 			PromptCache:    r.PromptCache,
 			ReasoningStyle: r.ReasoningStyle,
+			SamplingStyle:  r.SamplingStyle,
 		})
 		if err != nil {
 			return nil, err
@@ -873,7 +874,7 @@ func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
 		// Anthropic's own endpoint, so a native route to a newer model needs the adaptive
 		// shape for exactly the same reason. Blank keeps the original behaviour.
 		p = &anthropic.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret), CachePrefix: r.PromptCache,
-			Transport: anthropic.Transport{ReasoningStyle: r.ReasoningStyle}}
+			Transport: anthropic.Transport{ReasoningStyle: r.ReasoningStyle, SamplingStyle: r.SamplingStyle}}
 	case "google", "gemini":
 		p = &google.Adapter{HTTP: httpc, BaseURL: r.BaseURL, ModelID: r.ProviderModelID, APIKey: getSecret(ctx, r.APIKeySecret)}
 	default:
