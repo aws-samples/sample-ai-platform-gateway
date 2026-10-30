@@ -12,6 +12,46 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
+Amazon Bedrock AgentCore Gateway full-capability adoption. Every transport and rule is
+optional and off by default in the reusable module; a deployment opts in per flag. Design,
+live measurements and rejected options are in `docs/agentcore-gateway-capabilities.md`.
+
+### Added
+
+- **Native InvokeModel transport (`provider: bedrock_invoke`).** Reaches the model families
+  the Anthropic Messages dialect cannot (Amazon Nova and versioned ids ending `-v1:0`),
+  non-streaming and streaming (native event-stream). New gateway target `invoke`, gated by
+  `agentcore_invoke_enabled`.
+- **Gateway model-fallback rules (`gateway_fallback` route flag).** A route can delegate
+  resilience to an AgentCore Gateway rule (primary + ordered fallback + circuit breaker),
+  provisioned via CloudFormation (`AWS::BedrockAgentCore::GatewayRule`) through an
+  `aws_cloudformation_stack`, gated by `agentcore_rules_enabled`. The router emits a
+  single-step chain for such routes, so the gateway and AIPlat's own ladder never both
+  retry — exactly one fallback owner per route.
+- **Phase 4 ledger honesty + gateway-fact reconciler.** A `gateway_fallback` row is marked
+  `gateway_owned` / `reconcile_state: "pending"` (AIPlat does not claim to know the true
+  served model for it). An optional reconciler (`agentcore_reconciler_enabled`) ingests the
+  gateway's vended routing logs and records the gateway-side truth (served target, fallback
+  hop, invocation count) as `GATEWAY` fact rows in the Cost_Store.
+
+### Fixed
+
+- **`temperature` is omitted for models that deprecate it (`sampling_style: "adaptive"`).**
+  Newer Anthropic models reject `temperature` with a ValidationException; previously such a
+  request failed at the provider and was silently downgraded to another model.
+
+### Upgrade notes
+
+- All AgentCore flags default to **false** in the module (`domains/core/tf`), so an existing
+  deployment that does not set them plans **zero changes**. The bundled `poc` environment
+  opts in to `agentcore_gateway_enabled`, `agentcore_invoke_enabled`, `agentcore_rules_enabled`
+  and `agentcore_reconciler_enabled`.
+- The core domain now builds a third Lambda, `usage-reconciler` (`domains/core/build.sh`).
+  It is only deployed when `agentcore_reconciler_enabled = true`.
+- New per-route config keys (all optional, additive): `sampling_style`, `gateway_fallback`.
+  The gateway per-invocation price is not published, so the reconciler counts invocations but
+  does not yet attach a dollar figure to them.
+
 ## [1.6.0] - 2026-10-26
 
 Follow-up security hardening after the 1.5.0 fix for the cross-tenant escalation

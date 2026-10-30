@@ -222,6 +222,29 @@ leaves the model's own default in place, because a zero we invented would not be
 All four also take part in the cache key. A parameter that changes the answer without changing
 the key would let a `top_p: 0.1` request be served the answer generated at `top_p: 1.0`.
 
+Some newer models deprecate `temperature` and reject a request that carries it. A route can
+set `"sampling_style": "adaptive"` to omit `temperature` for that model while still forwarding
+`top_p`, `max_tokens` and `stop` — without it, a plain `temperature: 0` request would fail at
+the provider and be silently downgraded to another model by the fallback ladder.
+
+### AgentCore Gateway transport (optional)
+
+Besides calling Amazon Bedrock directly, a route can reach models through an **Amazon Bedrock
+AgentCore Gateway** — a comparison and a choice, not a dependency. Two optional transports,
+both off by default and enabled per deployment:
+
+- `provider: bedrock_gateway` — the Anthropic Messages dialect, for the Claude family.
+- `provider: bedrock_invoke` — the native InvokeModel path, which reaches the families the
+  Messages dialect cannot (Amazon Nova and other versioned ids), with streaming.
+
+A route can also delegate its resilience to a **gateway fallback rule** by setting
+`"gateway_fallback": true`: the gateway tries the primary and an ordered fallback chain with a
+circuit breaker, and AIPlat's own ladder steps aside so there is exactly one fallback owner
+per route. The Terraform flags (`agentcore_gateway_enabled`, `agentcore_invoke_enabled`,
+`agentcore_rules_enabled`, `agentcore_reconciler_enabled`) are all off in the reusable module;
+a deployment opts in. Full design, measurements and trade-offs are in
+[docs/agentcore-gateway-capabilities.md](docs/agentcore-gateway-capabilities.md).
+
 ### Reasoning models
 
 Ask for thinking with `reasoning_effort`: `none`, `low`, `medium` or `high` (the OpenAI
