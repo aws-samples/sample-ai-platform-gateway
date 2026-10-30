@@ -365,6 +365,36 @@ B5 cost: 25 gateway calls × 2 attempts ≈ 50 invocations + a few hundred Nova 
 fraction of a cent. The probe rule, the log delivery, and the log group were all deleted
 afterward; the shipped Phase 2 module rule (nova-micro → nova-lite) remains.
 
+### 5.8 Phase 4 reconciliation: correlation-id join is infeasible. MEASURED 2026-10-26
+
+Before building a per-row reconciler, tested whether AIPlat's request id can be joined to a
+gateway log line. The router now forwards `X-Aiplat-Request-Id` to the gateway (before SigV4
+signing). Sent a tagged call and inspected the vended routing log: the correlation id does
+NOT appear anywhere in the log. The gateway logs only its OWN `request_id` / `trace_id` /
+`span_id`, plus the routing record (`requestedModelId`, `resolvedModelId`, `targetName`,
+`reason: servedViaFallbackHop:N`, `routingRuleId`). A caller-supplied header is not echoed.
+
+Consequence for the design: there is NO key to join a gateway routing-log line back to a
+specific AIPlat ledger row. So Phase 4 does two honest things instead of one impossible one:
+
+1. CORE side (shipped): a `gateway_fallback` route's Usage_Record carries
+   `gateway_owned=true` + `reconcile_state="pending"`. AIPlat admits it does not know the
+   true served model or attempt count for these rows (the gateway response is transparent).
+   No false precision. (`decorateGatewayOwnership`, unit-tested.)
+2. RECONCILER (shipped, off by default — `agentcore_reconciler_enabled`): the gateway's
+   vended routing logs are delivered to CloudWatch and a Lambda (`cmd/usage-reconciler`,
+   pure parsing in `internal/reconcile`) records the gateway-side TRUTH as one idempotent
+   GATEWAY fact row per gateway request in the Cost_Store (`pk="GATEWAY"`,
+   `sk="REQ#<gatewayRequestId>"`): resolved model, target, served fallback hop, and the
+   invocation count (`hop+1` = per-attempt billing). The ROI/reporting reads this parallel
+   table for the served-target mix and invocation counts; it is the honest form of
+   "routing-log reconciliation" given the missing join key. The `X-Aiplat-Request-Id`
+   header is still sent so that, if AWS later echoes caller ids into the log, a true per-row
+   join becomes a one-function change with no schema churn.
+
+The still-missing dollar figure is the gateway per-invocation PRICE (UNVERIFIED, 5.2): the
+reconciler counts invocations, but the fee to multiply them by is not published.
+
 ## 6. Open questions
 
 Resolved 2026-10-26:

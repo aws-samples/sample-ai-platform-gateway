@@ -204,3 +204,21 @@ variable "agentcore_rule_fallback_model" {
     rejects a rule whose destinations are not distinct).
   EOT
 }
+
+variable "agentcore_reconciler_enabled" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Provision the Phase 4 usage-reconciler: it delivers the gateway's vended routing logs to
+    CloudWatch and runs a Lambda that records the gateway-side served-target TRUTH (resolved
+    model, target, fallback hop, invocation count) as idempotent GATEWAY fact rows in the
+    Observability Cost_Store. OFF by default; also requires agentcore_gateway_enabled and
+    agentcore_invoke_enabled.
+
+    It does NOT flip AIPlat ledger rows per request: MEASURED 2026-10-26, the gateway log
+    carries only the gateway's own request id (no caller correlation id survives), so there
+    is no per-row join — AIPlat's gateway_fallback rows stay honestly reconcile_state=pending
+    and this parallel GATEWAY fact table is the honest form of routing-log reconciliation.
+    See docs/agentcore-gateway-capabilities.md 5.8 and internal/reconcile.
+  EOT
+}

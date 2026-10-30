@@ -10,10 +10,10 @@ export GOOS=linux GOARCH=arm64 CGO_ENABLED=0
 
 go mod tidy
 mkdir -p ../dist
-for fn in router keyadmin; do
+for fn in router keyadmin usage-reconciler; do
   echo "building $fn"
   go build -tags lambda.norpc -trimpath -ldflags="-s -w" -o "bootstrap" "./cmd/$fn"
   zip -j "../dist/$fn.zip" bootstrap >/dev/null
   rm -f bootstrap
 done
-echo "ok: dist/router.zip, dist/keyadmin.zip"
+echo "ok: dist/router.zip, dist/keyadmin.zip, dist/usage-reconciler.zip"

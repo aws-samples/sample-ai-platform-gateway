@@ -410,3 +410,124 @@ resource "aws_cloudformation_stack" "agentcore_rules" {
   # The rule references the invoke target by name, so the target must exist first.
   depends_on = [aws_bedrockagentcore_gateway_target.invoke]
 }
+
+# --- Phase 4: usage-reconciler (gateway routing-log -> Cost_Store GATEWAY facts) ---
+#
+# Records the gateway-side TRUTH (served model/target + fallback hop + invocation count)
+# from the gateway's own vended routing logs. It does NOT flip AIPlat ledger rows: the log
+# carries no caller correlation id (MEASURED 2026-10-26), so there is no per-row join. It
+# writes one idempotent GATEWAY fact row per gateway request into the Observability
+# Cost_Store, which the ROI/reporting reads for the served-target mix and per-attempt
+# invocation count. See internal/reconcile and docs 5.8. OFF by default.
+#
+# It lives here (Core), not in Observability, because a CloudWatch Logs subscription filter
+# can only target a function in the LOG GROUP's region, and the gateway + its vended log
+# group are in the gateway region (us-east-1, the aws.agentcore provider). The Lambda writes
+# cross-region to the Cost_Store (the deployment region) by table name + region.
+locals {
+  reconciler_on       = var.agentcore_gateway_enabled && var.agentcore_invoke_enabled && var.agentcore_reconciler_enabled
+  cost_store_table    = "${var.project}-${var.environment}-obs-cost-store"
+  gateway_arn_derived = "arn:aws:bedrock-agentcore:${var.agentcore_gateway_region}:${local.account_id}:gateway/${try(aws_bedrockagentcore_gateway.inference[0].gateway_id, "none")}"
+  gw_routing_lg_name  = "/aws/vendedlogs/bedrock-agentcore/gateway/APPLICATION_LOGS/${try(aws_bedrockagentcore_gateway.inference[0].gateway_id, "none")}"
+}
+
+resource "aws_cloudwatch_log_group" "gw_routing" {
+  count             = local.reconciler_on ? 1 : 0
+  provider          = aws.agentcore
+  name              = local.gw_routing_lg_name
+  retention_in_days = 30
+}
+
+# Vended-log delivery chain: source (the gateway, log_type APPLICATION_LOGS) -> destination
+# (the log group) -> delivery (links them). The same three-step chain the AWS CLI uses.
+resource "aws_cloudwatch_log_delivery_source" "gw_routing" {
+  count        = local.reconciler_on ? 1 : 0
+  provider     = aws.agentcore
+  name         = "${local.name}-gw-routing-src"
+  log_type     = "APPLICATION_LOGS"
+  resource_arn = local.gateway_arn_derived
+}
+
+resource "aws_cloudwatch_log_delivery_destination" "gw_routing" {
+  count    = local.reconciler_on ? 1 : 0
+  provider = aws.agentcore
+  name     = "${local.name}-gw-routing-dst"
+  delivery_destination_configuration {
+    destination_resource_arn = aws_cloudwatch_log_group.gw_routing[0].arn
+  }
+}
+
+resource "aws_cloudwatch_log_delivery" "gw_routing" {
+  count                    = local.reconciler_on ? 1 : 0
+  provider                 = aws.agentcore
+  delivery_source_name     = aws_cloudwatch_log_delivery_source.gw_routing[0].name
+  delivery_destination_arn = aws_cloudwatch_log_delivery_destination.gw_routing[0].arn
+}
+
+resource "aws_iam_role" "agentcore_reconciler" {
+  count    = local.reconciler_on ? 1 : 0
+  provider = aws.agentcore
+  name     = "${local.name}-agentcore-reconciler"
+  assume_role_policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole" }]
+  })
+}
+
+resource "aws_iam_role_policy" "agentcore_reconciler" {
+  count    = local.reconciler_on ? 1 : 0
+  provider = aws.agentcore
+  name     = "reconciler"
+  role     = aws_iam_role.agentcore_reconciler[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Effect = "Allow", Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"], Resource = "arn:aws:logs:*:*:*" },
+      # Writes GATEWAY fact rows to the Observability Cost_Store (deployment region).
+      # PutItem only, only that table — the reconciler never reads or writes another record.
+      { Effect = "Allow", Action = ["dynamodb:PutItem"], Resource = "arn:aws:dynamodb:${local.region}:${local.account_id}:table/${local.cost_store_table}" },
+      { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
+    ]
+  })
+}
+
+resource "aws_lambda_function" "agentcore_reconciler" {
+  count            = local.reconciler_on ? 1 : 0
+  provider         = aws.agentcore
+  function_name    = "${local.name}-usage-reconciler"
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  role             = aws_iam_role.agentcore_reconciler[0].arn
+  filename         = "${local.dist}/usage-reconciler.zip"
+  source_code_hash = filebase64sha256("${local.dist}/usage-reconciler.zip")
+  timeout          = 30
+  memory_size      = 128
+  environment {
+    variables = {
+      COST_STORE_TABLE  = local.cost_store_table
+      COST_STORE_REGION = local.region
+    }
+  }
+  tracing_config { mode = "Active" }
+}
+
+resource "aws_lambda_permission" "agentcore_reconciler_logs" {
+  count         = local.reconciler_on ? 1 : 0
+  provider      = aws.agentcore
+  statement_id  = "AllowCWLogsInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.agentcore_reconciler[0].function_name
+  principal     = "logs.amazonaws.com"
+  source_arn    = "${aws_cloudwatch_log_group.gw_routing[0].arn}:*"
+}
+
+resource "aws_cloudwatch_log_subscription_filter" "gw_routing" {
+  count           = local.reconciler_on ? 1 : 0
+  provider        = aws.agentcore
+  name            = "${local.name}-gw-routing-reconciler"
+  log_group_name  = aws_cloudwatch_log_group.gw_routing[0].name
+  filter_pattern  = "" # all events; the reconciler keeps only the routing records
+  destination_arn = aws_lambda_function.agentcore_reconciler[0].arn
+  depends_on      = [aws_lambda_permission.agentcore_reconciler_logs]
+}

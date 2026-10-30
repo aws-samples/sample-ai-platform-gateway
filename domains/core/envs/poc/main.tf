@@ -53,4 +53,8 @@ module "domain" {
   # match/primary/fallback models take the module defaults (nova-micro primary, nova-lite
   # fallback) unless overridden.
   agentcore_rules_enabled = var.agentcore_rules_enabled
+
+  # Optional Phase 4 usage-reconciler (gateway routing-log -> Cost_Store GATEWAY facts).
+  # Same forwarding rule.
+  agentcore_reconciler_enabled = var.agentcore_reconciler_enabled
 }
