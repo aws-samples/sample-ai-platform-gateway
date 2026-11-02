@@ -2066,6 +2066,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	if req.Method == "OPTIONS" {
 		return sresp(204, corsHeaders(reqOrigin), "")
 	}
+	// L1: the endpoint is POST-only. The {proxy+} ANY route forwards every method, so a GET
+	// or DELETE used to fall through and fail as 400 "invalid JSON body"; a method mismatch
+	// is a 405, with Allow advertising the accepted methods.
+	if req.Method != "POST" {
+		return sresp(405, allowCORS(map[string]string{"content-type": "application/json", "allow": "POST, OPTIONS"}, reqOrigin),
+			`{"error":{"message":"method not allowed; this endpoint accepts POST","type":"invalid_request_error","code":"method_not_allowed"}}`)
+	}
 
 	id, ok, aerr := authResolveFn(ctx, req.Headers)
 	if aerr != nil {
@@ -2789,6 +2796,18 @@ func failStatusFor(reason string) string {
 func validateRequest(messages []chatMsg, maxTokens *int, temperature, topP *float64) (string, string) {
 	if len(messages) == 0 {
 		return reasonInvalidRequest, "messages must be a non-empty array"
+	}
+	// L2: every message needs a valid role. A message with no role used to be accepted and
+	// served (role silently defaulted), which diverges from the OpenAI contract and hides a
+	// malformed request.
+	for i, m := range messages {
+		switch m.Role {
+		case "system", "user", "assistant", "tool", "developer", "function":
+		case "":
+			return reasonInvalidRequest, fmt.Sprintf("messages[%d] is missing a role", i)
+		default:
+			return reasonInvalidRequest, fmt.Sprintf("messages[%d] has an invalid role %q", i, m.Role)
+		}
 	}
 	// max_tokens <= 0 is a FinOps footgun: a caller capping spend at 0 (or sending a
 	// negative by mistake) previously had the field dropped as "unset", so the model ran

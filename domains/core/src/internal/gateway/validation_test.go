@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-func vfp(v float64) *float64 { return &v }
-func vip(v int) *int         { return &v }
-
 // H1: a provider 4xx caused by the caller is classified as invalid_request (client error),
 // not as a provider outage — so it does not become a 502 nor count against the SLI.
 func TestClassifyProviderErr_ClientVsServer(t *testing.T) {
@@ -54,6 +51,11 @@ func TestValidateRequest(t *testing.T) {
 		{"temperature 0 ok", ok, nil, fp(0), nil, false},
 		{"top_p too high", ok, nil, nil, fp(5), true},
 		{"top_p 0 ok", ok, nil, nil, fp(0), false},
+		{"max_tokens zero", ok, ip(0), nil, nil, true},
+		{"max_tokens negative", ok, ip(-5), nil, nil, true},
+		{"max_tokens positive ok", ok, ip(16), nil, nil, false},
+		{"missing role", []chatMsg{{Content: []byte(`"hi"`)}}, nil, nil, nil, true},
+		{"invalid role", []chatMsg{{Role: "wizard", Content: []byte(`"hi"`)}}, nil, nil, nil, true},
 	}
 	for _, c := range cases {
 		reason, detail := validateRequest(c.msgs, c.maxTok, c.temp, c.topP)
