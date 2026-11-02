@@ -42,6 +42,26 @@ live measurements and rejected options are in `docs/agentcore-gateway-capabiliti
   every path a temperature-rejecting model can be reached: the direct `bedrock` (Converse)
   adapter and the Messages dialect (`bedrock_gateway` and native `anthropic`).
 
+### Security & robustness (adversarial-test hardening)
+
+- **Caller input errors return 400, not 502, and never leak the upstream error.** Invalid
+  parameters, empty/malformed messages, and over-the-limit input used to reach the provider
+  and surface as `502 "all providers failed: <raw Bedrock error>"` — which also counted a
+  client mistake against the platform reliability SLI. They are now a clean `400`
+  (`invalid_request`, category `config`, **not** SLI-eligible); the raw provider error is
+  kept only in the operator record, never in the client response. Up-front validation covers
+  empty `messages`, out-of-range `temperature`/`top_p`, and missing/invalid message `role`;
+  a provider 4xx is the backstop (`classifyProviderErr`).
+- **`max_tokens <= 0` is rejected (400).** It was previously dropped as "unset", letting the
+  model run to its own default — an unbounded, full-price response, the opposite of a caller
+  trying to cap spend.
+- **Secret guardrail coverage widened and false positives removed.** Now also detects PEM
+  private keys, GitHub (`ghp_`/`github_pat_`), Slack (`xox*`), JWTs, hyphenated `sk-proj-`
+  keys, and `password:`/`api_key=` assignments. The old `[0-9a-f]{40,}` catch-all that
+  wrongly blocked long plain numbers and repeated-letter blobs as secrets is replaced by a
+  mixed-class (digit+letter) check.
+- **Non-POST methods return 405** (with `Allow`) instead of a confusing `400 invalid JSON`.
+
 ### Upgrade notes
 
 - All AgentCore flags default to **false** in the module (`domains/core/tf`), so an existing
