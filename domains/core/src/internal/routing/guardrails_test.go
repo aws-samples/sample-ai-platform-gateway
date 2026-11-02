@@ -85,16 +85,33 @@ func TestMaskPII_Casos(t *testing.T) {
 func TestContainsSecret(t *testing.T) {
 	positives := []string{
 		"minha chave sk-abcdefghij0123456789",
+		"sk-proj-abcdefABCDEF0123456789abcdef", // sk- with hyphen (M2)
 		"AKIAIOSFODNN7EXAMPLE aqui",
 		"Authorization: bearer abcdefghijklmnopqrstuvwxyz",
-		"hash deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+		// mixed-class hex token is still caught (digits + a-f letters).
+		"sha1 da39a3ee5e6b4b0d3255bfef95601890afd80709",
+		// M2: shapes the old rule missed.
+		"-----BEGIN RSA PRIVATE KEY-----\nMIIEow",
+		"-----BEGIN EC PRIVATE KEY-----",
+		"token ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+		"xoxb-123456789012-1234567890123-AbCdEfGhIjKlMnOp",
+		"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.abcDEF123",
+		"the database password: hunter2SuperSecret",
 	}
 	for _, s := range positives {
 		if !ContainsSecret(s) {
 			t.Errorf("should detect a secret in %q", s)
 		}
 	}
-	negatives := []string{"", "texto normal sem segredo", "sk-curto"}
+	// Negatives include the M3 false positives the old `[0-9a-f]{40,}` catch-all wrongly
+	// blocked: a long plain number, a repeated-letter blob, and a run of 'A's.
+	negatives := []string{
+		"", "texto normal sem segredo", "sk-curto",
+		"111111111111111111111111111111111111111111111111111111111111", // 60 digits, not a secret (M3)
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",                     // all-letter hex blob (M3)
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // repeated letter (M3)
+		"password reset link: https://example.com/x",                   // assignment with spaced value, not a secret
+	}
 	for _, s := range negatives {
 		if ContainsSecret(s) {
 			t.Errorf("should not detect a secret in %q", s)

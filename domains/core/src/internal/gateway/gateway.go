@@ -2790,6 +2790,12 @@ func validateRequest(messages []chatMsg, maxTokens *int, temperature, topP *floa
 	if len(messages) == 0 {
 		return reasonInvalidRequest, "messages must be a non-empty array"
 	}
+	// max_tokens <= 0 is a FinOps footgun: a caller capping spend at 0 (or sending a
+	// negative by mistake) previously had the field dropped as "unset", so the model ran
+	// to its OWN default — an unbounded, full-price response, the opposite of the intent.
+	if maxTokens != nil && *maxTokens <= 0 {
+		return reasonInvalidRequest, "max_tokens must be a positive integer"
+	}
 	if temperature != nil && (*temperature < 0 || *temperature > 2) {
 		return reasonInvalidRequest, "temperature must be between 0 and 2"
 	}

@@ -31,8 +31,24 @@ var (
 	// 3-2-4 digit grouping — that shape is specific enough to not collide with
 	// CPF (3-3-3-2) or phone (2 + 4-5 + 4).
 	reSSN = regexp.MustCompile(`\b\d{3}[ -]?\d{2}[ -]?\d{4}\b`)
-	// Secrets: OpenAI/AWS keys, Bearer tokens, long hex.
-	reSecret = regexp.MustCompile(`(?i)(sk-[a-z0-9]{16,}|AKIA[0-9A-Z]{16}|bearer\s+[a-z0-9._\-]{20,}|\b[0-9a-f]{40,}\b)`)
+	// Secrets — named provider token shapes. sk- allows hyphens so sk-proj-… matches;
+	// GitHub (ghp_/gho_/ghu_/ghs_/ghr_ + github_pat_), Slack (xox[baprs]-), Bearer tokens,
+	// and JWTs (three base64url segments) are all common leak shapes the old rule missed.
+	reSecret = regexp.MustCompile(`(?i)(` +
+		`sk-[a-z0-9_\-]{16,}` + `|` +
+		`AKIA[0-9A-Z]{16}` + `|` +
+		`gh[opsur]_[a-z0-9]{20,}` + `|` +
+		`github_pat_[a-z0-9_]{20,}` + `|` +
+		`xox[baprs]-[a-z0-9\-]{10,}` + `|` +
+		`bearer\s+[a-z0-9._\-]{20,}` + `|` +
+		`eyJ[a-z0-9_\-]{8,}\.eyJ[a-z0-9_\-]{8,}\.[a-z0-9_\-]{5,}` +
+		`)`)
+	// PEM private-key headers (RSA/EC/OPENSSH/plain) — a hard indicator of a key paste.
+	rePEM = regexp.MustCompile(`(?i)-----begin [a-z0-9 ]*private key-----`)
+	// Secret-looking assignment: `password: <value>`, `api_key = <value>`, etc. The value
+	// must be 6+ non-space chars right after the separator, so "password reset link: ..."
+	// (a space before the value) does NOT match.
+	reAssign = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|api[_ \-]?key|access[_ \-]?key|private[_ \-]?key|auth[_ \-]?token|token)\s*[:=]\s*\S{6,}`)
 	// Prompt injection: classic patterns (heuristic, not a replacement for a model).
 	reInjection = regexp.MustCompile(`(?i)(ignore (all |the )?(previous|above) instructions|disregard the (system|above)|reveal your (system )?prompt|you are now [a-z]|forget your (rules|instructions))`)
 )
@@ -56,8 +72,42 @@ func MaskPII(s string) string {
 	return s
 }
 
-// ContainsSecret tells whether the text contains a known secret/key.
-func ContainsSecret(s string) bool { return reSecret.MatchString(s) }
+// ContainsSecret tells whether the text contains a known secret/key. It combines the
+// named-token regexes, the PEM header, the assignment pattern, and a generic high-entropy
+// hex check (hexLooksSecret) that — unlike the old `[0-9a-f]{40,}` catch-all — does NOT
+// flag a long run of plain DIGITS (an id/number) or of repeated letters (deadbeef…) as a
+// secret. Those were false positives that blocked legitimate content.
+func ContainsSecret(s string) bool {
+	return reSecret.MatchString(s) || rePEM.MatchString(s) || reAssign.MatchString(s) || hexLooksSecret(s)
+}
+
+// hexLooksSecret reports a contiguous run of >=32 hex characters that contains BOTH a digit
+// and an a-f/A-F letter. The mixed-class requirement is what keeps a long integer (digits
+// only) and a repeated-letter blob (letters only) from reading as a secret, while still
+// catching a real mixed hex token/hash.
+func hexLooksSecret(s string) bool {
+	run, hasDigit, hasAlpha := 0, false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isDigit := c >= '0' && c <= '9'
+		isHexAlpha := (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		switch {
+		case isDigit:
+			run++
+			hasDigit = true
+		case isHexAlpha:
+			run++
+			hasAlpha = true
+		default:
+			run, hasDigit, hasAlpha = 0, false, false
+			continue
+		}
+		if run >= 32 && hasDigit && hasAlpha {
+			return true
+		}
+	}
+	return false
+}
 
 // LooksLikeInjection applies the prompt injection heuristic (classic patterns).
 func LooksLikeInjection(s string) bool { return reInjection.MatchString(s) }
