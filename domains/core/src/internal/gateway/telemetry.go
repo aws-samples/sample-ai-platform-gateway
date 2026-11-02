@@ -54,6 +54,12 @@ const (
 	catCapacity   = "capacity"   // quota / budget
 )
 
+// reasonInvalidRequest is a provider 4xx caused by the CALLER (bad parameters, malformed
+// body, input over the model's limit). It is classified as a client error (config, non-SLI)
+// and returned to the caller as a 400 with a generic message — never as a 502 and never
+// leaking the raw upstream error.
+const reasonInvalidRequest = "invalid_request"
+
 // logJSON emits a structured line on stdout → CloudWatch Logs. It is the basis for
 // metric filters (cheap aggregates) and for tracing what the Core is doing.
 // It NEVER logs prompt/response content — metadata only.
@@ -98,6 +104,11 @@ func reasonMeta(reason string) (category string, sliEligible bool) {
 	switch reason {
 	// customer: config / auth / body — equivalent to 4xx, not our failure
 	case "invalid_body", "unknown_model":
+		return catConfig, false
+	// invalid_request: the provider rejected the request as malformed / out of range /
+	// too long. It is the CALLER's 4xx, not a provider outage — config category, OUT of
+	// the SLI, so a client looping on bad parameters cannot burn our error budget.
+	case reasonInvalidRequest:
 		return catConfig, false
 	case "model_not_allowed":
 		return catConfig, false
@@ -153,6 +164,18 @@ func classifyProviderErr(err error) string {
 	case strings.Contains(e, "429") || strings.Contains(e, "too many requests") ||
 		strings.Contains(e, "throttl"):
 		return "provider_rate_limited"
+	// Provider 4xx that is the CLIENT's fault: bad parameters, malformed body, input over
+	// the model's limit. The provider rejected the REQUEST, not a sign the provider is
+	// unhealthy — so this must NOT be surfaced as a 502 nor counted against our SLI (that
+	// is reasonInvalidRequest's job in reasonMeta). Checked AFTER auth(401/403) and
+	// rate(429) so those keep their own class; the tokens below are specific to a
+	// validation rejection and do not appear in a 5xx.
+	case strings.Contains(e, "validationexception") || strings.Contains(e, "malformed input") ||
+		strings.Contains(e, "http 400") || strings.Contains(e, "statuscode: 400") ||
+		strings.Contains(e, "too long") || strings.Contains(e, "extraneous") ||
+		strings.Contains(e, "is deprecated") || strings.Contains(e, "not permitted") ||
+		strings.Contains(e, "invalid request") || strings.Contains(e, "422"):
+		return reasonInvalidRequest
 	case strings.Contains(e, "timeout") || strings.Contains(e, "deadline") ||
 		strings.Contains(e, "connection refused") || strings.Contains(e, "no such host") ||
 		strings.Contains(e, "dial tcp") || strings.Contains(e, "eof"):

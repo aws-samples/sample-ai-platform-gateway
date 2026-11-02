@@ -2168,6 +2168,17 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		return jerr(reqOrigin, 403, "model not allowed for this scope: "+requested)
 	}
 
+	// --- Request validation (caller 4xx, caught BEFORE the provider) ---
+	// Invalid parameters used to travel to the provider and come back as a raw 400, which
+	// the handler surfaced as a 502 "all providers failed" — misleading the caller, leaking
+	// the upstream error, and counting a client mistake against our reliability SLI. These
+	// checks reject the obvious cases up front with a clean 400 (the provider-side safety
+	// net for anything not caught here is classifyProviderErr -> reasonInvalidRequest).
+	if reason, detail := validateRequest(body.Messages, body.MaxTokens, body.Temperature, body.TopP); reason != "" {
+		emitFailure(ctx, req.RequestID, ident, feature, "", requested, "blocked", reason, detail, int(time.Since(start).Milliseconds()))
+		return jerr(reqOrigin, 400, detail)
+	}
+
 	// --- Content guardrails (policy per scope) ---
 	// Blocks secret/injection; masks PII before leaving for the provider.
 	if msgs, reason := applyGuardrails(c.Guardrails, body.Messages); reason != "" {
@@ -2505,8 +2516,15 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			perr = e
 		}
 		if !okStream {
-			emitFailure(ctx, req.RequestID, ident, feature, usedProvider, usedName, "error", classifyProviderErr(perr), fmt.Sprint(perr), int(time.Since(start).Milliseconds()))
-			return jerr(reqOrigin, 502, "all providers failed: "+fmt.Sprint(perr))
+			reason := classifyProviderErr(perr)
+			// The raw provider error (fmt.Sprint(perr)) is kept ONLY in the operator-facing
+			// failure record/log — never in the client response, which would leak the
+			// upstream name, request ids and schema internals.
+			emitFailure(ctx, req.RequestID, ident, feature, usedProvider, usedName, failStatusFor(reason), reason, fmt.Sprint(perr), int(time.Since(start).Milliseconds()))
+			if reason == reasonInvalidRequest {
+				return jerr(reqOrigin, 400, "invalid request: the model rejected the request (check parameters and input size)")
+			}
+			return jerr(reqOrigin, 502, "all upstream providers failed")
 		}
 
 		// --- Phase 2: stream, then account -------------------------------------
@@ -2745,8 +2763,40 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		emitUsageFn(ctx, rec)
 		return jbody(reqOrigin, 200, out)
 	}
-	emitFailure(ctx, req.RequestID, ident, feature, "", chosen, "error", classifyProviderErr(lastErr), fmt.Sprint(lastErr), int(time.Since(start).Milliseconds()))
-	return jerr(reqOrigin, 502, "all providers failed: "+fmt.Sprint(lastErr))
+	reason := classifyProviderErr(lastErr)
+	// Raw provider error stays in the operator record only, never the client response.
+	emitFailure(ctx, req.RequestID, ident, feature, "", chosen, failStatusFor(reason), reason, fmt.Sprint(lastErr), int(time.Since(start).Milliseconds()))
+	if reason == reasonInvalidRequest {
+		return jerr(reqOrigin, 400, "invalid request: the model rejected the request (check parameters and input size)")
+	}
+	return jerr(reqOrigin, 502, "all upstream providers failed")
+}
+
+// failStatusFor maps a failure reason to the Usage_Record status: a caller-caused invalid
+// request is "blocked" (we refused a bad request, like a policy block), everything else is
+// a provider "error".
+func failStatusFor(reason string) string {
+	if reason == reasonInvalidRequest {
+		return "blocked"
+	}
+	return "error"
+}
+
+// validateRequest rejects caller-side 4xx conditions up front, before any provider call.
+// It returns (reason, clientDetail); reason "" means the request is well-formed. The
+// reason is always reasonInvalidRequest so the failure lands in `config`/non-SLI, and the
+// detail is a clean, generic message safe to return to the caller (no upstream internals).
+func validateRequest(messages []chatMsg, maxTokens *int, temperature, topP *float64) (string, string) {
+	if len(messages) == 0 {
+		return reasonInvalidRequest, "messages must be a non-empty array"
+	}
+	if temperature != nil && (*temperature < 0 || *temperature > 2) {
+		return reasonInvalidRequest, "temperature must be between 0 and 2"
+	}
+	if topP != nil && (*topP < 0 || *topP > 1) {
+		return reasonInvalidRequest, "top_p must be between 0 and 1"
+	}
+	return "", ""
 }
 
 // Deps are the production adapters the shell needs, constructed by cmd/router/main.go
