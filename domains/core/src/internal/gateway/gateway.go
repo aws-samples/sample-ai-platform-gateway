@@ -443,9 +443,12 @@ func loadConfig(ctx context.Context, team, app string) *Config {
 		json.Unmarshal(b, c)
 	}
 	c.budgetScope, c.limitsScope = budgetScope, limitsScope
-	if c.CacheTTL == 0 {
-		c.CacheTTL = 3600
-	}
+	// Do NOT resurrect cache_ttl:0 into 3600. The console writes 0 to mean "Cache OFF",
+	// and the 3600 default already lives in envConfig (the base of the merge), so after
+	// the scope merge a 0 can only mean a scope explicitly set it — i.e. the operator
+	// turned the cache off. Resetting it here read "off" as "one hour" (CORE-FUN-002 /
+	// FE-FUN-001). The cache branches gate on effectiveCacheTTL(c) > 0, so 0 disables
+	// both the read and the write (while semantic cache, if on, keeps its own TTL).
 	if c.Routing == nil {
 		c.Routing = map[string]Route{}
 	}
@@ -2397,7 +2400,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	}, keyMode)
 
 	// --- Cache hit ---
-	if cacheStore.Enabled() && !noStore {
+	if cacheStore.Enabled() && !noStore && effectiveCacheTTL(c) > 0 {
 		if respJSON, savedCache, hit := cacheStore.Get(ctx, ck); hit {
 			lat := int(time.Since(start).Milliseconds())
 			var cached map[string]interface{}
@@ -2663,7 +2666,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			// answers, and caching a partial/empty answer would replay it to later callers
 			// (and book it as a verified cache saving) — CORE-FUN-004 / CORE-NFR-001.
 			cleanStop := streamRes.stopReason == "" || streamRes.stopReason == "end_turn" || streamRes.stopReason == "stop"
-			cacheable := cacheStore.Enabled() && !noStore && streamComplete && !tokensEstimated && len(streamRes.toolCalls) == 0 && cleanStop
+			cacheable := cacheStore.Enabled() && !noStore && effectiveCacheTTL(c) > 0 && streamComplete && !tokensEstimated && len(streamRes.toolCalls) == 0 && cleanStop
 			if cacheable {
 				// The stored message carries the reasoning too. Without it a streamed thinking
 				// answer was cached as if it had never reasoned, so the replay — which is what
@@ -2823,7 +2826,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		addCreditSpend(ctx, usedRoute.Provider, c, dec, cost)
 		// Do not cache a response with tool_calls (unique per context) nor a response
 		// that failed validation — caching a broken response would serve it again.
-		if cacheStore.Enabled() && !noStore && len(res.toolCalls) == 0 && escOutcome == "" {
+		if cacheStore.Enabled() && !noStore && effectiveCacheTTL(c) > 0 && len(res.toolCalls) == 0 && escOutcome == "" {
 			jb, _ := json.Marshal(out)
 			storeTTL := effectiveCacheTTL(c)
 			cacheStore.Put(ctx, ck, usedRoute.Provider, string(jb), cost, storeTTL)

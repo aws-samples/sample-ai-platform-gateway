@@ -59,6 +59,16 @@ func (s *Store) Get(ctx context.Context, key string) (respJSON string, cost floa
 	if !okv {
 		return "", 0, false
 	}
+	// Enforce the TTL on read. DynamoDB's own TTL sweep is lazy (it can leave an
+	// expired item readable for up to 48 h), so an item past its expires_at must be
+	// treated as a MISS here — otherwise a response the caller asked to expire keeps
+	// being served, which is exactly what an operator who shortened or disabled the
+	// cache expects to stop (CORE-FUN-002).
+	if ev, oke := out.Item["expires_at"].(*ddbtypes.AttributeValueMemberN); oke {
+		if exp, perr := strconv.ParseInt(ev.Value, 10, 64); perr == nil && exp > 0 && time.Now().Unix() >= exp {
+			return "", 0, false
+		}
+	}
 	if cv, okc := out.Item["cost_usd"].(*ddbtypes.AttributeValueMemberN); okc {
 		cost, _ = strconv.ParseFloat(cv.Value, 64)
 	}
