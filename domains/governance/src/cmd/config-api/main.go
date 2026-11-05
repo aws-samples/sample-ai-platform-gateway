@@ -1611,6 +1611,57 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 				delete(cfg, k)
 			}
 		}
+		// GOV-SEC-001: the team/app in the write target must exist in the org
+		// registry (no orphan APP#<anything> scopes).
+		if team != "" && team != "default" {
+			tree := readOrgTree(ctx, org)
+			if _, ok := tree.Teams[team]; !ok {
+				return resp(400, map[string]string{"error": "unknown_team", "message": "team does not exist in this org: " + team}, origin)
+			}
+			if app != "" {
+				if am, ok := tree.Apps[app]; !ok || am.Team != team {
+					return resp(400, map[string]string{"error": "unknown_app", "message": "app does not exist in this team: " + app}, origin)
+				}
+			}
+		} else if app != "" {
+			tree := readOrgTree(ctx, org)
+			if am, ok := tree.Apps[app]; !ok || (am.Team != "" && am.Team != "default") {
+				return resp(400, map[string]string{"error": "unknown_app", "message": "app does not exist: " + app}, origin)
+			}
+		}
+		// GOV-SEC-001: a child scope (TEAM#/APP#) may restrict a parent policy, never
+		// WIDEN it. Build the effective PARENT (every scope ABOVE this write target)
+		// and reject any key the child loosens — the write-side mirror of the Core's
+		// read-side foldCeilings, verified against the same config-scope contract.
+		belowOrg := team != "" || app != ""
+		parentKeys := []string{"global"}
+		if belowOrg {
+			parentKeys = append(parentKeys, "ORG#"+org)
+			if app != "" {
+				pt := team
+				if pt == "" {
+					pt = "default"
+				}
+				parentKeys = append(parentKeys, "ORG#"+org+"#TEAM#"+pt)
+			}
+		}
+		parentEff := map[string]interface{}{}
+		var parentAllowed []string
+		for _, pk := range parentKeys {
+			if m := readScope(ctx, pk); m != nil {
+				parentAllowed = govcore.IntersectAllowed(parentAllowed, allowedFrom(m))
+				deepMerge(parentEff, m)
+			}
+		}
+		if parentAllowed != nil {
+			parentEff["allowed_models"] = parentAllowed
+		}
+		if viol := govcore.CeilingViolations(parentEff, cfg, belowOrg); len(viol) > 0 {
+			writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role,
+				"config_scope_widening_rejected", key, strings.Join(viol, ","))
+			return resp(400, map[string]interface{}{"error": "scope_widening", "keys": viol,
+				"message": "a team/app scope cannot widen a parent policy: " + strings.Join(viol, ", ")}, origin)
+		}
 		// Audit: read the PREVIOUS state of that scope before overwriting.
 		// Cheap (the same read the merge already does on other paths) and it is
 		// what allows recording the field-by-field diff — without the "before",
