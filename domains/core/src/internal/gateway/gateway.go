@@ -2501,6 +2501,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 					openResp, okStream = r, true
 					break
 				}
+				if resp, rerr, stop := clientFault(ctx, req.RequestID, ident, feature, s.r.Provider, s.name, e, reqOrigin, int(time.Since(start).Milliseconds())); stop {
+					return resp, rerr
+				}
+				logProviderAttempt(s.r.Provider, s.name, e)
 				perr = e
 				continue
 			}
@@ -2520,6 +2524,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				buffered, okStream = res, true
 				break
 			}
+			if resp, rerr, stop := clientFault(ctx, req.RequestID, ident, feature, s.r.Provider, s.name, e, reqOrigin, int(time.Since(start).Milliseconds())); stop {
+				return resp, rerr
+			}
+			logProviderAttempt(s.r.Provider, s.name, e)
 			perr = e
 		}
 		if !okStream {
@@ -2656,6 +2664,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		res, err := callProviderFn(ctx, s.r, body.Messages, body.Tools, inf)
 		if err != nil {
 			lastErr = err
+			if resp, rerr, stop := clientFault(ctx, req.RequestID, ident, feature, s.r.Provider, s.name, err, reqOrigin, int(time.Since(start).Milliseconds())); stop {
+				return resp, rerr
+			}
+			logProviderAttempt(s.r.Provider, s.name, err)
 			continue
 		}
 		attemptCost := 0.0
@@ -2787,6 +2799,43 @@ func failStatusFor(reason string) string {
 		return "blocked"
 	}
 	return "error"
+}
+
+// clientFault short-circuits the fallback chain on a provider error that is the CALLER's
+// fault (a 4xx classified as reasonInvalidRequest). A malformed request must NOT be
+// retried against the next model: advancing the chain answered a bad request with a
+// different model — a downgrade (frontier → nova) or a pricier route (28× cost) — and
+// booked the swap as a counterfactual "fallback" saving fabricated from the client's
+// mistake (CORE-FUN-001). Availability failures (5xx / timeouts / throttles) return
+// stop=false, and the caller advances the chain as before.
+//
+// On a client fault it records the failed attempt (status "blocked", category config,
+// out of the SLI — same as validateRequest's up-front rejections) and returns the 400
+// the caller receives. Called in phase 1 of the streaming path (before any byte is
+// written) and in the buffered loop, so returning a response here is always safe.
+func clientFault(ctx context.Context, reqID string, id identity, feature, provider, model string, e error, reqOrigin string, lat int) (apiResp, error, bool) {
+	if classifyProviderErr(e) != reasonInvalidRequest {
+		return apiResp{}, nil, false
+	}
+	emitFailure(ctx, reqID, id, feature, provider, model, failStatusFor(reasonInvalidRequest), reasonInvalidRequest, fmt.Sprint(e), lat)
+	resp, rerr := jerr(reqOrigin, 400, "invalid request: the model rejected the request (check parameters and input size)")
+	return resp, rerr, true
+}
+
+// logProviderAttempt records one failed provider attempt that the chain skipped past (an
+// availability failure a later route may recover from). Without it a provider 4xx/5xx
+// that a fallback masks leaves no operator trace at all — only the swap was recorded —
+// so a flapping route is invisible (CORE-FUN-001). Metadata only, never prompt content.
+func logProviderAttempt(provider, model string, e error) {
+	detail := fmt.Sprint(e)
+	if len(detail) > 300 {
+		detail = detail[:300]
+	}
+	logJSON(map[string]interface{}{
+		"lvl": "warn", "evt": "provider_attempt_failed",
+		"provider": provider, "model": model,
+		"reason": classifyProviderErr(e), "detail": detail,
+	})
 }
 
 // validateRequest rejects caller-side 4xx conditions up front, before any provider call.

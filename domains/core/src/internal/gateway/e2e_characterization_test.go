@@ -319,6 +319,57 @@ func TestE2E_AllProvidersFail(t *testing.T) {
 	runScenario(t, "all_providers_fail", req, recs, resp)
 }
 
+// CORE-FUN-001: a provider 4xx that is the caller's fault must STOP the fallback chain
+// and return 400 — it must not be retried against the next model and must not be booked
+// as a counterfactual "fallback" saving. m1 falls back to m2; the provider returns a 400
+// for m1 and would succeed for m2. The chain must not reach m2.
+func TestE2E_ClientErrorStopsChain(t *testing.T) {
+	neutralizeCoreGlobals(t)
+	t.Setenv("MODEL_ROUTING", `{"m1":{"provider":"bedrock","provider_model_id":"id1","fallback":["m2"],"capabilities":{"tool_use":true,"tier":"frontier"}},"m2":{"provider":"bedrock","provider_model_id":"id2","capabilities":{"tool_use":true,"tier":"fast"}}}`)
+	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.003,"output":0.015},"m2":{"input":0.0001,"output":0.0002}}`)
+
+	var calls []string
+	recs := installSeams(t, func(_ context.Context, r Route, _ []chatMsg, _ []toolDef, _ invocation) (result, error) {
+		calls = append(calls, r.ProviderModelID)
+		if r.ProviderModelID == "id1" {
+			return result{}, &ports.ProviderError{Status: 400, Label: "provider", Body: "ValidationException: temperature and top_p cannot both be set"}
+		}
+		return result{text: "OK", tin: 1, tout: 1}, nil
+	})
+
+	req := httpapi.Request{
+		Method:    "POST",
+		Path:      "/v1/chat/completions",
+		Headers:   map[string]string{"authorization": "Bearer test"},
+		Body:      `{"model":"m1","messages":[{"role":"user","content":"hi"}],"max_tokens":8}`,
+		RequestID: "test-req-client400",
+	}
+	resp, err := handle(context.Background(), req)
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if resp.StatusCode != 400 {
+		t.Fatalf("status = %d, expected 400", resp.StatusCode)
+	}
+	// The chain must not have advanced to m2.
+	if len(calls) != 1 || calls[0] != "id1" {
+		t.Fatalf("provider calls = %v, want exactly [id1] (chain must stop on a client 4xx)", calls)
+	}
+	if len(*recs) != 1 {
+		t.Fatalf("expected exactly 1 Usage_Record, got %d", len(*recs))
+	}
+	rec := (*recs)[0]
+	if rec["status"] != "blocked" || rec["reason"] != "invalid_request" || rec["category"] != "config" {
+		t.Errorf("record = status %v / reason %v / category %v, want blocked/invalid_request/config", rec["status"], rec["reason"], rec["category"])
+	}
+	if sli, _ := rec["sli_eligible"].(bool); sli {
+		t.Errorf("a client 4xx must be out of the SLI (sli_eligible=false)")
+	}
+	if rec["savings_reason"] == "fallback" {
+		t.Errorf("a client 4xx must not book a fallback saving")
+	}
+}
+
 // Guarantees a stable key order when serializing (defensive; encoding/json already
 // sorts map keys, but this keeps the intent explicit).
 var _ = sort.Strings

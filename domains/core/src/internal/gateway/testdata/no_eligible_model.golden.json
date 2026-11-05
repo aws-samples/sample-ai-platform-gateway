@@ -14,7 +14,7 @@
     {
       "app_tag": "apptest",
       "cache_hit": false,
-      "category": "dependency",
+      "category": "config",
       "detail": "m1:no_tool_use",
       "estimated_cost_usd": 0,
       "feature": "",
@@ -26,7 +26,7 @@
       "request_id": "test-req-inelegivel",
       "saved_usd": 0,
       "savings_reason": "",
-      "sli_eligible": true,
+      "sli_eligible": false,
       "status": "blocked",
       "team": "default",
       "tokens_in": 0,

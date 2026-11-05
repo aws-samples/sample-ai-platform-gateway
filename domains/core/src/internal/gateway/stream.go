@@ -39,7 +39,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -408,7 +407,7 @@ func openStreamOpenAICompat(ctx context.Context, baseURL, modelID string, msgs [
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("provider %d: %s", resp.StatusCode, string(b))
+		return nil, &ports.ProviderError{Status: resp.StatusCode, Label: "provider", Body: string(b)}
 	}
 	return resp, nil
 }

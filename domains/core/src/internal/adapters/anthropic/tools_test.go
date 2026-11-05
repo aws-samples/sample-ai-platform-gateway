@@ -6,6 +6,7 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/aiplat/core/internal/ports"
@@ -91,8 +92,32 @@ func TestToWireMessages_AssistantToolCallsBecomeToolUseBlocks(t *testing.T) {
 	if tu.Type != "tool_use" || tu.ID != "toolu_1" || tu.Name != "get_weather" {
 		t.Errorf("block 1 = %+v, want the tool_use", tu)
 	}
-	if tu.Input["city"] != "SP" {
-		t.Errorf("input = %v, want the arguments parsed into an object", tu.Input)
+	if string(tu.Input) != `{"city":"SP"}` {
+		t.Errorf("input = %s, want the arguments as a JSON object", tu.Input)
+	}
+}
+
+// CORE-FUN-001: a tool_use block with EMPTY arguments must serialise `input` as `{}`,
+// not drop it. With the old `map[string]interface{}` + `omitempty` field an empty map
+// was omitted, and the Anthropic Messages API rejects a tool_use block with no `input`
+// (400) — which the gateway then silently fell back on. json.RawMessage keeps the `{}`.
+func TestToWireMessages_EmptyToolArgsSerializeAsObject(t *testing.T) {
+	msgs := []ports.Message{{
+		Role:      "assistant",
+		ToolCalls: []ports.ToolCall{{ID: "toolu_1", Name: "get_time", Arguments: "{}"}},
+	}}
+	w := toWireMessages(msgs)
+	if len(w) != 1 || len(w[0].Content) != 1 {
+		t.Fatalf("got %+v", w)
+	}
+	tu := w[0].Content[0]
+	if tu.Type != "tool_use" || string(tu.Input) != "{}" {
+		t.Errorf("input = %q, want %q (empty object, not dropped)", string(tu.Input), "{}")
+	}
+	// The block must actually carry an `input` key on the wire.
+	b, _ := json.Marshal(tu)
+	if !strings.Contains(string(b), `"input":{}`) {
+		t.Errorf("serialised block = %s, want an \"input\":{} field", b)
 	}
 }
 

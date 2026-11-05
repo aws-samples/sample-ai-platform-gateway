@@ -154,9 +154,14 @@ type wireBlock struct {
 	// type=image
 	Source *wireImageSource `json:"source,omitempty"`
 	// type=tool_use
-	ID    string                 `json:"id,omitempty"`
-	Name  string                 `json:"name,omitempty"`
-	Input map[string]interface{} `json:"input,omitempty"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Input is the tool_use arguments. It is json.RawMessage, not map[string]interface{},
+	// so an EMPTY object serialises as `{}` instead of being dropped: with a map,
+	// `omitempty` omits a zero-length map, and the Anthropic Messages API rejects a
+	// tool_use block with no `input` (CORE-FUN-001's `{}`-replay 400). Left nil (and so
+	// omitted) on every non-tool_use block.
+	Input json.RawMessage `json:"input,omitempty"`
 	// type=tool_result
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	// Content of a tool_result is a plain string in the simple form this gateway emits.
@@ -286,8 +291,11 @@ func toWireMessages(msgs []ports.Message) []wireMsg {
 					// conversation over it would strand a session that could still recover.
 					json.Unmarshal([]byte(tc.Arguments), &args)
 				}
+				// Always valid JSON — "{}" when the call carried no arguments — so the
+				// block always has an `input` the Messages API accepts.
+				raw, _ := json.Marshal(args)
 				blocks = append(blocks, wireBlock{
-					Type: "tool_use", ID: tc.ID, Name: tc.Name, Input: args,
+					Type: "tool_use", ID: tc.ID, Name: tc.Name, Input: raw,
 				})
 			}
 			if len(blocks) == 0 {
@@ -328,7 +336,7 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return ports.Result{}, fmt.Errorf("%s %d: %s", a.Transport.label(), resp.StatusCode, string(body))
+		return ports.Result{}, &ports.ProviderError{Status: resp.StatusCode, Label: a.Transport.label(), Body: string(body)}
 	}
 	var d struct {
 		Content []struct {

@@ -123,7 +123,7 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return ports.Result{}, fmt.Errorf("provider %d: %s", resp.StatusCode, string(b))
+		return ports.Result{}, &ports.ProviderError{Status: resp.StatusCode, Label: "provider", Body: string(b)}
 	}
 	var d struct {
 		Choices []struct {

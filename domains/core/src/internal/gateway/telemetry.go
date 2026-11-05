@@ -19,11 +19,14 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aiplat/core/internal/ports"
 )
 
 // emitUsage publishes the Usage_Record, delegating to the sqsusage adapter
@@ -103,7 +106,7 @@ func traceID() string {
 func reasonMeta(reason string) (category string, sliEligible bool) {
 	switch reason {
 	// customer: config / auth / body — equivalent to 4xx, not our failure
-	case "invalid_body", "unknown_model":
+	case "invalid_body", "unknown_model", "no_eligible_model":
 		return catConfig, false
 	// invalid_request: the provider rejected the request as malformed / out of range /
 	// too long. It is the CALLER's 4xx, not a provider outage — config category, OUT of
@@ -150,6 +153,30 @@ func reasonMeta(reason string) (category string, sliEligible bool) {
 func classifyProviderErr(err error) string {
 	if err == nil {
 		return "provider_error"
+	}
+	// Prefer the typed status code when the adapter carried one: the number is data,
+	// not text to grep. Substring matching below stays only as the fallback for errors
+	// that are not ProviderError (e.g. the Bedrock SDK's ValidationException string).
+	var pe *ports.ProviderError
+	if errors.As(err, &pe) && pe.Status > 0 {
+		b := strings.ToLower(pe.Body)
+		switch {
+		case pe.Status == 429:
+			return "provider_rate_limited"
+		case pe.Status == 401 || pe.Status == 403:
+			return "provider_auth"
+		case pe.Status == 402 || strings.Contains(b, "insufficient_quota") ||
+			strings.Contains(b, "credit balance") || strings.Contains(b, "billing") ||
+			strings.Contains(b, "quota"):
+			return "provider_quota_exceeded"
+		case pe.Status >= 400 && pe.Status < 500:
+			// Any other provider 4xx is the CALLER's fault (bad parameters, malformed
+			// body, input too long, unknown model id). It must stop the chain and
+			// return 400 — never a 502 nor an SLI hit.
+			return reasonInvalidRequest
+		case pe.Status >= 500:
+			return "provider_down"
+		}
 	}
 	e := strings.ToLower(err.Error())
 	switch {

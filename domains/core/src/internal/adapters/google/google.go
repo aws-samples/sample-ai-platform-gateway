@@ -233,7 +233,7 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return ports.Result{}, fmt.Errorf("gemini %d: %s", resp.StatusCode, string(body))
+		return ports.Result{}, &ports.ProviderError{Status: resp.StatusCode, Label: "gemini", Body: string(body)}
 	}
 	var d struct {
 		Candidates []struct {

@@ -6,6 +6,8 @@ package gateway
 import (
 	"errors"
 	"testing"
+
+	"github.com/aiplat/core/internal/ports"
 )
 
 // H1: a provider 4xx caused by the caller is classified as invalid_request (client error),
@@ -32,6 +34,40 @@ func TestClassifyProviderErr_ClientVsServer(t *testing.T) {
 		if got := classifyProviderErr(errors.New(m)); got == reasonInvalidRequest {
 			t.Errorf("classifyProviderErr(%q) = invalid_request, must stay a provider failure", m)
 		}
+	}
+}
+
+// CORE-BND-002: classification prefers the typed status code carried by
+// ports.ProviderError over grepping the message text. The adapters format their errors
+// as "<label> <status>: <body>" (e.g. "anthropic 400: {...}"), which contains none of
+// the "http 400"/"statuscode: 400" tokens the string matcher keys on — so before this
+// fix a provider 400 fell through to "provider_error" (502 + SLI). With the typed error
+// it classifies on the number.
+func TestClassifyProviderErr_TypedStatus(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   string
+	}{
+		{400, `{"type":"error","error":{"type":"invalid_request_error"}}`, reasonInvalidRequest},
+		{404, "model not found", reasonInvalidRequest},
+		{422, "unprocessable", reasonInvalidRequest},
+		{401, "unauthorized", "provider_auth"},
+		{403, "forbidden", "provider_auth"},
+		{429, "slow down", "provider_rate_limited"},
+		{402, "insufficient credit", "provider_quota_exceeded"},
+		{500, "internal", "provider_down"},
+		{503, "unavailable", "provider_down"},
+	}
+	for _, c := range cases {
+		err := &ports.ProviderError{Status: c.status, Label: "anthropic", Body: c.body}
+		if got := classifyProviderErr(err); got != c.want {
+			t.Errorf("status %d: classifyProviderErr = %q, want %q", c.status, got, c.want)
+		}
+	}
+	// no_eligible_model is a config refusal, never an SLI-eligible dependency failure.
+	if cat, sli := reasonMeta("no_eligible_model"); cat != catConfig || sli {
+		t.Errorf("reasonMeta(no_eligible_model) = (%q,%v), want (config,false)", cat, sli)
 	}
 }
 
