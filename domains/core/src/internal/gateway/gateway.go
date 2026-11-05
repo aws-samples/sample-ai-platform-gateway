@@ -2181,6 +2181,16 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			}
 		}
 	}
+	// Bound `feature` before it enters the Usage_Record (and a DynamoDB sort key via the
+	// routing hints). An unbounded feature pushed the SQS message past the 256 KB limit,
+	// the send error was swallowed, and the request still returned 200 — so a caller
+	// could make its own spend vanish from Logs/Usage/ROI with one field while the
+	// provider still billed it (CORE-NFR-002). `app` is already bounded (resolveApp
+	// accepts only the key's declared apps).
+	if !validFeature(feature) {
+		emitFailure(ctx, req.RequestID, ident, "", "", body.Model, "blocked", reasonInvalidRequest, "feature exceeds 64 chars or has characters outside [A-Za-z0-9._-]", int(time.Since(start).Milliseconds()))
+		return jerr(reqOrigin, 400, "invalid feature: at most 64 characters of [A-Za-z0-9._-]")
+	}
 
 	// Effective config for the scope (global → team → app), with fallback to defaults.
 	// Single-org model: org removed from hierarchy.
@@ -2405,14 +2415,32 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			lat := int(time.Since(start).Milliseconds())
 			var cached map[string]interface{}
 			json.Unmarshal([]byte(respJSON), &cached)
-			cached["aiplat"] = map[string]interface{}{"team": team, "app_tag": app, "feature": feature, "model": chosen, "provider": route.Provider, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": "cache", "cache_hit": true, "latency_ms": lat, "auto_cheapest": c.AutoCheapest, "requested_model": requested}
-			cacheRec := map[string]interface{}{"request_id": req.RequestID, "cache_key": ck, "team": team, "app_tag": app, "feature": feature, "provider": route.Provider, "upstream": upstreamOf(route), "model": chosen, "tokens_in": 0, "tokens_out": 0, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": "cache", "latency_ms": lat, "cache_hit": true, "status": "success", "category": "ok", "sli_eligible": true, "ts": time.Now().UTC().Format(time.RFC3339)}
+			// Report the model/provider that ACTUALLY produced the stored body, not the
+			// alias the cache key was built from. A fallback or auto_cheapest swap can
+			// store a body from a different route than `chosen`; the stored body's
+			// top-level `model` is the served model (both the buffered and streaming Put
+			// write it). Reporting `chosen` here made a Nova answer claim it came from
+			// Claude on every hit, and computed the swap against the wrong model
+			// (CORE-FUN-003). The served model's provider/upstream come from the current
+			// routing config, falling back to the decided route only if the alias is gone.
+			servedModel := chosen
+			if sm, ok := cached["model"].(string); ok && sm != "" {
+				servedModel = sm
+			}
+			servedRoute, hasServed := c.Routing[servedModel]
+			servedProvider, servedUpstream := route.Provider, upstreamOf(route)
+			if hasServed {
+				servedProvider, servedUpstream = servedRoute.Provider, upstreamOf(servedRoute)
+			}
+			cached["aiplat"] = map[string]interface{}{"team": team, "app_tag": app, "feature": feature, "model": servedModel, "provider": servedProvider, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": "cache", "cache_hit": true, "latency_ms": lat, "auto_cheapest": c.AutoCheapest, "requested_model": requested}
+			cacheRec := map[string]interface{}{"request_id": req.RequestID, "cache_key": ck, "team": team, "app_tag": app, "feature": feature, "provider": servedProvider, "upstream": servedUpstream, "model": servedModel, "tokens_in": 0, "tokens_out": 0, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": "cache", "latency_ms": lat, "cache_hit": true, "status": "success", "category": "ok", "sli_eligible": true, "ts": time.Now().UTC().Format(time.RFC3339)}
 			// The swap counts on a cache hit too: the response came from the DECIDED
 			// route, which may not be the requested one. Omitting the class here would
 			// leave a hole in the trail exactly on the cheapest requests — and a
 			// customer auditing quality would see "served as requested" where a
-			// substitution took place.
-			cacheSwap, cacheServedID := servedSwap(c, requested, chosen)
+			// substitution took place. Classified against the SERVED model, so the swap
+			// class matches the body that is actually replayed.
+			cacheSwap, cacheServedID := servedSwap(c, requested, servedModel)
 			decorateSwap(cacheRec, cacheSwap, cacheServedID)
 			decorateSwap(cached["aiplat"].(map[string]interface{}), cacheSwap, cacheServedID)
 			decorateCanary(cacheRec, canaryRoute)
@@ -2902,6 +2930,26 @@ func logProviderAttempt(provider, model string, e error) {
 		"provider": provider, "model": model,
 		"reason": classifyProviderErr(e), "detail": detail,
 	})
+}
+
+// validFeature bounds the caller-supplied feature tag: empty (→ "none" downstream) or at
+// most 64 chars of [A-Za-z0-9._-]. It is what keeps an oversized feature out of the
+// Usage_Record and the routing-hints sort key (CORE-NFR-002).
+func validFeature(f string) bool {
+	if f == "" {
+		return true
+	}
+	if len(f) > 64 {
+		return false
+	}
+	for _, r := range f {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validateRequest rejects caller-side 4xx conditions up front, before any provider call.

@@ -229,7 +229,13 @@ func emitFailure(ctx context.Context, reqID string, id identity, feature, provid
 		detail = detail[:300]
 	}
 	category, sliEligible := reasonMeta(reason)
-	emitUsageFn(ctx, map[string]interface{}{
+	// A failure/timeout record must survive the request's own cancellation: emitFailure
+	// is reached exactly when the request ctx may already be past its deadline (a provider
+	// timeout, a cut stream), and emitting on a dead ctx silently drops the one record an
+	// operator needs most (CORE-NFR-002). Detach from cancellation, keep a short bound.
+	ectx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	emitUsageFn(ectx, map[string]interface{}{
 		"request_id": reqID, "team": id.team, "app_tag": id.app,
 		"feature": feature, "provider": provider, "model": model,
 		"tokens_in": 0, "tokens_out": 0, "estimated_cost_usd": 0, "saved_usd": 0,

@@ -13,6 +13,7 @@ package sqsusage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 
@@ -41,5 +42,14 @@ func (s *Sink) Emit(ctx context.Context, rec map[string]interface{}) {
 	}
 	b, _ := json.Marshal(rec)
 	body := string(b)
-	s.sqs.SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: &s.queueURL, MessageBody: &body})
+	if _, err := s.sqs.SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: &s.queueURL, MessageBody: &body}); err != nil {
+		// The response path does not depend on this send, but a dropped usage event must
+		// not vanish silently (CORE-NFR-002): a message over the 256 KB limit, or a send
+		// on an already-cancelled request context, used to be lost with no trace while the
+		// request still returned 200 and the provider still billed. Logging the whole
+		// record to stdout → CloudWatch makes it recoverable from Logs Insights. A bare
+		// token (no interpolation) lets a metric filter count the drops.
+		fmt.Printf(`{"lvl":"error","evt":"usage_emit_failed","error":%q,"record":%s}`+"\n", err.Error(), body)
+		fmt.Println("AIPLAT_USAGE_EMIT_FAILED")
+	}
 }
