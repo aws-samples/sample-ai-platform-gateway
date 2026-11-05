@@ -337,7 +337,26 @@ var (
 	embedder ports.Embedder
 	semIndex ports.SemIndex
 
-	httpc = &http.Client{Timeout: 45 * time.Second}
+	// httpc is shared by the HTTP-based providers (anthropic, google, bedrock_gateway,
+	// bedrock_invoke, openai_compatible) for both buffered and native-stream calls.
+	//
+	// It carries NO wall-clock Timeout on purpose. A client.Timeout bounds the WHOLE
+	// exchange including reading the response body, so on a stream it cut every answer at
+	// 45 s — the partial was then billed from len/4, mislabelled "stop" and cached
+	// (CORE-NFR-001). Streams are instead bounded by streamDeadline (the Lambda deadline,
+	// optionally narrowed by request_timeout_ms); buffered calls are bounded by the
+	// request context the adapters pass to http.NewRequestWithContext. What stays here are
+	// the connection-establishment and time-to-first-byte guards, which protect against a
+	// hung dial or a provider that accepts the connection and never responds, without
+	// capping a legitimately long stream body.
+	httpc = &http.Client{
+		Transport: &http.Transport{
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConnsPerHost:   32,
+		},
+	}
 )
 
 // The semantic index cap moved to the adapter (ddbcache.semIndexCap): how many entries a
@@ -728,6 +747,20 @@ func fromPortsResult(pr ports.Result) result {
 		reasoningChars: pr.ReasoningChars, reasoningRedacted: pr.ReasoningRedacted,
 		reasoning: pr.Reasoning,
 	}
+}
+
+// toPortsToolCalls converts the handler's tool calls back to the ports shape, so the SSE
+// layer (sseToolCalls) forwards a buffered-then-streamed tool answer without the handler
+// and the stream layer disagreeing on the type.
+func toPortsToolCalls(tc []toolCall) []ports.ToolCall {
+	if len(tc) == 0 {
+		return nil
+	}
+	out := make([]ports.ToolCall, 0, len(tc))
+	for _, t := range tc {
+		out = append(out, ports.ToolCall{ID: t.ID, Name: t.Function.Name, Arguments: t.Function.Arguments})
+	}
+	return out
 }
 
 // callProviderFn is the provider's INJECTION SEAM.
@@ -2388,7 +2421,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			if body.Stream {
 				cachedReasoning, text := cachedMessageParts(cached)
 				var sb bytes.Buffer
-				pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text)
+				// A cached answer is always a clean text completion (tool-call and partial
+				// answers are never cached — see the streaming/buffered Put guards), so
+				// finish_reason is "stop" and there are no tool calls to replay.
+				pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text, "stop", nil)
 				// Same aiplat block the non-streaming cache hit returns, so a streaming
 				// caller still sees cache_hit and the saved amount. Tokens are 0 on a
 				// cache hit by definition — nothing was sent to a provider.
@@ -2446,7 +2482,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 						if body.Stream {
 							cachedReasoning, text := cachedMessageParts(cached)
 							var sb bytes.Buffer
-							pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text)
+							pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text, "stop", nil)
 							// Carries semantic_score as well, so a streaming caller can
 							// see the answer was an APPROXIMATE match and how close.
 							sseFinal(&sb, "chatcmpl-"+ck[:12], chosen, 0, 0, cached["aiplat"].(map[string]interface{}))
@@ -2546,6 +2582,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		return streamResp(200, sseHeaders(reqOrigin), func(w io.Writer) {
 			var content string
 			var streamRes result
+			// streamComplete is false when the stream was cut (deadline, consumer gone or a
+			// broken upstream) — a partial answer that must not be cached and whose token
+			// count is an estimate.
+			streamComplete := true
 			switch {
 			case openResp != nil:
 				var tin, tout int
@@ -2573,19 +2613,30 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				// stopping the pump is what lets the client receive stop → final → [DONE]
 				// instead of a connection that dies mid-answer.
 				sctx, scancel := streamDeadline(ctx, c.RequestTimeoutMS)
-				streamRes = fromPortsResult(pumpProviderStream(sctx, w, id, usedName, provStream,
-					effectiveKeepalive(c.SSEKeepaliveSeconds)))
+				pr, complete := pumpProviderStream(sctx, w, id, usedName, provStream,
+					effectiveKeepalive(c.SSEKeepaliveSeconds))
 				scancel()
+				streamRes = fromPortsResult(pr)
+				streamComplete = complete
 				content = streamRes.text
 			default:
 				content, streamRes = buffered.text, buffered
 				// buffered.reasoning is forwarded too: this is the path an OpenAI-compatible
 				// provider takes (it has no native streaming API), and without it reasoning
-				// would be billed and recorded but never reach the client.
-				pseudoStream(w, id, usedName, buffered.reasoning, content)
+				// would be billed and recorded but never reach the client. tool_calls and the
+				// real finish_reason are forwarded as well, so a buffered-then-streamed tool
+				// answer is no longer flattened to an empty "stop".
+				pseudoStream(w, id, usedName, buffered.reasoning, content,
+					finishReasonFor(buffered.stopReason, len(buffered.toolCalls), false),
+					toPortsToolCalls(buffered.toolCalls))
 			}
+			// tokensEstimated records that the provider's usage frame never arrived and the
+			// count below is len/4, not a measurement — so the ledger does not read an
+			// estimate as truth (CORE-NFR-001).
+			tokensEstimated := false
 			if streamRes.tout == 0 {
 				streamRes.tout = len(content) / 4
+				tokensEstimated = true
 			}
 			if streamRes.tin == 0 {
 				streamRes.tin = estimateTokens(body.Messages)
@@ -2607,7 +2658,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			addSpend(ctx, c.budgetScope, cost)
 			addRateTokens(ctx, c.limitsScope, c.Limits, tin+tout)
 			addCreditSpend(ctx, usedProvider, c, dec, cost)
-			if cacheStore.Enabled() && !noStore {
+			// Never cache a streamed answer that is a tool call, a truncated/estimated body,
+			// a non-clean stop, or a cut stream: the buffered path already refuses tool
+			// answers, and caching a partial/empty answer would replay it to later callers
+			// (and book it as a verified cache saving) — CORE-FUN-004 / CORE-NFR-001.
+			cleanStop := streamRes.stopReason == "" || streamRes.stopReason == "end_turn" || streamRes.stopReason == "stop"
+			cacheable := cacheStore.Enabled() && !noStore && streamComplete && !tokensEstimated && len(streamRes.toolCalls) == 0 && cleanStop
+			if cacheable {
 				// The stored message carries the reasoning too. Without it a streamed thinking
 				// answer was cached as if it had never reasoned, so the replay — which is what
 				// the NEXT caller of the same prompt receives — silently lost the
@@ -2636,6 +2693,9 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			rec["price_source"] = priceSourceOf(c, usedName, now)
 			routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
 			decorateGatewayOwnership(rec, c.Routing[usedName].GatewayFallback)
+			if tokensEstimated {
+				rec["tokens_estimated"] = true
+			}
 			emitUsageFn(ctx, rec)
 
 			// Mirrors the aiplat block of the non-streaming response, so the SAME client
@@ -2649,6 +2709,9 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			decorateCanary(streamMeta, canaryRoute)
 			decorateReasoning(streamMeta, streamRes.reasoningChars, streamRes.reasoningRedacted)
 			decorateReasoningRequest(streamMeta, rplan)
+			if tokensEstimated {
+				streamMeta["tokens_estimated"] = true
+			}
 			sseFinal(w, id, usedName, tin, tout, streamMeta)
 		})
 	}

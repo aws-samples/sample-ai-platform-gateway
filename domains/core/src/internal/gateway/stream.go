@@ -39,6 +39,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -101,9 +102,63 @@ func ssePing(w io.Writer) error {
 	_, err := io.WriteString(w, ": ping\n\n")
 	return err
 }
-func sseStop(w io.Writer, id, model string) {
+// sseStop emits the terminal chunk carrying the finish_reason. It used to hardcode
+// "stop", which mislabelled every ending: a tool call, a max_tokens truncation and a
+// clean stop all arrived as "stop" (CORE-FUN-004). The reason is now computed by
+// finishReasonFor and passed in.
+func sseStop(w io.Writer, id, model, finishReason string) {
 	sseWrite(w, map[string]interface{}{"id": id, "object": "chat.completion.chunk", "model": model,
-		"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{}, "finish_reason": "stop"}}})
+		"choices": []map[string]interface{}{{"index": 0, "delta": map[string]string{}, "finish_reason": finishReason}}})
+}
+
+// sseToolCalls emits the model's tool calls as one delta frame in the OpenAI streaming
+// shape. Native providers deliver the tool call whole in the trailing result (not as
+// token deltas), so the gateway forwards it as a single chunk. Before this, streaming
+// dropped tool calls entirely: a `stream:true` request with `tools` got an empty answer
+// and `finish_reason:"stop"` (CORE-FUN-004).
+func sseToolCalls(w io.Writer, id, model string, calls []ports.ToolCall) error {
+	if len(calls) == 0 {
+		return nil
+	}
+	deltas := make([]map[string]interface{}, 0, len(calls))
+	for i, c := range calls {
+		deltas = append(deltas, map[string]interface{}{
+			"index": i, "id": c.ID, "type": "function",
+			"function": map[string]string{"name": c.Name, "arguments": c.Arguments},
+		})
+	}
+	return sseWrite(w, map[string]interface{}{"id": id, "object": "chat.completion.chunk", "model": model,
+		"choices": []map[string]interface{}{{"index": 0, "delta": map[string]interface{}{"tool_calls": deltas}, "finish_reason": nil}}})
+}
+
+// sseError emits an in-band error frame when a native stream breaks mid-answer. The
+// client is already committed to a 200, so the only honest way to report an upstream
+// failure after the first byte is a frame it can detect — not a silent clean end that
+// looks like the model finished (CORE-FUN-004 / CORE-NFR-001). The message is generic:
+// it never carries the upstream body (which may hold request ids or schema internals).
+func sseError(w io.Writer, id, model, message string) {
+	sseWrite(w, map[string]interface{}{"id": id, "object": "chat.completion.chunk", "model": model,
+		"error":   map[string]string{"message": message, "type": "upstream_error"},
+		"choices": []map[string]interface{}{}})
+}
+
+// finishReasonFor maps a provider stop reason to the OpenAI finish_reason, accounting for
+// tool calls and for a stream that was CUT (deadline or broken) before a clean end.
+func finishReasonFor(stopReason string, toolCalls int, cut bool) string {
+	switch {
+	case toolCalls > 0 || stopReason == "tool_use":
+		return "tool_calls"
+	case stopReason == "max_tokens" || stopReason == "length":
+		return "length"
+	case cut:
+		// The stream ended before the model did (client timeout, broken upstream): the
+		// answer is truncated, so "length" is the honest signal — never "stop".
+		return "length"
+	case stopReason == "end_turn" || stopReason == "stop" || stopReason == "":
+		return "stop"
+	default:
+		return stopReason
+	}
 }
 
 // sseFinal emits the LAST frame before the terminator: token usage and the aiplat block.
@@ -152,7 +207,7 @@ func sseDone(w io.Writer) {
 // `reasoning_content` would reach a streaming client on every provider EXCEPT one served
 // through this fallback — the reasoning would sit in the ledger, already billed, and never be
 // shown. Same argument applies to replaying a cached answer that contains reasoning.
-func pseudoStream(w io.Writer, id, model, reasoning, text string) {
+func pseudoStream(w io.Writer, id, model, reasoning, text, finishReason string, toolCalls []ports.ToolCall) {
 	sseRole(w, id, model)
 	const n = 24
 	slice := func(s string, emit func(io.Writer, string, string, string) error) bool {
@@ -170,7 +225,8 @@ func pseudoStream(w io.Writer, id, model, reasoning, text string) {
 	if slice(reasoning, sseReasoning) {
 		slice(text, sseDelta)
 	}
-	sseStop(w, id, model)
+	sseToolCalls(w, id, model, toolCalls)
+	sseStop(w, id, model, finishReason)
 }
 
 // pumpProviderStream drains a NATIVE provider stream (ports.ProviderStream) into w,
@@ -199,7 +255,12 @@ func pseudoStream(w io.Writer, id, model, reasoning, text string) {
 // concurrency — it is because Recv BLOCKS, and a blocking read cannot coexist with a timer
 // in the same goroutine. The write side stays here: exactly one goroutine ever writes to w,
 // which is what keeps interleaved frames impossible.
-func pumpProviderStream(ctx context.Context, w io.Writer, id, model string, st ports.ProviderStream, keepalive time.Duration) ports.Result {
+//
+// It returns the accumulated Result and whether the stream ended CLEANLY (io.EOF). A
+// false means the stream was cut (deadline, consumer gone, or a broken upstream) and the
+// answer is partial — the caller must not cache it and the token count is an estimate
+// (CORE-FUN-004 / CORE-NFR-001).
+func pumpProviderStream(ctx context.Context, w io.Writer, id, model string, st ports.ProviderStream, keepalive time.Duration) (ports.Result, bool) {
 	defer st.Close()
 	sseRole(w, id, model)
 
@@ -254,6 +315,12 @@ func pumpProviderStream(ctx context.Context, w io.Writer, id, model string, st p
 	}
 	last := time.Now()
 
+	// Terminal condition of the stream: endedClean is true only on io.EOF (the model
+	// finished); endErr holds a genuine upstream error (not EOF, not our deadline, not a
+	// gone consumer) so a broken stream can be reported in-band.
+	endedClean := false
+	var endErr error
+
 	for streaming := true; streaming; {
 		select {
 		case r := <-ch:
@@ -275,6 +342,11 @@ func pumpProviderStream(ctx context.Context, w io.Writer, id, model string, st p
 			}
 			if r.err != nil {
 				streaming = false // io.EOF (normal end) or a broken stream — keep what arrived
+				if errors.Is(r.err, io.EOF) {
+					endedClean = true
+				} else {
+					endErr = r.err // a real mid-stream break, reported in-band below
+				}
 			}
 		case <-tick:
 			if time.Since(last) < keepalive {
@@ -291,11 +363,22 @@ func pumpProviderStream(ctx context.Context, w io.Writer, id, model string, st p
 			streaming = false
 		}
 	}
-	sseStop(w, id, model)
 	mu.Lock()
 	res := snap
 	mu.Unlock()
-	return res
+	cut := !endedClean
+	// Tool calls arrive whole in the trailing Result — forward them before the stop frame
+	// so a streaming tools request is no longer answered with an empty body.
+	if len(res.ToolCalls) > 0 {
+		sseToolCalls(w, id, model, res.ToolCalls)
+	}
+	// A genuine upstream break (not EOF, not our deadline, not a gone consumer) is reported
+	// in-band so the client does not read a truncated answer as a clean completion.
+	if endErr != nil {
+		sseError(w, id, model, "upstream stream error")
+	}
+	sseStop(w, id, model, finishReasonFor(res.StopReason, len(res.ToolCalls), cut))
+	return res, endedClean
 }
 
 // streamDeadlineMargin is time reserved AFTER the pump stops, for the work that still has to

@@ -116,7 +116,7 @@ func TestPumpProviderStream_ReasoningGoesToItsOwnField(t *testing.T) {
 		{Text: "Answer."},
 	}}
 	var buf bytes.Buffer
-	res := pumpProviderStream(context.Background(), &buf, "id-1", "m1", st, 0)
+	res, _ := pumpProviderStream(context.Background(), &buf, "id-1", "m1", st, 0)
 
 	var content, reasoning strings.Builder
 	for _, f := range frames(t, buf.String()) {
@@ -226,7 +226,7 @@ func TestPumpProviderStream_DeadlineEndsTheStreamCleanly(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	res := pumpProviderStream(ctx, &bytes.Buffer{}, "id-6", "m1", st, 0)
+	res, _ := pumpProviderStream(ctx, &bytes.Buffer{}, "id-6", "m1", st, 0)
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("the deadline did not stop the pump: took %s", elapsed)
 	}
@@ -236,26 +236,30 @@ func TestPumpProviderStream_DeadlineEndsTheStreamCleanly(t *testing.T) {
 	}
 }
 
-func TestPumpProviderStream_DeadlineStillEmitsStop(t *testing.T) {
+// A deadline must still close the stream with a WELL-FORMED terminal frame (so an OpenAI
+// SDK is not left waiting) — but the frame must say "length", not "stop": the stream was
+// cut before the model finished, and labelling a truncated answer "stop" is the lie
+// CORE-FUN-004/CORE-NFR-001 fix.
+func TestPumpProviderStream_DeadlineEmitsTruncatedTerminal(t *testing.T) {
 	st := &scriptStream{chunks: []ports.Chunk{{Text: "hi"}, {Text: "late"}}, pause: 2 * time.Second, pauseAt: 1}
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 	var buf bytes.Buffer
 	pumpProviderStream(ctx, &buf, "id-7", "m1", st, 0)
 
-	sawStop := false
+	terminal := ""
 	for _, f := range frames(t, buf.String()) {
 		ch, _ := f["choices"].([]interface{})
 		if len(ch) == 0 {
 			continue
 		}
 		c0, _ := ch[0].(map[string]interface{})
-		if fr, _ := c0["finish_reason"].(string); fr == "stop" {
-			sawStop = true
+		if fr, _ := c0["finish_reason"].(string); fr != "" {
+			terminal = fr
 		}
 	}
-	if !sawStop {
-		t.Error("a deadline must still close the stream with a stop frame, not truncate it")
+	if terminal != "length" {
+		t.Errorf("deadline terminal finish_reason = %q, want length (well-formed but truncated)", terminal)
 	}
 }
 
@@ -370,7 +374,7 @@ func TestPumpProviderStream_NoRaceOnResultWhenDeadlineFiresMidRead(t *testing.T)
 
 	var buf bytes.Buffer
 	st := &slowStream{delay: 15 * time.Millisecond}
-	res := pumpProviderStream(ctx, &buf, "id-1", "m", st, 0)
+	res, _ := pumpProviderStream(ctx, &buf, "id-1", "m", st, 0)
 
 	// Give the abandoned reader time to keep mutating: if the pump had handed back the
 	// adapter's live Result, this is the window in which the value would also change under
@@ -382,9 +386,10 @@ func TestPumpProviderStream_NoRaceOnResultWhenDeadlineFiresMidRead(t *testing.T)
 	if len(res.Text) != res.OutputTokens {
 		t.Errorf("snapshot is internally inconsistent: %d chars vs %d tokens", len(res.Text), res.OutputTokens)
 	}
-	// The client must still see a well-formed end rather than a truncated stream.
-	if !strings.Contains(buf.String(), `"finish_reason":"stop"`) {
-		t.Error("an abandoned stream must still be closed with a stop frame")
+	// The client must still see a well-formed end rather than a truncated connection — but
+	// an abandoned stream is truncated, so the terminal frame says "length", not "stop".
+	if !strings.Contains(buf.String(), `"finish_reason":"length"`) {
+		t.Error("an abandoned stream must still be closed with a terminal frame (finish_reason length)")
 	}
 }
 
@@ -394,7 +399,7 @@ func TestPumpProviderStream_NoRaceOnResultWhenDeadlineFiresMidRead(t *testing.T)
 // the reasoning was parsed, billed and recorded in the ledger, and never shown.
 func TestPseudoStream_EmitsReasoningBeforeTheAnswer(t *testing.T) {
 	var buf bytes.Buffer
-	pseudoStream(&buf, "id-1", "m", "thinking about it", "The answer.")
+	pseudoStream(&buf, "id-1", "m", "thinking about it", "The answer.", "stop", nil)
 
 	var reasoning, content strings.Builder
 	firstReasoningAt, firstContentAt := -1, -1
@@ -433,7 +438,7 @@ func TestPseudoStream_EmitsReasoningBeforeTheAnswer(t *testing.T) {
 // No reasoning must produce exactly what it produced before this parameter existed.
 func TestPseudoStream_WithoutReasoningIsUnchanged(t *testing.T) {
 	var buf bytes.Buffer
-	pseudoStream(&buf, "id-1", "m", "", "hello world")
+	pseudoStream(&buf, "id-1", "m", "", "hello world", "stop", nil)
 	if strings.Contains(buf.String(), "reasoning_content") {
 		t.Error("no reasoning must mean no reasoning frames")
 	}
@@ -477,5 +482,97 @@ func TestCachedMessageParts_ExtractsBothHalves(t *testing.T) {
 		if r, txt := cachedMessageParts(bad); r != "" || txt != "" {
 			t.Errorf("malformed body %v gave %q/%q", bad, r, txt)
 		}
+	}
+}
+
+// ── CORE-FUN-004: streaming must forward tool calls and a truthful finish_reason ──
+
+// finishReasonFor maps the provider stop reason (plus tool-call presence and whether the
+// stream was cut) to the OpenAI finish_reason. Before this, every ending was "stop".
+func TestFinishReasonFor(t *testing.T) {
+	cases := []struct {
+		stop  string
+		tools int
+		cut   bool
+		want  string
+	}{
+		{"end_turn", 0, false, "stop"},
+		{"stop", 0, false, "stop"},
+		{"", 0, false, "stop"},
+		{"tool_use", 0, false, "tool_calls"},
+		{"end_turn", 2, false, "tool_calls"}, // tool calls win over the stop reason
+		{"max_tokens", 0, false, "length"},
+		{"length", 0, false, "length"},
+		{"", 0, true, "length"}, // a cut stream is truncated, never a clean "stop"
+	}
+	for _, c := range cases {
+		if got := finishReasonFor(c.stop, c.tools, c.cut); got != c.want {
+			t.Errorf("finishReasonFor(%q,%d,%v) = %q, want %q", c.stop, c.tools, c.cut, got, c.want)
+		}
+	}
+}
+
+// A native stream whose answer is a tool call must emit a delta.tool_calls frame and end on
+// finish_reason "tool_calls" — not an empty body with "stop".
+func TestPumpProviderStream_EmitsToolCallsAndFinishReason(t *testing.T) {
+	st := &scriptStream{
+		chunks: []ports.Chunk{},
+		res: ports.Result{
+			ToolCalls:  []ports.ToolCall{{ID: "c1", Name: "get_weather", Arguments: `{"city":"Paris"}`}},
+			StopReason: "tool_use",
+		},
+	}
+	var buf bytes.Buffer
+	res, complete := pumpProviderStream(context.Background(), &buf, "id-tc", "m1", st, 0)
+	if !complete {
+		t.Fatalf("a clean EOF must report complete=true")
+	}
+	if len(res.ToolCalls) != 1 {
+		t.Fatalf("tool calls must survive in the Result, got %d", len(res.ToolCalls))
+	}
+	sawToolCall, finish := false, ""
+	for _, f := range frames(t, buf.String()) {
+		ch, _ := f["choices"].([]interface{})
+		if len(ch) == 0 {
+			continue
+		}
+		c0, _ := ch[0].(map[string]interface{})
+		if d, ok := c0["delta"].(map[string]interface{}); ok {
+			if tc, ok := d["tool_calls"].([]interface{}); ok && len(tc) > 0 {
+				sawToolCall = true
+			}
+		}
+		if fr, ok := c0["finish_reason"].(string); ok && fr != "" {
+			finish = fr
+		}
+	}
+	if !sawToolCall {
+		t.Errorf("expected a delta.tool_calls frame, body:\n%s", buf.String())
+	}
+	if finish != "tool_calls" {
+		t.Errorf("finish_reason = %q, want tool_calls", finish)
+	}
+}
+
+// A max_tokens truncation must end on finish_reason "length", not "stop".
+func TestPumpProviderStream_MaxTokensIsLength(t *testing.T) {
+	st := &scriptStream{
+		chunks: []ports.Chunk{{Text: "partial answer"}},
+		res:    ports.Result{StopReason: "max_tokens"},
+	}
+	var buf bytes.Buffer
+	pumpProviderStream(context.Background(), &buf, "id-len", "m1", st, 0)
+	finish := ""
+	for _, f := range frames(t, buf.String()) {
+		ch, _ := f["choices"].([]interface{})
+		if len(ch) == 0 {
+			continue
+		}
+		if fr, ok := ch[0].(map[string]interface{})["finish_reason"].(string); ok && fr != "" {
+			finish = fr
+		}
+	}
+	if finish != "length" {
+		t.Errorf("finish_reason = %q, want length", finish)
 	}
 }
