@@ -47,9 +47,28 @@ type allowedContractCase struct {
 	Expect         []string                 `json:"expect"`
 }
 
+// ceilingContractCase drives the narrow-only ceiling fold (CORE-SEC-001). The core side
+// reads parent/child/below_org/expect; `widens` is for the governance write-side check.
+type ceilingContractCase struct {
+	Name     string                 `json:"name"`
+	BelowOrg bool                   `json:"below_org"`
+	Parent   map[string]interface{} `json:"parent"`
+	Child    map[string]interface{} `json:"child"`
+	Widens   []string               `json:"widens"`
+	Expect   map[string]interface{} `json:"expect"`
+}
+
 type scopeContractFixture struct {
 	Cases        []scopeContractCase   `json:"cases"`
 	AllowedCases []allowedContractCase `json:"allowed_models_cases"`
+	CeilingCases []ceilingContractCase `json:"ceiling_cases"`
+}
+
+func jsonClone(m map[string]interface{}) map[string]interface{} {
+	b, _ := json.Marshal(m)
+	var out map[string]interface{}
+	json.Unmarshal(b, &out)
+	return out
 }
 
 // From the test's folder (.../core/src/internal/adapters/ddbconfig) to the repository
@@ -130,6 +149,39 @@ func TestAllowedModelsIntersectionContract_Core(t *testing.T) {
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("[%s] effective=%v, the contract wants %v", c.Name, got, want)
+		}
+	}
+}
+
+// CONTRACT test for the narrow-only ceiling fold — the CORE side (CORE-SEC-001).
+//
+// It runs the exact read-side steps Effective runs per level — stripOrgOnly, then
+// snapshotCeilings on the parent, deepMerge the child, foldCeilings — and asserts the
+// clamped result matches the fixture's `expect`. Governance verifies the SAME cases
+// against its write-side check (CeilingViolations) with no shared code.
+func TestCeilingFoldContract_Core(t *testing.T) {
+	b, err := os.ReadFile(filepath.FromSlash(coreFixturePath))
+	if err != nil {
+		t.Fatalf("could not read the contract fixture: %v", err)
+	}
+	var f scopeContractFixture
+	if err := json.Unmarshal(b, &f); err != nil {
+		t.Fatalf("invalid fixture: %v", err)
+	}
+	if len(f.CeilingCases) == 0 {
+		t.Fatal("fixture has no ceiling_cases — the contract would pass over nothing")
+	}
+	for _, c := range f.CeilingCases {
+		base := jsonClone(c.Parent)
+		child := jsonClone(c.Child)
+		stripOrgOnly(child, c.BelowOrg)
+		snap := snapshotCeilings(base)
+		deepMerge(base, child)
+		foldCeilings(base, snap)
+		for k, want := range c.Expect {
+			if !reflect.DeepEqual(base[k], want) {
+				t.Errorf("[%s] effective %q = %#v, the contract wants %#v", c.Name, k, base[k], want)
+			}
 		}
 	}
 }

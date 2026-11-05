@@ -99,5 +99,73 @@
       "expect_declared": true,
       "expect": ["b"]
     }
+  ],
+
+  "ceilings_note": "Beyond allowed_models, a parent scope is a CEILING for every policy a child could otherwise WIDEN (CORE-SEC-001 / GOV-SEC-001). A child (TEAM#/APP#) may restrict, never loosen. Core enforces this on READ by clamping the merged config (ddbconfig.foldCeilings); Governance enforces it on WRITE by rejecting a widening PUT with 400 scope_widening (govcore.CeilingViolations). Both read these same cases: `widens` lists the keys a correct write-side check must flag (empty = the write is a legal narrowing); `expect` is the clamped effective config the read-side fold must produce from parent+child. Directions: guardrail flags fold by OR (a child can turn a guard ON, never OFF); budget.limit_usd / rate_limits.* / max_thinking_tokens / request_timeout_ms take the smaller POSITIVE value (a child 0/absent inherits the parent); budget.action and cache_scope take the stricter (block>degrade>alert; app>team>deployment); status 'suspended' is sticky; routing/pricing are ORG-only and a sub-org override is dropped on read and rejected on write.",
+  "ceiling_cases": [
+    {
+      "name": "child widens budget and rate limits: clamped to parent on read, rejected on write",
+      "below_org": true,
+      "parent": {"budget": {"action": "block", "limit_usd": 500}, "rate_limits": {"requests_per_minute": 600, "tokens_per_minute": 50000}},
+      "child": {"budget": {"action": "alert", "limit_usd": 999999}, "rate_limits": {"requests_per_minute": 100000}},
+      "widens": ["budget.limit_usd", "budget.action", "rate_limits.requests_per_minute"],
+      "expect": {"budget": {"action": "block", "limit_usd": 500}, "rate_limits": {"requests_per_minute": 600, "tokens_per_minute": 50000}}
+    },
+    {
+      "name": "child narrows budget and rate limits: kept, no violation",
+      "below_org": true,
+      "parent": {"budget": {"action": "alert", "limit_usd": 500}, "rate_limits": {"requests_per_minute": 600}},
+      "child": {"budget": {"action": "block", "limit_usd": 100}, "rate_limits": {"requests_per_minute": 60}},
+      "widens": [],
+      "expect": {"budget": {"action": "block", "limit_usd": 100}, "rate_limits": {"requests_per_minute": 60}}
+    },
+    {
+      "name": "child turns a parent guardrail OFF: stays ON on read, rejected on write",
+      "below_org": true,
+      "parent": {"guardrails": {"block_secrets": true, "block_injection": true, "mask_pii": true}},
+      "child": {"guardrails": {"block_secrets": false, "block_injection": false}},
+      "widens": ["guardrails.block_secrets", "guardrails.block_injection"],
+      "expect": {"guardrails": {"block_secrets": true, "block_injection": true, "mask_pii": true}}
+    },
+    {
+      "name": "child turns a guardrail the parent left OFF ON: allowed (narrowing)",
+      "below_org": true,
+      "parent": {"guardrails": {"block_secrets": true, "no_store": false}},
+      "child": {"guardrails": {"no_store": true}},
+      "widens": [],
+      "expect": {"guardrails": {"block_secrets": true, "no_store": true}}
+    },
+    {
+      "name": "child loosens cache_scope to deployment: stays team on read, rejected on write",
+      "below_org": true,
+      "parent": {"cache_scope": "team"},
+      "child": {"cache_scope": "deployment"},
+      "widens": ["cache_scope"],
+      "expect": {"cache_scope": "team"}
+    },
+    {
+      "name": "child tightens cache_scope to app: kept",
+      "below_org": true,
+      "parent": {"cache_scope": "team"},
+      "child": {"cache_scope": "app"},
+      "widens": [],
+      "expect": {"cache_scope": "app"}
+    },
+    {
+      "name": "child tries to un-suspend: suspension is sticky, rejected on write",
+      "below_org": true,
+      "parent": {"status": "suspended"},
+      "child": {"status": "active"},
+      "widens": ["status"],
+      "expect": {"status": "suspended"}
+    },
+    {
+      "name": "child overrides routing below ORG: dropped on read, rejected on write",
+      "below_org": true,
+      "parent": {"routing": {"claude-haiku": {"provider_model_id": "real"}}},
+      "child": {"routing": {"claude-haiku": {"provider_model_id": "attacker"}}},
+      "widens": ["routing"],
+      "expect": {"routing": {"claude-haiku": {"provider_model_id": "real"}}}
+    }
   ]
 }

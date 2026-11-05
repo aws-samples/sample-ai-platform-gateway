@@ -231,17 +231,26 @@ func (s *Store) Effective(ctx context.Context, team, app string, base map[string
 			}
 			for _, k := range keys {
 				if m, ok := byPk[k]; ok {
+					// A child scope may restrict a parent policy, never widen it. routing
+					// and pricing are ORG-only, so a sub-org level cannot override them
+					// (CORE-SEC-001) — stripped before the merge. The scalar ceilings
+					// (budget, rate limits, guardrail flags, cache scope, status, the
+					// thinking/timeout caps) are captured before the merge and clamped
+					// after, mirroring allowed_models.
+					stripOrgOnly(m, belowOrg(k))
 					// allowed_models is captured BEFORE the merge and folded after,
 					// because deepMerge would replace the parent's ceiling with the
 					// child's list. Doing it here rather than inside deepMerge keeps
 					// every other list on replace semantics.
 					parentAllowed, parentDeclared := declaredList(base[allowedModelsKey])
+					parentCeil := snapshotCeilings(base)
 					deepMerge(base, m)
 					if folded, declared := foldAllowed(parentAllowed, parentDeclared, m); declared {
 						base[allowedModelsKey] = folded
 					} else {
 						delete(base, allowedModelsKey)
 					}
+					foldCeilings(base, parentCeil)
 					if _, has := m["budget"]; has {
 						budgetScope = k
 					}
