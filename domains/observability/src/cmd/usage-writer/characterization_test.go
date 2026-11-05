@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aiplat/observability/internal/telemetry"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
@@ -66,6 +67,23 @@ func TestChar_IdempotentKey(t *testing.T) {
 	}
 	if got := sv(item["gsi1pk"]); got != "APP#api" {
 		t.Errorf("gsi1pk = %q, want APP#api", got)
+	}
+}
+
+// TestChar_PartitionIsSharedContract pins the writer's pk to the SAME literal the
+// readers (usage-api, alert-notifier, hints-publisher) query. The alerts/hints
+// outage (OBS-FUN-001/002) was exactly this seam drifting: writer on "USAGE",
+// readers on "TENANT#<org>". Both sides now reference telemetry.UsagePartition, so a
+// future divergence fails here instead of silently emptying the Alerts tab.
+func TestChar_PartitionIsSharedContract(t *testing.T) {
+	if telemetry.UsagePartition != "USAGE" {
+		t.Fatalf("UsagePartition = %q, want USAGE", telemetry.UsagePartition)
+	}
+	if got := sv(buildItem(sampleUsage())["pk"]); got != telemetry.UsagePartition {
+		t.Errorf("writer pk = %q, want telemetry.UsagePartition %q", got, telemetry.UsagePartition)
+	}
+	if telemetry.AlertLogPartition != "ALERTLOG" {
+		t.Errorf("AlertLogPartition = %q, want ALERTLOG", telemetry.AlertLogPartition)
 	}
 }
 

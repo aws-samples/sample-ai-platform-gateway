@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/aiplat/observability/internal/telemetry"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -152,7 +153,7 @@ func buildItem(u usage) map[string]ddbtypes.AttributeValue {
 		status = "success" // compatibility: legacy records are served requests
 	}
 	item := map[string]ddbtypes.AttributeValue{
-		"pk":                       s("USAGE"),
+		"pk":                       s(telemetry.UsagePartition),
 		"sk":                       s("TS#" + u.Ts + "#" + u.RequestID),
 		"gsi1pk":                   s("APP#" + app),
 		"request_id":               s(u.RequestID),

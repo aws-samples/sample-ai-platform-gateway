@@ -36,7 +36,7 @@ var _ ports.CostStore = (*Store)(nil)
 // The '~' suffix on the upper bound includes the end of the range (it is
 // greater than any digit/':' of an RFC3339 timestamp).
 func (s *Store) Query(ctx context.Context, from, to string) ([]telemetry.Record, error) {
-	return s.query(ctx, "", "USAGE", from, to)
+	return s.query(ctx, "", telemetry.UsagePartition, from, to)
 }
 
 // QueryApp reads one app's records through the gsi1 index, whose partition key is

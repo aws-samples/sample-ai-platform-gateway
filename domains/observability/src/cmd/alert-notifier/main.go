@@ -125,7 +125,7 @@ func metrics(ctx context.Context, org string) map[string]float64 {
 			TableName:              &costTable,
 			KeyConditionExpression: awsString("pk = :p AND sk BETWEEN :a AND :b"),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
-				":p": s("TENANT#" + org),
+				":p": s(telemetry.UsagePartition),
 				":a": s("TS#" + monthStart),
 				":b": s("TS#" + now.Format(time.RFC3339) + "~"),
 			},
@@ -172,7 +172,7 @@ func errWindowRange(ctx context.Context, org, fromISO, toISO string) (errs, tota
 			TableName:              &costTable,
 			KeyConditionExpression: awsString("pk = :p AND sk BETWEEN :a AND :b"),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
-				":p": s("TENANT#" + org),
+				":p": s(telemetry.UsagePartition),
 				":a": s("TS#" + fromISO),
 				":b": s("TS#" + toISO + "~"),
 			},
@@ -228,7 +228,7 @@ func providerQuotaRecent(ctx context.Context, org string) float64 {
 			TableName:              &costTable,
 			KeyConditionExpression: awsString("pk = :p AND sk BETWEEN :a AND :b"),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
-				":p": s("TENANT#" + org),
+				":p": s(telemetry.UsagePartition),
 				":a": s("TS#" + from),
 				":b": s("TS#" + now.Format(time.RFC3339) + "~"),
 			},
@@ -312,7 +312,7 @@ func writeAlertLog(ctx context.Context, org string, payload map[string]interface
 	rule, _ := payload["rule"].(string)
 
 	item := map[string]ddbtypes.AttributeValue{
-		"pk":         s("ALERTLOG#" + org),
+		"pk":         s(telemetry.AlertLogPartition),
 		"sk":         s("TS#" + now.Format(time.RFC3339Nano) + "#" + rule),
 		"rule":       s(rule),
 		"ts":         s(now.Format(time.RFC3339)),

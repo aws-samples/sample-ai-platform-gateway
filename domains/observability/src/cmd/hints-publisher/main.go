@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aiplat/observability/internal/telemetry"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
@@ -121,7 +122,7 @@ func collect(ctx context.Context, org string, from time.Time) ([]samplePoint, []
 			TableName:              &costTable,
 			KeyConditionExpression: aws.String("pk = :p AND sk BETWEEN :a AND :b"),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
-				":p": &ddbtypes.AttributeValueMemberS{Value: "TENANT#" + org},
+				":p": &ddbtypes.AttributeValueMemberS{Value: telemetry.UsagePartition},
 				":a": &ddbtypes.AttributeValueMemberS{Value: skFrom},
 				":b": &ddbtypes.AttributeValueMemberS{Value: skTo},
 			},

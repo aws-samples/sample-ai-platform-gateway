@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/aiplat/observability/internal/telemetry"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
@@ -35,7 +36,7 @@ func queryAlertLog(ctx context.Context, fromISO string, limit int) ([]map[string
 			TableName:              &costTable,
 			KeyConditionExpression: strPtr("pk = :p AND sk BETWEEN :a AND :b"),
 			ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{
-				":p": &ddbtypes.AttributeValueMemberS{Value: "ALERTLOG"},
+				":p": &ddbtypes.AttributeValueMemberS{Value: telemetry.AlertLogPartition},
 				":a": &ddbtypes.AttributeValueMemberS{Value: "TS#" + fromISO},
 				":b": &ddbtypes.AttributeValueMemberS{Value: "TS#9999~"},
 			},
