@@ -562,6 +562,16 @@ resource "aws_cognito_user_pool" "cp" {
     allow_admin_create_user_only = true
   }
 
+  # GOV-SEC-003: an email change must be re-verified before it takes effect. Scope
+  # (team/apps) is resolved by the pretoken trigger from the MEMBER#<org>#<email> record,
+  # so a self-service email change to an address with no MEMBER# record would otherwise
+  # drop the team scope on the next login and let a team-pinned member read/write every
+  # team. Requiring verification keeps the token's `email` on the last VERIFIED address,
+  # so neither the lookup nor the scope can be shifted by an unverified change.
+  user_attribute_update_settings {
+    attributes_require_verification_before_update = ["email"]
+  }
+
   # MFA (TOTP / software token). Defaults to ON: this pool guards the control
   # plane — the users who can change routing, budgets and provider credentials —
   # so a password alone is not an acceptable bar. With ON, Cognito issues the

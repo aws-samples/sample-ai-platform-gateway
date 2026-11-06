@@ -30,6 +30,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1162,6 +1163,33 @@ func orgDeclaresBaseURL(ctx context.Context, org, baseURL string) bool {
 	m := readScope(ctx, scopeKey(org, "", ""))
 	routing, _ := m["routing"].(map[string]interface{})
 	return baseURLDeclaredIn(routing, baseURL)
+}
+
+// gatewayRoleARNRe is the shape an assumable gateway role must have: the AIPlatGatewayAccess
+// role (optionally suffixed) in a 12-digit account. It is the FORM check; orgDeclaresRoleARN
+// is the allowlist check. Both must pass before the platform assumes a caller-named role
+// (GOV-SEC-002) — otherwise GET /admin/bedrock/models is an oracle for probing which
+// accounts trust the platform role, driven by any member.
+var gatewayRoleARNRe = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/AIPlatGatewayAccess[\w+=,.@-]*$`)
+
+// orgDeclaresRoleARN reports whether roleARN is the role_arn of at least one route the org
+// saved at the org scope — the same allowlist idea as orgDeclaresBaseURL, applied to the
+// cross-account AssumeRole target.
+func orgDeclaresRoleARN(ctx context.Context, org, roleARN string) bool {
+	m := readScope(ctx, scopeKey(org, "", ""))
+	routing, _ := m["routing"].(map[string]interface{})
+	return roleARNDeclaredIn(routing, roleARN)
+}
+
+// roleARNDeclaredIn is the pure comparison (exact match) orgDeclaresRoleARN applies.
+func roleARNDeclaredIn(routing map[string]interface{}, roleARN string) bool {
+	for _, r := range routing {
+		rm, _ := r.(map[string]interface{})
+		if ra, _ := rm["role_arn"].(string); ra != "" && ra == roleARN {
+			return true
+		}
+	}
+	return false
 }
 
 // baseURLDeclaredIn is the pure comparison orgDeclaresBaseURL applies to a routing map —
@@ -2777,7 +2805,14 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 
 	// ---- Bedrock Models (lists the customer account's models via AssumeRole) ----
 	case strings.HasSuffix(path, "/admin/bedrock/models") && method == "GET":
-		// Any logged-in user may list (must pass their own org's role_arn)
+		// GOV-SEC-002: only owner/admin, and a caller-supplied role_arn must be an
+		// AIPlatGatewayAccess role the org ALREADY declares on one of its routes — never
+		// an arbitrary ARN. Before this, any authenticated member (dev/billing included)
+		// could make the platform sts:AssumeRole into any account and read the raw STS
+		// error (which names the execution role).
+		if !canAdmin {
+			return resp(403, map[string]string{"error": "your role cannot list Bedrock models (owner/admin only)"}, origin)
+		}
 		q := req.QueryStringParameters
 		roleARN := q["role_arn"]
 		externalID := q["external_id"]
@@ -2785,15 +2820,21 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if region == "" {
 			region = "us-east-1"
 		}
-
-		// When role_arn is provided, check that it carries the allowed prefix
-		if roleARN != "" && !strings.Contains(roleARN, "AIPlatGatewayAccess") {
-			return resp(400, map[string]string{"error": "role_arn must contain 'AIPlatGatewayAccess' for security"}, origin)
+		if roleARN != "" {
+			secOrg, okScope := forceOrg(q["org"])
+			if !okScope || secOrg == "" {
+				return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
+			}
+			if !gatewayRoleARNRe.MatchString(roleARN) || !orgDeclaresRoleARN(ctx, secOrg, roleARN) {
+				writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role, "unauthorized_bedrock_models_role", roleARN, "")
+				return resp(400, map[string]string{"error": "role_arn must be an AIPlatGatewayAccess role already configured on one of this org's routes"}, origin)
+			}
 		}
 
 		models, err := listBedrockModels(ctx, roleARN, externalID, region)
 		if err != nil {
-			return resp(500, map[string]string{"error": "failed to list models: " + err.Error()}, origin)
+			// Generic: the raw STS/Bedrock error names the execution role ARN and account.
+			return resp(502, map[string]string{"error": "could not list models for that role"}, origin)
 		}
 
 		return resp(200, map[string]interface{}{
