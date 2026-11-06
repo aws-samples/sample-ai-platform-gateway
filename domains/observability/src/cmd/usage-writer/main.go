@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -109,6 +110,76 @@ type usage struct {
 	GatewayOwned   bool   `json:"gateway_owned"`
 	ReconcileState string `json:"reconcile_state"`
 	Ts             string `json:"ts"`
+	// Extra carries the contract fields the Core emits that this writer used to decode
+	// into nothing and silently drop — the reasoning split, the sync/batch `mode`, the
+	// prompt-cache token counts, escalation net savings, pricing_status and the
+	// usage-record `schema` (OBS-BND-001 / XC-ARC-001). Captured by UnmarshalJSON and
+	// persisted by buildItem exactly when the message carries them, so absence stays
+	// distinct from a written zero. Populated only on the wire path; a hand-built usage
+	// (tests) leaves it nil.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// usageContractKeys are the Usage_Record v1 fields the Core emits that are not already
+// typed above. Pinned by the shared fixture at testdata/contracts/usage-record and by the
+// writer's decoder test, so a field the Core adds (or renames) cannot vanish here unnoticed.
+var usageContractKeys = []string{
+	"schema", "mode",
+	"pricing_status", "out_tokens_source", "economy_mode", "availability_degraded",
+	"cache_read_input_tokens", "cache_write_input_tokens", "cache_counters",
+	"attempt_count", "escalated", "escalation_reason", "escalation_outcome",
+	"saved_net_usd", "savings_floored",
+	"reasoning_chars", "reasoning_redacted", "reasoning_effort",
+	"thinking_budget_tokens", "reasoning_clamped",
+}
+
+// UnmarshalJSON decodes the typed fields as before, then captures the declared contract
+// keys that are present on the wire into Extra, so buildItem can persist them.
+func (u *usage) UnmarshalJSON(b []byte) error {
+	type alias usage // avoid recursion
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*u = usage(a)
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(b, &all); err != nil {
+		return err
+	}
+	u.Extra = map[string]json.RawMessage{}
+	for _, k := range usageContractKeys {
+		if v, ok := all[k]; ok {
+			u.Extra[k] = v
+		}
+	}
+	return nil
+}
+
+// avFromRaw converts a scalar JSON value into the matching DynamoDB attribute (string,
+// bool or number). Returns nil for a null/empty value, which buildItem skips.
+func avFromRaw(r json.RawMessage) ddbtypes.AttributeValue {
+	t := bytes.TrimSpace(r)
+	if len(t) == 0 || string(t) == "null" {
+		return nil
+	}
+	switch t[0] {
+	case '"':
+		var sv string
+		if json.Unmarshal(t, &sv) == nil {
+			return s(sv)
+		}
+	case 't', 'f':
+		var bv bool
+		if json.Unmarshal(t, &bv) == nil {
+			return &ddbtypes.AttributeValueMemberBOOL{Value: bv}
+		}
+	default:
+		var f float64
+		if json.Unmarshal(t, &f) == nil {
+			return n(strconv.FormatFloat(f, 'f', -1, 64))
+		}
+	}
+	return nil
 }
 
 func s(v string) *ddbtypes.AttributeValueMemberS { return &ddbtypes.AttributeValueMemberS{Value: v} }
@@ -227,6 +298,20 @@ func buildItem(u usage) map[string]ddbtypes.AttributeValue {
 		item["upstream"] = s(u.Upstream)
 	}
 	item["sli_eligible"] = &ddbtypes.AttributeValueMemberBOOL{Value: u.SLIEligible}
+	// Persist the contract passthrough fields the Core emitted (present-only, so an
+	// absent field stays absent). Never overwrites a field buildItem already set.
+	for _, k := range usageContractKeys {
+		raw, ok := u.Extra[k]
+		if !ok {
+			continue
+		}
+		if _, exists := item[k]; exists {
+			continue
+		}
+		if av := avFromRaw(raw); av != nil {
+			item[k] = av
+		}
+	}
 	return item
 }
 
