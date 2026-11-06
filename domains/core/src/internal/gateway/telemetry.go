@@ -35,6 +35,22 @@ func emitUsage(ctx context.Context, rec map[string]interface{}) {
 	usageSink.Emit(ctx, rec)
 }
 
+// usageRecordSchema versions the Usage_Record wire contract between the Core (emitter)
+// and Observability (writer). Stamped on every record and asserted on both sides against
+// the shared fixture at testdata/contracts/usage-record, so a renamed or dropped field
+// fails a test instead of silently vanishing from the ledger (XC-ARC-001).
+const usageRecordSchema = "usage-record/1"
+
+// emitRecord stamps the schema version on a Usage_Record and emits it through the seam.
+// Single choke point: every emit path (success, cache, stream, failure) goes through
+// here, so none can forget the version.
+func emitRecord(ctx context.Context, rec map[string]interface{}) {
+	if _, ok := rec["schema"]; !ok {
+		rec["schema"] = usageRecordSchema
+	}
+	emitUsageFn(ctx, rec)
+}
+
 // emitUsageFn is the usage EMISSION SEAM.
 //
 // Same pattern as callProviderFn: in production it points at emitUsage (SQS). The
@@ -235,7 +251,7 @@ func emitFailure(ctx context.Context, reqID string, id identity, feature, provid
 	// operator needs most (CORE-NFR-002). Detach from cancellation, keep a short bound.
 	ectx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	emitUsageFn(ectx, map[string]interface{}{
+	emitRecord(ectx, map[string]interface{}{
 		"request_id": reqID, "team": id.team, "app_tag": id.app,
 		"feature": feature, "provider": provider, "model": model,
 		"tokens_in": 0, "tokens_out": 0, "estimated_cost_usd": 0, "saved_usd": 0,

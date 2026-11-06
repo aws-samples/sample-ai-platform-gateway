@@ -76,6 +76,7 @@
       "savings_class": "",
       "savings_floored": false,
       "savings_reason": "",
+      "schema": "usage-record/1",
       "sli_eligible": true,
       "status": "success",
       "swap_class": "",

@@ -26,6 +26,7 @@
       "request_id": "test-req-inelegivel",
       "saved_usd": 0,
       "savings_reason": "",
+      "schema": "usage-record/1",
       "sli_eligible": false,
       "status": "blocked",
       "team": "default",

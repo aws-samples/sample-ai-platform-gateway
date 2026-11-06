@@ -2448,7 +2448,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			// A cache hit is 100% VERIFIED savings: same model, identical response, no
 			// call to the provider. There is no assumed baseline.
 			routing.DecorateSavings(cacheRec, savedCache, savedCache, "cache")
-			emitUsageFn(ctx, cacheRec)
+			emitRecord(ctx, cacheRec)
 			if body.Stream {
 				cachedReasoning, text := cachedMessageParts(cached)
 				var sb bytes.Buffer
@@ -2509,7 +2509,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 						// Semantic is NOT verified savings (approximate response):
 						// verifiedPortion=0 → everything is filed as counterfactual.
 						routing.DecorateSavings(cacheRec, savedCache, 0, routing.ReasonSemanticCache)
-						emitUsageFn(ctx, cacheRec)
+						emitRecord(ctx, cacheRec)
 						if body.Stream {
 							cachedReasoning, text := cachedMessageParts(cached)
 							var sb bytes.Buffer
@@ -2727,7 +2727,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			if tokensEstimated {
 				rec["tokens_estimated"] = true
 			}
-			emitUsageFn(ctx, rec)
+			emitRecord(ctx, rec)
 
 			// Mirrors the aiplat block of the non-streaming response, so the SAME client
 			// code reads cost, savings and the swap in both modes. Emitted here, at the
@@ -2873,7 +2873,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
 		routing.DecorateEscalation(rec, escalated, escReason, escOutcome, attempts, dec.RequestedCostUSD, cost)
 		decorateGatewayOwnership(rec, usedRoute.GatewayFallback)
-		emitUsageFn(ctx, rec)
+		emitRecord(ctx, rec)
 		return jbody(reqOrigin, 200, out)
 	}
 	reason := classifyProviderErr(lastErr)
