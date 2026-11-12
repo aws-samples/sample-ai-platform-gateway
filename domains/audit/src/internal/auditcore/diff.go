@@ -136,13 +136,30 @@ var sensitiveLeaves = map[string]bool{
 	"private_key":  true,
 }
 
-// IsSensitivePath reports whether the value at that path is a secret.
+// IsSensitivePath reports whether the value at that path is a secret. Mirrors the
+// Governance side (config-api auditIsSensitive) — a shared contract, not shared code
+// (GOV-SEC-005): a whole `headers` subtree is redacted (credential-bearing headers), as
+// are external_id, client_secret and any *_secret leaf, except api_key_secret which is a
+// NAME and stays visible.
 func IsSensitivePath(path string) bool {
-	leaf := path
-	if i := strings.LastIndex(path, "."); i >= 0 {
-		leaf = path[i+1:]
+	lp := strings.ToLower(path)
+	if strings.Contains(lp, ".headers.") || strings.HasPrefix(lp, "headers.") {
+		return true
 	}
-	return sensitiveLeaves[strings.ToLower(leaf)]
+	leaf := lp
+	if i := strings.LastIndex(lp, "."); i >= 0 {
+		leaf = lp[i+1:]
+	}
+	if leaf == "api_key_secret" {
+		return false
+	}
+	if sensitiveLeaves[leaf] {
+		return true
+	}
+	if leaf == "external_id" || leaf == "client_secret" || strings.HasSuffix(leaf, "_secret") {
+		return true
+	}
+	return false
 }
 
 // Redact swaps the previous and the new value of every sensitive field for the marker,
