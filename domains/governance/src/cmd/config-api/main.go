@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -58,8 +59,15 @@ var (
 	ddb       *dynamodb.Client
 	sm        *secretsmanager.Client
 	stsClient *sts.Client
-	baseCfg   aws.Config
-	httpc     = &http.Client{Timeout: 15 * time.Second}
+	baseCfg aws.Config
+	// CheckRedirect refuses to follow redirects (GOV-SEC-006): a provider-model
+	// listing carries the org's credential (x-api-key / Bearer), and Go strips only
+	// Authorization on a cross-host redirect — an x-api-key would follow a 302 to an
+	// attacker host. Not following at all closes that, and AWS JSON APIs never redirect.
+	httpc = &http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	// identity and secrets are the outbound PORTS (identity control plane and
 	// credential writing). The shell depends only on these interfaces; the
 	// concrete adapters (cognitosigv4/smsecrets) are wired in main().
@@ -1192,6 +1200,37 @@ func roleARNDeclaredIn(routing map[string]interface{}, roleARN string) bool {
 	return false
 }
 
+// validateProviderHost rejects a base_url whose host is (or resolves to) a loopback,
+// private, link-local or unspecified address — the SSRF guard for the credential-bearing
+// provider-model call (GOV-SEC-006). The Lambda runs outside a VPC, so the blast radius is
+// the public internet plus these ranges; refusing them removes the internal-host reach.
+func validateProviderHost(rawURL string) error {
+	u, err := neturl.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return errors.New("invalid base_url")
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return errors.New("base_url host is not allowed")
+	}
+	var ips []net.IP
+	if ip := net.ParseIP(host); ip != nil {
+		ips = []net.IP{ip}
+	} else {
+		addrs, lerr := net.LookupIP(host)
+		if lerr != nil {
+			return errors.New("base_url host does not resolve")
+		}
+		ips = addrs
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return errors.New("base_url resolves to a private or loopback address")
+		}
+	}
+	return nil
+}
+
 // baseURLDeclaredIn is the pure comparison orgDeclaresBaseURL applies to a routing map —
 // split out so the matching rule (case-insensitive, trailing slash ignored) is testable
 // without DynamoDB.
@@ -1226,10 +1265,18 @@ func listProviderModels(ctx context.Context, adapter, baseURL, key string) ([]st
 	if !strings.HasPrefix(strings.ToLower(base), "https://") {
 		return nil, errors.New("base_url must use https:// — a cleartext endpoint would expose the provider key in transit")
 	}
+	// GOV-SEC-006: reject a base_url that points at a private/loopback/link-local
+	// address before the credential-bearing request leaves.
+	if err := validateProviderHost(base); err != nil {
+		return nil, err
+	}
 	var req *http.Request
 	switch adapter {
 	case "google", "gemini":
-		req, _ = http.NewRequestWithContext(ctx, "GET", base+"/v1beta/models?key="+neturl.QueryEscape(key), nil)
+		// GOV-SEC-006: the Gemini key goes in the x-goog-api-key HEADER, not the URL
+		// query — a URL carries into logs, referrers and redirect targets.
+		req, _ = http.NewRequestWithContext(ctx, "GET", base+"/v1beta/models", nil)
+		req.Header.Set("x-goog-api-key", key)
 	case "anthropic":
 		req, _ = http.NewRequestWithContext(ctx, "GET", base+"/v1/models", nil)
 		req.Header.Set("x-api-key", key)
@@ -1921,6 +1968,19 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if err := writeOrgCredits(ctx, org, credits); err != nil {
 			return resp(500, map[string]string{"error": err.Error()}, origin)
 		}
+		// GOV-SEC-004: a credit mutation (balance correction, amount, expiry) is a
+		// control-plane change that must be in the trail — field diff, value-free.
+		var creditChs []auditChange
+		if b.AmountUSD != nil {
+			creditChs = append(creditChs, auditChange{Path: "amount_usd", After: *b.AmountUSD})
+		}
+		if b.Corrected != nil {
+			creditChs = append(creditChs, auditChange{Path: "corrected_remaining_usd", After: *b.Corrected})
+		}
+		if b.ExpiresAt != nil {
+			creditChs = append(creditChs, auditChange{Path: "expires_at", After: *b.ExpiresAt})
+		}
+		emitAudit(ctx, aud, audCreditUpdate, org, scopeKey(org, "", ""), b.Provider, creditChs)
 		return resp(200, map[string]interface{}{"status": "saved", "provider": b.Provider, "credit": entry}, origin)
 
 	case strings.HasSuffix(path, "/admin/credits") && method == "DELETE":
@@ -1950,6 +2010,8 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if err := writeOrgCredits(ctx, org, credits); err != nil {
 			return resp(500, map[string]string{"error": err.Error()}, origin)
 		}
+		// GOV-SEC-004: deleting a credit record is auditable too.
+		emitAudit(ctx, aud, audCreditDelete, org, scopeKey(org, "", ""), provider, nil)
 		// The consumption counter is NOT deleted: it is the history of what was
 		// already burned. Deleting it too would let someone zero the spend by
 		// recreating the record.
@@ -1989,6 +2051,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		var name string
 		var err error
 		if b.Provider != "" {
+			// GOV-FUN-001: normalise the provider to lower-case on WRITE, because the
+			// read path (listProviderModels) lower-cases it — a mixed-case "OpenAI"
+			// stored verbatim could never be found again.
+			provider := strings.ToLower(strings.TrimSpace(b.Provider))
 			org, okScope := forceOrg(b.Org)
 			if !okScope {
 				return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
@@ -1997,11 +2063,17 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			// CHECK AUTHORIZATION: Verify user can access the requested org
 			if !authCtx.CanAccessOrg(org) {
 				writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role,
-					"unauthorized_secret_write_attempt", fmt.Sprintf("org:%s,provider:%s", org, b.Provider), "")
+					"unauthorized_secret_write_attempt", fmt.Sprintf("org:%s,provider:%s", org, provider), "")
 				return resp(403, map[string]string{"error": "access denied"}, origin)
 			}
 
-			name, err = putSecretRaw(ctx, "aiplat/org/"+org+"/"+b.Provider, key)
+			name, err = putSecretRaw(ctx, "aiplat/org/"+org+"/"+provider, key)
+			if err == nil {
+				// GOV-SEC-004: rotating a provider key is the most sensitive mutation —
+				// it must land in the trail (the action constant existed but was never
+				// emitted). The value is never included.
+				emitAudit(ctx, aud, audProviderSecretSet, org, "aiplat/org/"+org+"/"+provider, provider, nil)
+			}
 		} else {
 			if b.Name == "" {
 				return resp(400, map[string]string{"error": "name is required"}, origin)
@@ -2010,7 +2082,9 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			if !isPlatform {
 				return resp(403, map[string]string{"error": "a platform secret requires platform_admin; use provider for your org's credential"}, origin)
 			}
-			name, err = putSecret(ctx, b.Name, b.APIKey)
+			// GOV-FUN-001: store the MERGED key (api_key or its `value` alias), not the
+			// raw b.APIKey — the new console sends `value`, which was being stored empty.
+			name, err = putSecret(ctx, b.Name, key)
 		}
 		if err != nil {
 			return resp(500, map[string]string{"error": err.Error()}, origin)

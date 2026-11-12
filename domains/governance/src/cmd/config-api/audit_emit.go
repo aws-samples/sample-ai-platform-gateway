@@ -190,11 +190,31 @@ var auditSensitiveLeaves = map[string]bool{
 }
 
 func auditIsSensitive(path string) bool {
-	leaf := path
-	if i := strings.LastIndex(path, "."); i >= 0 {
-		leaf = path[i+1:]
+	lp := strings.ToLower(path)
+	// Any value under a `headers` map is a credential-bearing header
+	// (Authorization, x-api-key, …): redact the WHOLE subtree, not a fixed leaf
+	// name (GOV-SEC-005). Routing headers were travelling into the trail and the S3
+	// archive unredacted.
+	if strings.Contains(lp, ".headers.") || strings.HasPrefix(lp, "headers.") {
+		return true
 	}
-	return auditSensitiveLeaves[strings.ToLower(leaf)]
+	leaf := lp
+	if i := strings.LastIndex(lp, "."); i >= 0 {
+		leaf = lp[i+1:]
+	}
+	// api_key_secret is the NAME of a referenced secret, not the value — keep it
+	// visible (that is exactly what one audits), even though it ends in _secret.
+	if leaf == "api_key_secret" {
+		return false
+	}
+	if auditSensitiveLeaves[leaf] {
+		return true
+	}
+	// external_id and client_secret are credentials; so is any *_secret leaf.
+	if leaf == "external_id" || leaf == "client_secret" || strings.HasSuffix(leaf, "_secret") {
+		return true
+	}
+	return false
 }
 
 // auditDiff flattens both objects into dotted paths and returns one entry per
