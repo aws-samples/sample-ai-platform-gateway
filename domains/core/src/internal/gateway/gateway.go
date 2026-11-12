@@ -1273,7 +1273,7 @@ func defaultModel(c *Config) string {
 // the pure domain (routing.MaskPII/ContainsSecret/LooksLikeInjection). The
 // loop/precedence logic is preserved byte for byte; only the patterns moved into the
 // domain. Returns (possibly masked messages, block reason or "").
-func applyGuardrails(g *GuardrailPolicy, msgs []chatMsg) ([]chatMsg, string) {
+func applyGuardrails(g *GuardrailPolicy, msgs []chatMsg, tools []toolDef) ([]chatMsg, string) {
 	if g == nil {
 		// FAIL CLOSED. An absent policy used to mean "no guardrail", so a scope
 		// with no explicit config forwarded the prompt verbatim to a third-party
@@ -1282,13 +1282,39 @@ func applyGuardrails(g *GuardrailPolicy, msgs []chatMsg) ([]chatMsg, string) {
 		// OFF explicitly.
 		g = defaultGuardrails()
 	}
-	for _, m := range msgs {
-		c := m.text()
+	// Everything that LEAVES the gateway is scanned, not just message text: tool
+	// definitions (description, parameters) and the assistant's tool_call arguments also
+	// travel to the provider and were an unscanned exfiltration/injection path
+	// (CORE-SEC-003) — a secret hidden in a tool description reached the provider.
+	scan := func(c string) string {
 		if g.BlockSecrets && routing.ContainsSecret(c) {
-			return msgs, "secret_detected"
+			return "secret_detected"
 		}
 		if g.BlockInjection && routing.LooksLikeInjection(c) {
-			return msgs, "prompt_injection"
+			return "prompt_injection"
+		}
+		return ""
+	}
+	for _, m := range msgs {
+		if r := scan(m.text()); r != "" {
+			return msgs, r
+		}
+		for _, tc := range m.ToolCalls {
+			if r := scan(tc.Function.Arguments); r != "" {
+				return msgs, r
+			}
+		}
+	}
+	for _, t := range tools {
+		if r := scan(t.Function.Name + " " + t.Function.Description); r != "" {
+			return msgs, r
+		}
+		if len(t.Function.Parameters) > 0 {
+			if b, err := json.Marshal(t.Function.Parameters); err == nil {
+				if r := scan(string(b)); r != "" {
+					return msgs, r
+				}
+			}
 		}
 	}
 	if g.MaskPII {
@@ -2234,7 +2260,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 
 	// --- Content guardrails (policy per scope) ---
 	// Blocks secret/injection; masks PII before leaving for the provider.
-	if msgs, reason := applyGuardrails(c.Guardrails, body.Messages); reason != "" {
+	if msgs, reason := applyGuardrails(c.Guardrails, body.Messages, body.Tools); reason != "" {
 		emitFailure(ctx, req.RequestID, ident, feature, "", requested, "blocked", reason, "", int(time.Since(start).Milliseconds()))
 		return sresp(400, jsonHeaders(reqOrigin),
 			`{"error":{"message":"blocked by content guardrail: `+reason+`","type":"policy_violation","code":"`+reason+`"}}`)

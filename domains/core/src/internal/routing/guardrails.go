@@ -48,9 +48,27 @@ var (
 	// Secret-looking assignment: `password: <value>`, `api_key = <value>`, etc. The value
 	// must be 6+ non-space chars right after the separator, so "password reset link: ..."
 	// (a space before the value) does NOT match.
-	reAssign = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|api[_ \-]?key|access[_ \-]?key|private[_ \-]?key|auth[_ \-]?token|token)\s*[:=]\s*\S{6,}`)
-	// Prompt injection: classic patterns (heuristic, not a replacement for a model).
-	reInjection = regexp.MustCompile(`(?i)(ignore (all |the )?(previous|above) instructions|disregard the (system|above)|reveal your (system )?prompt|you are now [a-z]|forget your (rules|instructions))`)
+	//
+	// `token` (bare) and `auth_token` were REMOVED from the keyword set: the bare word is
+	// everyday prose ("token: expires_in" in OAuth docs) and matched `\S{6,}` on any
+	// following word, blocking legitimate developer content (CORE-SEC-002). Real tokens
+	// still trip reSecret (sk-/ghp_/JWT/…) or the hex check; what is left here are the
+	// unambiguous secret-assignment keywords.
+	reAssign = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|api[_ \-]?key|access[_ \-]?key|private[_ \-]?key)\s*[:=]\s*\S{6,}`)
+	// Prompt injection: classic patterns plus the common variants the five fixed phrases
+	// missed (prior/preceding/earlier; disregard/forget …; print/show/reveal YOUR prompt).
+	// Still a heuristic, not a model — the reveal group requires "your"/"system" so a
+	// benign "show me the instructions" does not trip it.
+	reInjection = regexp.MustCompile(`(?i)(` +
+		`(ignore|disregard|forget) (all |the |your )?(previous|above|prior|preceding|earlier|system) (instructions|rules|prompts?)` + `|` +
+		`disregard the (system|above)` + `|` +
+		`(reveal|print|show|expose|repeat|output|dump) (me |us )?(your (system )?|the system )(prompt|instructions|rules)` + `|` +
+		`you are now [a-z]` + `|` +
+		`forget (your |the )?(rules|instructions)` +
+		`)`)
+	// secretCtxRe is the set of keywords whose presence NEAR a long hex run turns that run
+	// from "probably a hash/id" into "probably a pasted secret" (see hexLooksSecret).
+	secretCtxRe = regexp.MustCompile(`(?i)(secret|password|passwd|pwd|api[_ \-]?key|access[_ \-]?key|private[_ \-]?key|token|credential|bearer|auth)`)
 )
 
 // MaskPII masks email/CPF/card/phone/SSN. Idempotent: the replacement markers
@@ -86,25 +104,41 @@ func ContainsSecret(s string) bool {
 // only) and a repeated-letter blob (letters only) from reading as a secret, while still
 // catching a real mixed hex token/hash.
 func hexLooksSecret(s string) bool {
-	run, hasDigit, hasAlpha := 0, false, false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		isDigit := c >= '0' && c <= '9'
-		isHexAlpha := (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-		switch {
-		case isDigit:
-			run++
-			hasDigit = true
-		case isHexAlpha:
-			run++
-			hasAlpha = true
-		default:
-			run, hasDigit, hasAlpha = 0, false, false
+	isHex := func(c byte) bool {
+		return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+	}
+	for i := 0; i < len(s); {
+		if !isHex(s[i]) {
+			i++
 			continue
 		}
-		if run >= 32 && hasDigit && hasAlpha {
-			return true
+		j, hasDigit, hasAlpha := i, false, false
+		for j < len(s) && isHex(s[j]) {
+			if s[j] >= '0' && s[j] <= '9' {
+				hasDigit = true
+			} else {
+				hasAlpha = true
+			}
+			j++
 		}
+		run := j - i
+		if run >= 32 && hasDigit && hasAlpha {
+			// 32/40/64 are the lengths of an MD5/dashless-UUID, a git SHA-1 and a
+			// SHA-256 — everyday developer content. Those read as a secret ONLY when a
+			// secret keyword sits just before them ("secret: <64hex>"); a bare "commit
+			// <40hex>" or "id <32hex>" no longer false-positives (CORE-SEC-002). Any
+			// other length of mixed hex is treated as a secret as before.
+			benignLen := run == 32 || run == 40 || run == 64
+			lo := i - 24
+			if lo < 0 {
+				lo = 0
+			}
+			nearKeyword := secretCtxRe.MatchString(s[lo:i])
+			if !benignLen || nearKeyword {
+				return true
+			}
+		}
+		i = j
 	}
 	return false
 }
