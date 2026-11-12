@@ -101,12 +101,21 @@ func toWireTools(tools []ports.ToolDef) []wireToolDef {
 	return out
 }
 
-func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Result, error) {
-	reqBody := map[string]interface{}{"model": a.ModelID, "messages": toWireMessages(in.Messages)}
+// BuildRequestBody assembles the chat/completions request body. It is exported so the
+// gateway's streaming opener builds the SAME body the buffered Invoke does — max_tokens,
+// temperature, top_p, stop, reasoning_effort and tools — instead of a stripped-down one
+// that dropped every parameter (CORE-BND-001). The caller adds `stream`/`stream_options`.
+func BuildRequestBody(modelID string, in ports.InvokeInput) map[string]interface{} {
+	body := map[string]interface{}{"model": modelID, "messages": toWireMessages(in.Messages)}
 	if len(in.Tools) > 0 {
-		reqBody["tools"] = toWireTools(in.Tools)
+		body["tools"] = toWireTools(in.Tools)
 	}
-	applyInference(reqBody, in)
+	applyInference(body, in)
+	return body
+}
+
+func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Result, error) {
+	reqBody := BuildRequestBody(a.ModelID, in)
 	payload, _ := json.Marshal(reqBody)
 	// Carries the caller's context so the provider call is cancelled when the
 	// request is cancelled or the invocation deadline expires, instead of

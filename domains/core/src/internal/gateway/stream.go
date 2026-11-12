@@ -46,6 +46,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aiplat/core/internal/adapters/openaicompat"
 	"github.com/aiplat/core/internal/ports"
 )
 
@@ -476,8 +477,15 @@ func chunkReader(st ports.ProviderStream) func() (ports.Chunk, error) {
 // line is already on the wire and the only way to report a failure is an in-band frame.
 //
 // The caller owns closing resp.Body (pumpOpenAICompat does it).
-func openStreamOpenAICompat(ctx context.Context, baseURL, modelID string, msgs []chatMsg, apiKey string) (*http.Response, error) {
-	payload, _ := json.Marshal(map[string]interface{}{"model": modelID, "messages": msgs, "stream": true, "stream_options": map[string]bool{"include_usage": true}})
+func openStreamOpenAICompat(ctx context.Context, baseURL, modelID string, in ports.InvokeInput, apiKey string) (*http.Response, error) {
+	// Build the SAME body as the buffered openaicompat call (max_tokens, temperature,
+	// top_p, stop, reasoning_effort, tools), then add the streaming flags. Previously this
+	// opener sent only model+messages, so a stream:true request silently dropped every
+	// parameter and every tool (CORE-BND-001) — unbounded, full-price, prose-not-tools.
+	body := openaicompat.BuildRequestBody(modelID, in)
+	body["stream"] = true
+	body["stream_options"] = map[string]bool{"include_usage": true}
+	payload, _ := json.Marshal(body)
 	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/chat/completions", bytes.NewReader(payload))
 	req.Header.Set("content-type", "application/json")
 	if apiKey != "" {

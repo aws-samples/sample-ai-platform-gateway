@@ -2563,7 +2563,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		for _, s := range chain {
 			usedName, usedProvider, usedUpstream = s.name, s.r.Provider, upstreamOf(s.r)
 			if s.r.Provider == "openai_compatible" {
-				r, e := openStreamOpenAICompat(ctx, s.r.BaseURL, s.r.ProviderModelID, body.Messages, getSecret(ctx, s.r.APIKeySecret))
+				r, e := openStreamOpenAICompat(ctx, s.r.BaseURL, s.r.ProviderModelID, inf.input(body.Messages, body.Tools), getSecret(ctx, s.r.APIKeySecret))
 				if e == nil {
 					openResp, okStream = r, true
 					break
