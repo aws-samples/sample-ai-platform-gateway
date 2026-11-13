@@ -8,7 +8,8 @@
 //
 // Security: we store only sha256(key). The plaintext is returned ONCE on creation.
 //
-// Routes (x-admin-token header):
+// Routes (behind the API Gateway Cognito user-pool authorizer; the JWT carries
+// org/role claims — the legacy x-admin-token header was removed in 1.5.0):
 //
 //	POST   /admin/keys   {org, app_tag?}       → creates and returns {api_key} (once)
 //	                      (`tenant` also accepted, legacy alias for `org`)
@@ -135,7 +136,7 @@ func originOf(headers map[string]string) string {
 func corsHeaders(reqOrigin string) map[string]string {
 	h := map[string]string{
 		"access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-		"access-control-allow-headers": "content-type,authorization,x-admin-token",
+		"access-control-allow-headers": "content-type,authorization",
 		"content-type":                 "application/json",
 	}
 	if reqOrigin != "" && allowedOrigins[reqOrigin] {

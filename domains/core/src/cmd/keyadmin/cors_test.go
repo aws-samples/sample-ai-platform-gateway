@@ -30,7 +30,7 @@ func TestKeyadminCORS_AllowlistOnly(t *testing.T) {
 	// The non-CORS headers stay untouched in every case.
 	if h["content-type"] != "application/json" ||
 		h["access-control-allow-methods"] != "GET,POST,DELETE,OPTIONS" ||
-		h["access-control-allow-headers"] != "content-type,authorization,x-admin-token" {
+		h["access-control-allow-headers"] != "content-type,authorization" {
 		t.Fatalf("existing headers changed: %v", h)
 	}
 }
