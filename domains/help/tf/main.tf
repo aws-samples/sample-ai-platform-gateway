@@ -182,13 +182,19 @@ resource "aws_api_gateway_integration" "proxy_options" {
 resource "aws_api_gateway_deployment" "help" {
   rest_api_id = aws_api_gateway_rest_api.help.id
   triggers = {
+    # XC-IAC-001: hash the security/behaviour ATTRIBUTES, not just resource ids, so an
+    # authorizer/authorization/uri/timeout change actually replaces the deployment.
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.proxy.id,
       aws_api_gateway_method.proxy_any.id,
-      aws_api_gateway_integration.proxy_any.id,
+      aws_api_gateway_method.proxy_any.authorization,
+      aws_api_gateway_integration.proxy_any.uri,
+      aws_api_gateway_integration.proxy_any.timeout_milliseconds,
       aws_api_gateway_method.proxy_options.id,
       aws_api_gateway_integration.proxy_options.id,
       aws_api_gateway_authorizer.cognito.id,
+      aws_api_gateway_authorizer.cognito.provider_arns,
+      aws_api_gateway_authorizer.cognito.authorizer_uri,
     ]))
   }
   lifecycle {
@@ -333,3 +339,14 @@ resource "aws_ssm_parameter" "help_api_url" {
 }
 
 output "help_api_endpoint" { value = aws_api_gateway_stage.help.invoke_url }
+
+# XC-IAC-004: manage the Lambda log group so it has a retention (auto-created groups keep
+# logs forever). The name matches the function's default group, so retention applies to the
+# same group the function writes to. On an EXISTING deployment the group already exists and
+# must be imported once (`terraform import aws_cloudwatch_log_group.help_api
+# /aws/lambda/${local.name}-api`); orphan groups from removed Lambdas are deleted by hand
+# (out of Terraform, as the audit note states).
+resource "aws_cloudwatch_log_group" "help_api" {
+  name              = "/aws/lambda/${local.name}-api"
+  retention_in_days = 90
+}
