@@ -63,7 +63,7 @@ var (
 	ddb       *dynamodb.Client
 	sm        *secretsmanager.Client
 	stsClient *sts.Client
-	baseCfg aws.Config
+	baseCfg   aws.Config
 	// CheckRedirect refuses to follow redirects (GOV-SEC-006): a provider-model
 	// listing carries the org's credential (x-api-key / Bearer), and Go strips only
 	// Authorization on a cross-host redirect — an x-api-key would follow a 302 to an
@@ -517,15 +517,19 @@ func validateSecretRequest(req struct {
 }
 
 // memberMetaKey: the member's access record (team + apps), kept separate from
-// Cognito (which stores only org_id/role). pk MEMBER#<org>#<email> does not
-// collide with config scopes (ORG#/TEAM#/APP#) nor with the backoffice org scan.
-func memberMetaKey(org, email string) string {
-	return "MEMBER#" + org + "#" + strings.ToLower(email)
+// Cognito (which stores only org_id/role). GOV-SEC-003: the record is keyed by the
+// member's immutable Cognito `sub`, NOT the e-mail — a member can change and re-verify
+// their e-mail, and an e-mail-keyed scope let a team-scoped member escape their scope by
+// moving to an address with no MEMBER# record. The sub never changes. pk
+// MEMBER#<org>#<sub> does not collide with config scopes (ORG#/TEAM#/APP#) nor with the
+// backoffice org scan. sub is a uuid, so no case normalisation is applied (unlike e-mail).
+func memberMetaKey(org, sub string) string {
+	return "MEMBER#" + org + "#" + sub
 }
 
-// readMemberMeta returns the member's {team, apps} (empty when absent).
-func readMemberMeta(ctx context.Context, org, email string) (string, []string) {
-	m := readScope(ctx, memberMetaKey(org, email))
+// readMemberMeta returns the member's {team, apps} (empty when absent), by sub.
+func readMemberMeta(ctx context.Context, org, sub string) (string, []string) {
+	m := readScope(ctx, memberMetaKey(org, sub))
 	if m == nil {
 		return "", nil
 	}
@@ -541,15 +545,39 @@ func readMemberMeta(ctx context.Context, org, email string) (string, []string) {
 	return team, apps
 }
 
-// writeMemberMeta stores the member's team + apps (replacing merge).
-func writeMemberMeta(ctx context.Context, org, email, team string, apps []string) error {
+// writeMemberMeta stores the member's team + apps (replacing merge), keyed by sub.
+func writeMemberMeta(ctx context.Context, org, sub, team string, apps []string) error {
 	body := map[string]interface{}{"team": team, "apps": apps, "updated_at": time.Now().UTC().Format(time.RFC3339)}
 	b, _ := json.Marshal(body)
 	_, err := ddb.PutItem(ctx, &dynamodb.PutItemInput{TableName: &configTable, Item: map[string]ddbtypes.AttributeValue{
-		"pk":     &ddbtypes.AttributeValueMemberS{Value: memberMetaKey(org, email)},
+		"pk":     &ddbtypes.AttributeValueMemberS{Value: memberMetaKey(org, sub)},
 		"config": &ddbtypes.AttributeValueMemberS{Value: string(b)},
 	}})
 	return err
+}
+
+// memberTeamOK reports whether a member's requested team is assignable: either no
+// team ("") or "default", or a team id that EXISTS in the org registry (GOV-SEC-009).
+// The charset check in validateMemberUpdate stops a team string from aliasing a
+// different scope key; this check stops a member from being parked on a team that
+// was never created — which would silently scope their token to an empty policy.
+func memberTeamOK(ctx context.Context, org, team string) bool {
+	if team == "" || team == "default" {
+		return true
+	}
+	tree := readOrgTree(ctx, org)
+	_, ok := tree.Teams[team]
+	return ok
+}
+
+// subFor resolves a member's immutable Cognito sub from their e-mail, for the MEMBER#
+// record key (GOV-SEC-003). Returns ("", false) when the user cannot be read.
+func subFor(ctx context.Context, email string) (string, bool) {
+	sub, ok, err := identity.GetUserSub(ctx, email)
+	if err != nil || !ok || sub == "" {
+		return "", false
+	}
+	return sub, true
 }
 
 // --- Team/app registry (team-app-management feature) ---
@@ -792,7 +820,9 @@ func listMembers(ctx context.Context, org string) ([]member, error) {
 	}
 	var out []member
 	for _, u := range users {
-		team, apps := readMemberMeta(ctx, org, u.Email)
+		// GOV-SEC-003: the access record is keyed by the immutable sub. ListUsers
+		// already carries it, so no extra AdminGetUser round-trip is needed here.
+		team, apps := readMemberMeta(ctx, org, u.Sub)
 		out = append(out, member{Email: u.Email, Role: u.Role, Status: u.Status, Enabled: u.Enabled, Team: team, Apps: apps})
 	}
 	return out, nil
@@ -1781,34 +1811,48 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		// WIDEN it. Build the effective PARENT (every scope ABOVE this write target)
 		// and reject any key the child loosens — the write-side mirror of the Core's
 		// read-side foldCeilings, verified against the same config-scope contract.
-		belowOrg := team != "" || app != ""
-		parentKeys := []string{"global"}
-		if belowOrg {
-			parentKeys = append(parentKeys, "ORG#"+org)
-			if app != "" {
-				pt := team
-				if pt == "" {
-					pt = "default"
+		//
+		// GOV-FUN-002: a GLOBAL write (org == "") has NO parent, so there is nothing to
+		// compare it against. The old code seeded parentKeys with "global" and then
+		// compared the global write to the current global item — i.e. the scope against
+		// its own replacement — which turned every global policy into a one-way ratchet
+		// (the platform operator could only ever tighten it). Skip the ceiling check
+		// entirely for a global write. Global REMAINS a ceiling for ORG/TEAM/APP writes,
+		// consistent with the Core's read-side fold (global → ORG → TEAM → APP).
+		// parentEff stays visible to the audit emission below (auditParentModels). It
+		// is nil for a global write, which is harmless there because the whole audit
+		// block is org-only.
+		var parentEff map[string]interface{}
+		if org != "" {
+			belowOrg := team != "" || app != ""
+			parentKeys := []string{"global"}
+			if belowOrg {
+				parentKeys = append(parentKeys, "ORG#"+org)
+				if app != "" {
+					pt := team
+					if pt == "" {
+						pt = "default"
+					}
+					parentKeys = append(parentKeys, "ORG#"+org+"#TEAM#"+pt)
 				}
-				parentKeys = append(parentKeys, "ORG#"+org+"#TEAM#"+pt)
 			}
-		}
-		parentEff := map[string]interface{}{}
-		var parentAllowed []string
-		for _, pk := range parentKeys {
-			if m := readScope(ctx, pk); m != nil {
-				parentAllowed = govcore.IntersectAllowed(parentAllowed, allowedFrom(m))
-				deepMerge(parentEff, m)
+			parentEff = map[string]interface{}{}
+			var parentAllowed []string
+			for _, pk := range parentKeys {
+				if m := readScope(ctx, pk); m != nil {
+					parentAllowed = govcore.IntersectAllowed(parentAllowed, allowedFrom(m))
+					deepMerge(parentEff, m)
+				}
 			}
-		}
-		if parentAllowed != nil {
-			parentEff["allowed_models"] = parentAllowed
-		}
-		if viol := govcore.CeilingViolations(parentEff, cfg, belowOrg); len(viol) > 0 {
-			writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role,
-				"config_scope_widening_rejected", key, strings.Join(viol, ","))
-			return resp(400, map[string]interface{}{"error": "scope_widening", "keys": viol,
-				"message": "a team/app scope cannot widen a parent policy: " + strings.Join(viol, ", ")}, origin)
+			if parentAllowed != nil {
+				parentEff["allowed_models"] = parentAllowed
+			}
+			if viol := govcore.CeilingViolations(parentEff, cfg, belowOrg); len(viol) > 0 {
+				writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role,
+					"config_scope_widening_rejected", key, strings.Join(viol, ","))
+				return resp(400, map[string]interface{}{"error": "scope_widening", "keys": viol,
+					"message": "a team/app scope cannot widen a parent policy: " + strings.Join(viol, ", ")}, origin)
+			}
 		}
 		// Audit: read the PREVIOUS state of that scope before overwriting.
 		// Cheap (the same read the merge already does on other paths) and it is
@@ -2268,6 +2312,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		// Single-deployment: no plan-derived seat ceiling or team requirement.
 		// A team is optional — the customer either uses teams or doesn't, and
 		// b.Team simply stays "" when they don't.
+		// GOV-SEC-009: a named team must already exist in the org registry.
+		if !memberTeamOK(ctx, org, b.Team) {
+			return resp(400, map[string]string{"error": "unknown_team", "message": "team does not exist in this org: " + b.Team}, origin)
+		}
 		if _, err := listMembers(ctx, org); err != nil {
 			return resp(500, map[string]string{"error": err.Error()}, origin)
 		}
@@ -2285,8 +2333,16 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			}
 			return resp(500, map[string]string{"error": err.Error()}, origin)
 		}
-		// Store the member's access (team + apps) outside Cognito
-		writeMemberMeta(ctx, org, b.Email, b.Team, b.Apps)
+		// Store the member's access (team + apps) outside Cognito, keyed by the
+		// member's immutable Cognito sub (GOV-SEC-003), resolved now that the user
+		// exists. If the sub can't be read the member is still created in Cognito —
+		// but their access record would be unkeyable, so fail loudly instead of
+		// silently writing an e-mail-keyed record that later reads miss.
+		sub, ok := subFor(ctx, b.Email)
+		if !ok {
+			return resp(500, map[string]string{"error": "member created but could not resolve its identity id; retry"}, origin)
+		}
+		writeMemberMeta(ctx, org, sub, b.Team, b.Apps)
 		status := "invited"
 		if isPlatform && b.Password != "" {
 			status = "active"
@@ -2338,6 +2394,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if !memberRoles[b.Role] {
 			return resp(400, map[string]string{"error": "invalid role (owner|admin|billing|dev)"}, origin)
 		}
+		// GOV-SEC-009: a named team must already exist in the org registry.
+		if !memberTeamOK(ctx, org, b.Team) {
+			return resp(400, map[string]string{"error": "unknown_team", "message": "team does not exist in this org: " + b.Team}, origin)
+		}
 		// GOV-SEC-007: promoting someone to owner requires owner (or platform) rights.
 		if b.Role == "owner" && role != "owner" && !isPlatform {
 			return resp(403, map[string]string{"error": "only an owner can grant the owner role"}, origin)
@@ -2363,7 +2423,12 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if err := identity.UpdateAttrs(ctx, b.Email, map[string]string{"custom:role": b.Role}); err != nil {
 			return resp(500, map[string]string{"error": "failed to update the role: " + err.Error()}, origin)
 		}
-		writeMemberMeta(ctx, org, b.Email, b.Team, b.Apps)
+		// GOV-SEC-003: the access record is keyed by the member's immutable sub.
+		sub, ok := subFor(ctx, b.Email)
+		if !ok {
+			return resp(500, map[string]string{"error": "could not resolve the member identity id; retry"}, origin)
+		}
+		writeMemberMeta(ctx, org, sub, b.Team, b.Apps)
 		writeAudit(ctx, org, claimEmail, role, govcore.AuditMemberUpdate, b.Email, "papel="+b.Role+" time="+b.Team)
 		return resp(200, map[string]interface{}{"email": b.Email, "role": b.Role, "team": b.Team, "apps": b.Apps, "status": "updated"}, origin)
 
@@ -2398,12 +2463,18 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if tr, owners := ownerStats(ctx, org, email); tr == "owner" && owners <= 1 {
 			return resp(409, map[string]string{"error": "cannot remove the only owner — transfer ownership first"}, origin)
 		}
+		// GOV-SEC-003: resolve the member's sub BEFORE deleting the Cognito user —
+		// once deleted, AdminGetUser can no longer return the sub, so the access
+		// record would be orphaned.
+		delSub, delSubOK := subFor(ctx, email)
 		if err := identity.DeleteUser(ctx, email); err != nil {
 			return resp(500, map[string]string{"error": err.Error()}, origin)
 		}
-		// Clean up the member's access record (best-effort).
-		ddb.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: &configTable,
-			Key: map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: memberMetaKey(org, email)}}})
+		// Clean up the member's access record (best-effort), keyed by sub.
+		if delSubOK {
+			ddb.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: &configTable,
+				Key: map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: memberMetaKey(org, delSub)}}})
+		}
 		writeAudit(ctx, org, claimEmail, role, govcore.AuditMemberRemove, email, "")
 		return resp(200, map[string]interface{}{"email": email, "status": "removed"}, origin)
 

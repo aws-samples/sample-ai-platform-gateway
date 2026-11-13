@@ -798,8 +798,12 @@ resource "aws_cognito_user_pool_client" "console" {
   # e-mails are members of the pool from the different error responses.
   prevent_user_existence_errors = "ENABLED"
 
-  access_token_validity  = 8
-  id_token_validity      = 8
+  # GOV-IAC-001: short-lived bearer tokens. An 8 h id/access token was a wide
+  # window for a stolen token to be replayed against the control-plane APIs. 1 h
+  # is viable now that the console silently refreshes (FE-UX-002) using the
+  # 30-day refresh token, so the UX cost of the shorter window is nil.
+  access_token_validity  = 1
+  id_token_validity      = 1
   refresh_token_validity = 30
   token_validity_units {
     access_token  = "hours"

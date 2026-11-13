@@ -3,7 +3,7 @@
 
 // pretoken of the Governance domain: Cognito pre-token-generation trigger.
 //
-// Injects the member's team scope INTO the JWT. Reads the MEMBER#<org>#<email>
+// Injects the member's team scope INTO the JWT. Reads the MEMBER#<org>#<sub>
 // record from the config and adds the `team` and `apps` claims to the token.
 // This way the access scope TRAVELS with the request and every API trusts the
 // authorizer — with no cross-domain read of the members table on the hot path.
@@ -26,20 +26,34 @@ import (
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
+// ddbGetter is the one DynamoDB operation the trigger needs. Narrowing the global
+// to an interface (satisfied by *dynamodb.Client) lets a test inject a fake and
+// exercise handle end-to-end — which is how the GOV-SEC-003 sub-keying is proven
+// behaviourally rather than by inspecting a key string.
+type ddbGetter interface {
+	GetItem(ctx context.Context, in *dynamodb.GetItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+}
+
 var (
-	ddb         *dynamodb.Client
+	ddb         ddbGetter
 	configTable = os.Getenv("CONFIG_TABLE")
 )
 
 func handle(ctx context.Context, ev events.CognitoEventUserPoolsPreTokenGen) (events.CognitoEventUserPoolsPreTokenGen, error) {
 	attrs := ev.Request.UserAttributes
 	org := attrs["custom:org_id"]
-	email := strings.ToLower(strings.TrimSpace(attrs["email"]))
-	if org == "" || email == "" || configTable == "" {
+	// GOV-SEC-003: the MEMBER# access record is keyed by the member's IMMUTABLE
+	// Cognito sub, never the e-mail. The e-mail is mutable (a member can change and
+	// re-verify it); keying the scope by e-mail let a team-scoped member shed their
+	// scope by moving to an address with no MEMBER# record. There is NO e-mail
+	// fallback here on purpose — a fallback would reopen exactly that escape for any
+	// member whose record had not yet been re-keyed.
+	sub := strings.TrimSpace(attrs["sub"])
+	if org == "" || sub == "" || configTable == "" {
 		return ev, nil // no scope to inject
 	}
 
-	pk := "MEMBER#" + org + "#" + email
+	pk := "MEMBER#" + org + "#" + sub
 	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{TableName: &configTable,
 		Key: map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: pk}}})
 	if err != nil || out.Item == nil {

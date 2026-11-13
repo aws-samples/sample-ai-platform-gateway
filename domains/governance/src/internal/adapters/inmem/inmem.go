@@ -52,6 +52,11 @@ func (m *Identity) CreateUser(_ context.Context, u ports.User, password string) 
 			u.Status = "FORCE_CHANGE_PASSWORD"
 		}
 	}
+	if u.Sub == "" {
+		// Synthetic but STABLE sub so tests exercise the sub-keyed MEMBER# path
+		// deterministically (GOV-SEC-003). A real Cognito assigns a uuid.
+		u.Sub = "sub-" + k
+	}
 	m.Users[k] = u
 	return nil
 }
@@ -86,6 +91,14 @@ func (m *Identity) GetUserOrg(_ context.Context, email string) (string, bool, er
 		return "", false, nil
 	}
 	return u.Org, true, nil
+}
+
+func (m *Identity) GetUserSub(_ context.Context, email string) (string, bool, error) {
+	u, ok := m.Users[m.key(email)]
+	if !ok {
+		return "", false, nil
+	}
+	return u.Sub, true, nil
 }
 
 // ResetPassword: in the double it only marks RESET_REQUIRED (no real e-mail).

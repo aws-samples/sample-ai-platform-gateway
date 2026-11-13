@@ -24,7 +24,13 @@ var ErrUserExists = errors.New("user already exists")
 // The member's team and apps do NOT live here — they stay in the config's MEMBER#
 // record, and the merge is shell orchestration.
 type User struct {
-	Email   string
+	Email string
+	// Sub is the Cognito IMMUTABLE user id (the `sub` attribute). GOV-SEC-003: the
+	// MEMBER# access record is keyed by sub, not e-mail, because a member can change
+	// (and re-verify) their e-mail — keying scope by a mutable attribute let a
+	// team-scoped member escape their scope by moving to an address with no MEMBER#
+	// record. sub never changes, so the scope cannot be shed.
+	Sub     string
 	Org     string
 	Role    string
 	Name    string
@@ -54,6 +60,11 @@ type Identity interface {
 	// ok=false when the read could not confirm the org (an error, or a user without
 	// the attribute).
 	GetUserOrg(ctx context.Context, email string) (org string, ok bool, err error)
+
+	// GetUserSub reads a user's immutable Cognito `sub` by e-mail (GOV-SEC-003). It is
+	// how the shell resolves the MEMBER# record key for a member identified by e-mail
+	// (create/update/delete). ok=false when the user could not be read.
+	GetUserSub(ctx context.Context, email string) (sub string, ok bool, err error)
 
 	// ResetPassword triggers the e-mail reset flow (Cognito sends a code; the
 	// member picks the new password). An admin NEVER sees or sets someone else's

@@ -98,7 +98,7 @@ func (a *Adapter) ListUsers(ctx context.Context, org string) ([]ports.User, erro
 		}
 		json.Unmarshal(rb, &r)
 		for _, u := range r.Users {
-			email, uorg, role := "", "", ""
+			email, uorg, role, sub := "", "", "", ""
 			for _, at := range u.Attributes {
 				switch at.Name {
 				case "email":
@@ -107,10 +107,12 @@ func (a *Adapter) ListUsers(ctx context.Context, org string) ([]ports.User, erro
 					uorg = at.Value
 				case "custom:role":
 					role = at.Value
+				case "sub":
+					sub = at.Value
 				}
 			}
 			if uorg == org && email != "" {
-				out = append(out, ports.User{Email: email, Org: uorg, Role: role, Status: u.UserStatus, Enabled: u.Enabled})
+				out = append(out, ports.User{Email: email, Sub: sub, Org: uorg, Role: role, Status: u.UserStatus, Enabled: u.Enabled})
 			}
 		}
 		if r.PaginationToken == "" {
@@ -289,4 +291,29 @@ func (a *Adapter) GetUserOrg(ctx context.Context, email string) (string, bool, e
 		}
 	}
 	return "", true, nil
+}
+
+// GetUserSub reads the immutable `sub` attribute by e-mail (GOV-SEC-003).
+func (a *Adapter) GetUserSub(ctx context.Context, email string) (string, bool, error) {
+	rb, code, err := a.jsonPost(ctx, "AWSCognitoIdentityProviderService.AdminGetUser",
+		map[string]interface{}{"UserPoolId": a.userPool, "Username": email})
+	if err != nil {
+		return "", false, err
+	}
+	if code >= 300 {
+		return "", false, nil
+	}
+	var r struct {
+		// AdminGetUser returns sub both as Username (for a pool with sub as the
+		// internal username) and in UserAttributes; read it from UserAttributes, which
+		// is always the canonical sub regardless of the pool's alias configuration.
+		UserAttributes []struct{ Name, Value string } `json:"UserAttributes"`
+	}
+	json.Unmarshal(rb, &r)
+	for _, at := range r.UserAttributes {
+		if at.Name == "sub" {
+			return at.Value, true, nil
+		}
+	}
+	return "", false, nil
 }
