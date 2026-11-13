@@ -407,6 +407,33 @@ func auditDerivedElsewhere(path string) bool {
 	return false
 }
 
+// auditParentModels returns the set of model aliases present in an EFFECTIVE
+// parent routing map (every scope above the write target). GOV-UX-002 uses it so
+// a single-field override at a child scope on a model that already exists
+// upstream is recorded as an update, not as the team adding/removing a model.
+func auditParentModels(parentEff map[string]interface{}) map[string]bool {
+	out := map[string]bool{}
+	routing, ok := parentEff["routing"].(map[string]interface{})
+	if !ok {
+		return out
+	}
+	for alias := range routing {
+		out[alias] = true
+	}
+	return out
+}
+
+// auditClassifyModelScoped is auditClassifyModel with parent-scope awareness:
+// when the alias already exists in a parent scope, setting or clearing a local
+// override is a model_update (not model_add/model_remove) — the model is present
+// upstream throughout (GOV-UX-002).
+func auditClassifyModelScoped(chs []auditChange, existsInParent bool) string {
+	if existsInParent {
+		return audModelUpdate
+	}
+	return auditClassifyModel(chs)
+}
+
 func auditClassifyModel(chs []auditChange) string {
 	allCreated, allRemoved := true, true
 	for _, c := range chs {

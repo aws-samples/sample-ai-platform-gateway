@@ -53,3 +53,69 @@ func TestValidateProviderHost(t *testing.T) {
 		t.Errorf("public IP must be allowed, got %v", err)
 	}
 }
+
+// GOV-SEC-009: member `team` is charset-checked (it composes the scope key), while the
+// SQL/script-style blocklist on display names is gone so legitimate names are accepted.
+func TestValidateMemberTeamCharset(t *testing.T) {
+	mk := func(team string) struct {
+		Email    string   `json:"email"`
+		Password string   `json:"password"`
+		Name     string   `json:"name"`
+		Role     string   `json:"role"`
+		Team     string   `json:"team"`
+		Apps     []string `json:"apps"`
+	} {
+		return struct {
+			Email    string   `json:"email"`
+			Password string   `json:"password"`
+			Name     string   `json:"name"`
+			Role     string   `json:"role"`
+			Team     string   `json:"team"`
+			Apps     []string `json:"apps"`
+		}{Role: "dev", Team: team}
+	}
+	// A `#` would alias a different scope key (ORG#o#TEAM#default#APP#web) → must be rejected.
+	if errs := validateMemberUpdate(mk("default#APP#web")); len(errs) == 0 {
+		t.Fatalf("expected team with '#' to be rejected")
+	}
+	if errs := validateMemberUpdate(mk("engineering")); len(errs) != 0 {
+		t.Fatalf("expected plain team id to pass, got %v", errs)
+	}
+}
+
+func TestValidateTeamMetaAllowsApostrophe(t *testing.T) {
+	tm := struct {
+		DisplayName string `json:"display_name"`
+	}{DisplayName: "O'Brien & A/B test"}
+	if errs := validateTeamMeta(tm); len(errs) != 0 {
+		t.Fatalf("expected legitimate display name to pass, got %v", errs)
+	}
+}
+
+// GOV-SEC-008: non-admin rosters mask the local part of each e-mail.
+func TestMaskEmail(t *testing.T) {
+	cases := map[string]string{
+		"alice@example.com": "a***@example.com",
+		"b@c.io":            "b***@c.io",
+		"noatsign":          "***",
+		"":                  "***",
+	}
+	for in, want := range cases {
+		if got := maskEmail(in); got != want {
+			t.Errorf("maskEmail(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+// GOV-UX-002: overriding a model that exists in a parent scope is a model_update,
+// even though the child scope had no prior value (before==nil).
+func TestAuditClassifyModelScoped(t *testing.T) {
+	addAtChild := []auditChange{{Path: "routing.claude-haiku.provider_model_id", After: "x"}}
+	if got := auditClassifyModelScoped(addAtChild, true); got != audModelUpdate {
+		t.Errorf("override of parent model: got %q want %q", got, audModelUpdate)
+	}
+	// With no parent alias, it is a genuine add.
+	if got := auditClassifyModelScoped(addAtChild, false); got != audModelAdd {
+		t.Errorf("new model: got %q want %q", got, audModelAdd)
+	}
+}

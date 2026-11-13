@@ -512,8 +512,10 @@ What the deployed stack does by default. None of this is a compliance claim — 
 controls the Terraform sets up, so you can check them against your own requirements.
 
 - The gateway data plane authenticates with a hashed API key; only the prefix is ever stored or
-  displayed. The control-plane APIs sit behind an API Gateway Cognito authorizer, with TOTP MFA
-  required on the console user pool by default.
+  displayed. The control-plane APIs sit behind an API Gateway Cognito authorizer. The user pool
+  defaults to TOTP MFA `ON`, but the **public demo deploys with `mfa_configuration = "OPTIONAL"`**
+  until the console wires the Cognito `MFA_SETUP` enrolment step (see the first-sign-in note above);
+  treat `OPTIONAL` as a demo-only posture. The pool has deletion protection `ACTIVE`.
 - Role-based access (`owner`, `admin`, `billing`, `dev`, `platform_admin`) is enforced server-side
   from the token claims; the console hides what a role cannot use, but the backend is the gate.
 - CORS is deny-by-default: an origin has to be in the allowlist to get a response header.

@@ -11,11 +11,15 @@
 // - No self-service signup endpoints (removed from this API)
 // - Simplified member invitation to always use token-based org scope
 //
-// Routes (protected by the x-admin-token header):
+// Routes (protected by a Cognito user-pool authorizer; the JWT carries
+// custom:org_id / custom:role / team, which drive scope and role checks):
 //
 //	GET  /admin/config    → current config (JSON)
 //	PUT  /admin/config    → writes the new config
 //	POST /admin/secrets    → creates/updates a provider credential. Body: {name, api_key}
+//
+// The legacy x-admin-token header was removed in 1.5.0 when the API moved to
+// Cognito; it survives only in CHANGELOG history.
 package main
 
 import (
@@ -289,20 +293,17 @@ func isValidIdentifier(s string) bool {
 	return len(s) > 0
 }
 
-func containsInjectionPattern(s string) bool {
-	// Basic injection pattern detection
-	dangerous := []string{
-		"'", "\"", ";", "--", "/*", "*/",
-		"xp_", "sp_", "DROP", "DELETE", "INSERT", "UPDATE",
-		"<script", "javascript:", "onerror=",
+// maskEmail redacts the local part of an address for non-admin rosters
+// (GOV-SEC-008): "alice@example.com" -> "a***@example.com". A value without a
+// single "@" is replaced wholesale so nothing identifiable leaks.
+func maskEmail(e string) string {
+	at := strings.IndexByte(e, '@')
+	if at <= 0 {
+		return "***"
 	}
-	lower := strings.ToLower(s)
-	for _, pattern := range dangerous {
-		if strings.Contains(lower, strings.ToLower(pattern)) {
-			return true
-		}
-	}
-	return false
+	local := e[:at]
+	first := local[:1]
+	return first + "***" + e[at:]
 }
 
 // TeamMetaValidator validates TeamMeta input
@@ -330,12 +331,10 @@ func validateTeamMeta(tm struct {
 			Message: "display_name contains invalid UTF-8",
 		})
 	}
-	if containsInjectionPattern(tm.DisplayName) {
-		errors = append(errors, ValidationError{
-			Field:   "display_name",
-			Message: "display_name contains invalid characters",
-		})
-	}
+	// GOV-SEC-009: the SQL/script-style blocklist was removed. DynamoDB access uses
+	// parameterised expressions (no string-built queries), so the blocklist bought no
+	// safety and it rejected legitimate display names like "O'Brien" or "A/B test".
+	// UTF-8 and length validation above are the real guards.
 
 	return errors
 }
@@ -367,11 +366,19 @@ func validateMemberUpdate(updates struct {
 		})
 	}
 
-	// Validate team
+	// Validate team. GOV-SEC-009: a team id goes straight into the scope key
+	// (ORG#<org>#TEAM#<team>), so it must be charset-checked — a `#` would alias a
+	// different scope. Length alone is not enough.
 	if len(updates.Team) > 50 {
 		errs = append(errs, ValidationError{
 			Field:   "team",
 			Message: "team name too long",
+		})
+	}
+	if updates.Team != "" && !isValidIdentifier(updates.Team) {
+		errs = append(errs, ValidationError{
+			Field:   "team",
+			Message: "invalid team identifier (letters, digits, '-' and '_' only)",
 		})
 	}
 
@@ -747,7 +754,7 @@ func mergeHeaders(maps ...map[string]string) map[string]string {
 func getCORSHeaders(origin string) map[string]string {
 	headers := map[string]string{
 		"access-control-allow-methods": "GET,PUT,POST,DELETE,OPTIONS",
-		"access-control-allow-headers": "content-type,authorization,x-admin-token",
+		"access-control-allow-headers": "content-type,authorization",
 		"content-type":                 "application/json",
 		"access-control-max-age":       "86400", // Cache preflight for 24 hours
 	}
@@ -1583,6 +1590,15 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 				"unauthorized_access_attempt", fmt.Sprintf("org:%s", gorg), "")
 			return resp(403, map[string]string{"error": "access denied"}, origin)
 		}
+		// GOV-SEC-008: reading a specific team's scope requires access to THAT team.
+		// effTeam already pins a team-scoped token to its own team; this additionally
+		// stops a non-admin WITHOUT a team claim (dev/billing) from reading an
+		// arbitrary team's policy via ?team=. Org-level reads (no team) are unaffected.
+		if reqTeam := effTeam(q["team"]); reqTeam != "" && !authCtx.CanAccessTeam(gorg, reqTeam) {
+			writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role,
+				"unauthorized_team_config_read_attempt", fmt.Sprintf("org:%s,team:%s", gorg, reqTeam), "")
+			return resp(403, map[string]string{"error": "access denied"}, origin)
+		}
 		// ?effective=1 returns the resolved config (global → ORG → TEAM → APP),
 		// which is exactly what the Core applies at runtime.
 		// The config always comes back at the ROOT of the JSON (console compat),
@@ -1764,8 +1780,12 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			// because there is no model route: the Console writes models inside
 			// "routing". Without this, "who registered this model?" would have no
 			// answer.
+			// GOV-UX-002: an alias that exists in a parent scope is being OVERRIDDEN
+			// here, not added/removed — classify those as model_update so the trail
+			// does not read as if the team deleted a platform model.
+			parentModels := auditParentModels(parentEff)
 			for model, chs := range auditDeriveModels(changes) {
-				emitAudit(ctx, aud, auditClassifyModel(chs), org, key, model, chs)
+				emitAudit(ctx, aud, auditClassifyModelScoped(chs, parentModels[model]), org, key, model, chs)
 			}
 			// Bundles go out as their own events for the SAME reason as models: a
 			// bundle is the attempt order of a critical flow, and "who changed the
@@ -2111,6 +2131,22 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if err != nil {
 			return resp(500, map[string]string{"error": err.Error()}, origin)
 		}
+		// GOV-SEC-008: a team-scoped caller sees only its own team's roster, and
+		// e-mail addresses are masked for any non-admin role (owner/admin see full).
+		if teamScoped {
+			filtered := make([]member, 0, len(mem))
+			for _, m := range mem {
+				if authCtx.CanAccessTeam(org, m.Team) {
+					filtered = append(filtered, m)
+				}
+			}
+			mem = filtered
+		}
+		if !canAdmin {
+			for i := range mem {
+				mem[i].Email = maskEmail(mem[i].Email)
+			}
+		}
 		return resp(200, map[string]interface{}{
 			"members": mem, "count": len(mem),
 		}, origin)
@@ -2167,6 +2203,11 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if !memberRoles[b.Role] {
 			return resp(400, map[string]string{"error": "invalid role (owner|admin|billing|dev)"}, origin)
 		}
+		// GOV-SEC-007: only an owner (or platform_admin) may mint another owner.
+		// An admin can manage admin/billing/dev but must not escalate the hierarchy.
+		if b.Role == "owner" && role != "owner" && !isPlatform {
+			return resp(403, map[string]string{"error": "only an owner can grant the owner role"}, origin)
+		}
 		// Single-deployment: no plan-derived seat ceiling or team requirement.
 		// A team is optional — the customer either uses teams or doesn't, and
 		// b.Team simply stays "" when they don't.
@@ -2197,7 +2238,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		return resp(200, map[string]interface{}{"email": b.Email, "role": b.Role, "team": b.Team, "apps": b.Apps, "org": org, "status": status}, origin)
 
 	case strings.HasSuffix(path, "/admin/members") && method == "PUT":
-		org, okScope := forceOrg("")
+		// GOV-SEC-007: platform_admin must pass ?org= explicitly (forceOrg returns the
+		// literal param for platform), same as every other admin/* route. forceOrg("")
+		// used to lock operators out of member mutation entirely.
+		org, okScope := forceOrg(req.QueryStringParameters["org"])
 		if !okScope || org == "" {
 			return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
 		}
@@ -2237,6 +2281,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if !memberRoles[b.Role] {
 			return resp(400, map[string]string{"error": "invalid role (owner|admin|billing|dev)"}, origin)
 		}
+		// GOV-SEC-007: promoting someone to owner requires owner (or platform) rights.
+		if b.Role == "owner" && role != "owner" && !isPlatform {
+			return resp(403, map[string]string{"error": "only an owner can grant the owner role"}, origin)
+		}
 		// Ownership check: the member must belong to the SAME org.
 		uorg, _ := memberOrg(ctx, b.Email)
 		if uorg != org && !isPlatform {
@@ -2263,7 +2311,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		return resp(200, map[string]interface{}{"email": b.Email, "role": b.Role, "team": b.Team, "apps": b.Apps, "status": "updated"}, origin)
 
 	case strings.HasSuffix(path, "/admin/members") && method == "DELETE":
-		org, okScope := forceOrg("")
+		// GOV-SEC-007: platform_admin must pass ?org= explicitly (forceOrg returns the
+		// literal param for platform), same as every other admin/* route. forceOrg("")
+		// used to lock operators out of member mutation entirely.
+		org, okScope := forceOrg(req.QueryStringParameters["org"])
 		if !okScope || org == "" {
 			return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
 		}
@@ -2301,7 +2352,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 
 	// ---- Member password: reset by e-mail (an admin NEVER sees or sets the password) ----
 	case strings.HasSuffix(path, "/admin/members/password") && method == "POST":
-		org, okScope := forceOrg("")
+		// GOV-SEC-007: platform_admin must pass ?org= explicitly (forceOrg returns the
+		// literal param for platform), same as every other admin/* route. forceOrg("")
+		// used to lock operators out of member mutation entirely.
+		org, okScope := forceOrg(req.QueryStringParameters["org"])
 		if !okScope || org == "" {
 			return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
 		}
@@ -2337,7 +2391,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 
 	// ---- Resend invite (new temporary password by e-mail) ----
 	case strings.HasSuffix(path, "/admin/members/resend") && method == "POST":
-		org, okScope := forceOrg("")
+		// GOV-SEC-007: platform_admin must pass ?org= explicitly (forceOrg returns the
+		// literal param for platform), same as every other admin/* route. forceOrg("")
+		// used to lock operators out of member mutation entirely.
+		org, okScope := forceOrg(req.QueryStringParameters["org"])
 		if !okScope || org == "" {
 			return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
 		}
@@ -2373,7 +2430,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 
 	// ---- Enable/disable account (reversible block, without deleting) ----
 	case strings.HasSuffix(path, "/admin/members/enable") && method == "POST":
-		org, okScope := forceOrg("")
+		// GOV-SEC-007: platform_admin must pass ?org= explicitly (forceOrg returns the
+		// literal param for platform), same as every other admin/* route. forceOrg("")
+		// used to lock operators out of member mutation entirely.
+		org, okScope := forceOrg(req.QueryStringParameters["org"])
 		if !okScope || org == "" {
 			return resp(403, map[string]string{"error": "org could not be determined from the token"}, origin)
 		}

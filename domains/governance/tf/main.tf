@@ -554,6 +554,13 @@ output "admin_api_endpoint" { value = aws_api_gateway_stage.admin.invoke_url }
 resource "aws_cognito_user_pool" "cp" {
   name = "${local.name}-users"
 
+  # GOV-IAC-001: the control-plane pool holds the only accounts that can change
+  # routing, budgets and provider credentials. Accidental deletion would lock
+  # every operator out and orphan the MEMBER# scope records, so the pool is
+  # protected from deletion. Removing the pool now requires flipping this to
+  # INACTIVE in a deliberate apply first.
+  deletion_protection = "ACTIVE"
+
   # Single-client deployment: no public sign-up. The admin invites members
   # (AdminCreateUser, via config-api); there is no /signup route nor creation of
   # a new org — this deployment's org is seeded once at bootstrap.
@@ -572,12 +579,17 @@ resource "aws_cognito_user_pool" "cp" {
     attributes_require_verification_before_update = ["email"]
   }
 
-  # MFA (TOTP / software token). Defaults to ON: this pool guards the control
-  # plane — the users who can change routing, budgets and provider credentials —
-  # so a password alone is not an acceptable bar. With ON, Cognito issues the
-  # MFA_SETUP challenge on first sign-in and SOFTWARE_TOKEN_MFA afterwards; the
-  # console already implements both (see the enrolment flow in console.html).
-  # OPTIONAL is still selectable for a throwaway demo, via TF_VAR_mfa_configuration.
+  # MFA (TOTP / software token). The module DEFAULT is ON: this pool guards the
+  # control plane — the users who can change routing, budgets and provider
+  # credentials — so a password alone is not an acceptable bar. With ON, Cognito
+  # issues the MFA_SETUP challenge on first sign-in and SOFTWARE_TOKEN_MFA
+  # afterwards.
+  #
+  # GOV-IAC-001 / FE-UX-001: the public demo deployment runs OPTIONAL (set via
+  # TF_VAR_mfa_configuration) because the console's MFA_SETUP enrolment step is
+  # not yet wired end-to-end. Treat OPTIONAL as a demo-only posture, not the
+  # production default — the README documents this explicitly so the deployed
+  # value and the stated posture do not drift apart.
   mfa_configuration = var.mfa_configuration
   software_token_mfa_configuration {
     enabled = true
