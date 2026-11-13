@@ -186,6 +186,9 @@ resource "aws_dynamodb_table" "config" {
 
   # PITR: this table holds the routing/behavior config every request depends on; a bad write must be recoverable.
   point_in_time_recovery { enabled = true }
+  # XC-IAC-002: every request depends on this config; a stray destroy/rename would take the
+  # whole deployment down and lose the members/teams/apps registry.
+  deletion_protection_enabled = true
 }
 
 # --- Audit store (control plane audit trail) ---
@@ -212,6 +215,8 @@ resource "aws_dynamodb_table" "audit" {
 
   # PITR: the control plane trail is evidence of who changed what; it has no other copy.
   point_in_time_recovery { enabled = true }
+  # XC-IAC-002: the control-plane trail is evidence; a single destroy must not erase it.
+  deletion_protection_enabled = true
 }
 
 # Seed of the `global` scope: ONLY behavior defaults (auto_cheapest, cache_ttl).
@@ -398,13 +403,21 @@ resource "aws_api_gateway_integration" "proxy_options" {
 resource "aws_api_gateway_deployment" "admin" {
   rest_api_id = aws_api_gateway_rest_api.admin.id
   triggers = {
+    # XC-IAC-001: hash the security/behaviour ATTRIBUTES, not just resource ids. Hashing
+    # only .id meant a change to the authorizer's provider_arns, a method's authorization,
+    # or an integration's uri/timeout did not replace the deployment, so the stage went on
+    # serving the old config — a security change could silently not take effect.
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.proxy.id,
       aws_api_gateway_method.proxy_any.id,
-      aws_api_gateway_integration.proxy_any.id,
+      aws_api_gateway_method.proxy_any.authorization,
+      aws_api_gateway_integration.proxy_any.uri,
+      aws_api_gateway_integration.proxy_any.timeout_milliseconds,
       aws_api_gateway_method.proxy_options.id,
       aws_api_gateway_integration.proxy_options.id,
       aws_api_gateway_authorizer.cognito.id,
+      aws_api_gateway_authorizer.cognito.provider_arns,
+      aws_api_gateway_authorizer.cognito.authorizer_uri,
     ]))
   }
   lifecycle {
@@ -945,4 +958,16 @@ resource "aws_ssm_parameter" "social_providers" {
   type = "String"
   # Empty when no provider is enabled (the frontend shows no button).
   value = length(local.social_enabled) > 0 ? join(",", local.social_enabled) : "none"
+}
+
+# XC-IAC-004: managed Lambda log groups with retention (auto-created groups keep logs
+# forever). Names match the functions' default groups. Existing deployments import these
+# once; orphan groups from removed Lambdas are deleted by hand (out of Terraform).
+resource "aws_cloudwatch_log_group" "config_api" {
+  name              = "/aws/lambda/${local.name}-config-api"
+  retention_in_days = 90
+}
+resource "aws_cloudwatch_log_group" "pretoken" {
+  name              = "/aws/lambda/${local.name}-pretoken"
+  retention_in_days = 90
 }

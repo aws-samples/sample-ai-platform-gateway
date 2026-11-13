@@ -110,6 +110,9 @@ resource "aws_dynamodb_table" "cost_store" {
 
   # PITR: this table is the only record of tenant spend; losing it loses billing evidence.
   point_in_time_recovery { enabled = true }
+  # XC-IAC-002: the cost store is the only record of tenant spend — protect it from a
+  # stray destroy/rename, the same second lock the finding asks for on the evidence tables.
+  deletion_protection_enabled = true
 }
 
 # --- Usage_Records queue + DLQ ---
@@ -324,13 +327,19 @@ resource "aws_api_gateway_integration" "proxy_options" {
 resource "aws_api_gateway_deployment" "usage" {
   rest_api_id = aws_api_gateway_rest_api.usage.id
   triggers = {
+    # XC-IAC-001: hash the security/behaviour ATTRIBUTES, not just resource ids, so an
+    # authorizer/authorization/uri/timeout change actually replaces the deployment.
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.proxy.id,
       aws_api_gateway_method.proxy_any.id,
-      aws_api_gateway_integration.proxy_any.id,
+      aws_api_gateway_method.proxy_any.authorization,
+      aws_api_gateway_integration.proxy_any.uri,
+      aws_api_gateway_integration.proxy_any.timeout_milliseconds,
       aws_api_gateway_method.proxy_options.id,
       aws_api_gateway_integration.proxy_options.id,
       aws_api_gateway_authorizer.cognito.id,
+      aws_api_gateway_authorizer.cognito.provider_arns,
+      aws_api_gateway_authorizer.cognito.authorizer_uri,
     ]))
   }
   lifecycle {
@@ -647,4 +656,24 @@ resource "aws_ssm_parameter" "usage_api_url" {
   name  = "${local.ssm_root}/observability/usage_api_url"
   type  = "String"
   value = aws_api_gateway_stage.usage.invoke_url
+}
+
+# XC-IAC-004: managed Lambda log groups with retention (auto-created groups keep logs
+# forever). Names match the functions' default groups. Existing deployments import these
+# once; orphan groups from removed Lambdas are deleted by hand (out of Terraform).
+resource "aws_cloudwatch_log_group" "usage_writer" {
+  name              = "/aws/lambda/${local.name}-usage-writer"
+  retention_in_days = 90
+}
+resource "aws_cloudwatch_log_group" "usage_api" {
+  name              = "/aws/lambda/${local.name}-usage-api"
+  retention_in_days = 90
+}
+resource "aws_cloudwatch_log_group" "alert_notifier" {
+  name              = "/aws/lambda/${local.name}-alert-notifier"
+  retention_in_days = 90
+}
+resource "aws_cloudwatch_log_group" "hints_publisher" {
+  name              = "/aws/lambda/${local.name}-hints-publisher"
+  retention_in_days = 90
 }

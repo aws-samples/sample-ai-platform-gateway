@@ -33,9 +33,14 @@ jobs:
       - name: Build
         working-directory: ${{ matrix.module }}
         run: go build ./...
-      - name: Test
+      # XC-IAC-003: vet and the race detector were not enforced — a race regression
+      # (the 1.3.0 changelog records one caught only by -race) could land. Now they gate.
+      - name: Vet
         working-directory: ${{ matrix.module }}
-        run: go test ./...
+        run: go vet ./...
+      - name: Test (race)
+        working-directory: ${{ matrix.module }}
+        run: go test -race ./...
 
   terraform-fmt:
     name: Terraform fmt
@@ -45,6 +50,30 @@ jobs:
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
       - name: terraform fmt -check
         run: terraform fmt -check -recursive domains
+
+  # XC-IAC-003: CI ran neither terraform validate nor a plan, so a syntactically or
+  # semantically broken module could merge (and a clean clone could not even plan, because
+  # dist/ is git-ignored and the Lambda source_code_hash reads those zips). validate does
+  # not evaluate filebase64sha256 against files, so it does not need dist/ — it catches the
+  # module-level errors fmt misses, per domain module.
+  terraform-validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: [core, governance, observability, audit, help, frontend]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      # Validate the ENV root (envs/poc), not the bare module: core and observability
+      # declare an aws.agentcore provider alias the env configures and passes in, so the
+      # module cannot be validated standalone. validate needs neither backend nor var
+      # values nor the dist/ zips.
+      - name: terraform validate (env root)
+        run: |
+          terraform -chdir=domains/${{ matrix.domain }}/envs/poc init -backend=false -input=false
+          terraform -chdir=domains/${{ matrix.domain }}/envs/poc validate
 
   # The console is the one part of this repo with no compiler in front of it: a stray
   # quote in console.js is a blank page, and an untranslated string renders English
@@ -67,3 +96,6 @@ jobs:
           node-version: '20'
       - name: scripts/i18n-check.sh
         run: bash scripts/i18n-check.sh
+      # FE-SEC-001: fail the build if a data value is interpolated into innerHTML without esc().
+      - name: scripts/xss-check.sh
+        run: bash scripts/xss-check.sh

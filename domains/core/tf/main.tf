@@ -99,6 +99,9 @@ resource "aws_dynamodb_table" "api_keys" {
   # PITR: this table holds the tenant credential hashes. An accidental delete
   # here locks every caller out, and there is no other copy of it.
   point_in_time_recovery { enabled = true }
+  # XC-IAC-002: the credential-hash table must not be droppable by a stray
+  # destroy/rename — losing it locks out every caller.
+  deletion_protection_enabled = true
 }
 
 # Operational enforcement counters (rate limit per window + monthly spend).
@@ -311,6 +314,10 @@ resource "aws_api_gateway_deployment" "router" {
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.router_proxy.id,
       aws_api_gateway_method.router_proxy_any.id,
+      # XC-IAC-001: include the method authorization so a change to the gateway's auth mode
+      # also forces a redeploy (the router authenticates by API key in the handler, so there
+      # is no Cognito authorizer here, but the authorization attribute still belongs in the hash).
+      aws_api_gateway_method.router_proxy_any.authorization,
       aws_api_gateway_integration.router_proxy_any.id,
       aws_api_gateway_integration.router_proxy_any.uri,
       aws_api_gateway_integration.router_proxy_any.response_transfer_mode,
@@ -673,13 +680,20 @@ resource "aws_api_gateway_integration" "keyadmin_proxy_options" {
 resource "aws_api_gateway_deployment" "keyadmin" {
   rest_api_id = aws_api_gateway_rest_api.keyadmin.id
   triggers = {
+    # XC-IAC-001: hash the security/behaviour ATTRIBUTES, not just resource ids, so an
+    # authorizer/authorization/uri/timeout change actually replaces the deployment (the
+    # router deployment already hashes uri/mode/timeout; this matches it for the authorizer).
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.keyadmin_proxy.id,
       aws_api_gateway_method.keyadmin_proxy_any.id,
-      aws_api_gateway_integration.keyadmin_proxy_any.id,
+      aws_api_gateway_method.keyadmin_proxy_any.authorization,
+      aws_api_gateway_integration.keyadmin_proxy_any.uri,
+      aws_api_gateway_integration.keyadmin_proxy_any.timeout_milliseconds,
       aws_api_gateway_method.keyadmin_proxy_options.id,
       aws_api_gateway_integration.keyadmin_proxy_options.id,
       aws_api_gateway_authorizer.cognito.id,
+      aws_api_gateway_authorizer.cognito.provider_arns,
+      aws_api_gateway_authorizer.cognito.authorizer_uri,
     ]))
   }
   lifecycle {
@@ -943,3 +957,15 @@ resource "aws_cloudwatch_metric_alarm" "platform_errors" {
 }
 
 output "ops_alerts_topic_arn" { value = aws_sns_topic.ops_alerts.arn }
+
+# XC-IAC-004: managed Lambda log groups with retention (auto-created groups keep logs
+# forever). Names match the functions' default groups. Existing deployments import these
+# once; orphan groups from removed Lambdas are deleted by hand (out of Terraform).
+resource "aws_cloudwatch_log_group" "router_logs" {
+  name              = "/aws/lambda/${local.name}-router"
+  retention_in_days = 90
+}
+resource "aws_cloudwatch_log_group" "keyadmin_logs" {
+  name              = "/aws/lambda/${local.name}-keyadmin"
+  retention_in_days = 90
+}
