@@ -16,6 +16,12 @@ import (
 // apply to prompt cache reads.
 const cacheReadFactorDefault = 0.10
 
+// cacheWriteFactorDefault: when the cache_write layer is not declared, it is derived from
+// the standard input price (CORE-FIN-001). Anthropic/Bedrock bill a prompt-cache WRITE at
+// 1.25× the input price. Deriving it (like cache_read derives a read discount) stops
+// prompt-cache writes from being silently priced at $0 on every legacy-priced route.
+const cacheWriteFactorDefault = 1.25
+
 // Layer is a pair of prices per 1,000 tokens.
 //
 // The unit is USD per 1K tokens and it STAYS that way: it is what estimateCost()
@@ -82,6 +88,17 @@ type PriceTier struct {
 	// CacheReadDerived marks that CacheRead was not declared but computed.
 	// Not serialized: it is a result of resolution, not input data.
 	CacheReadDerived bool `json:"-"`
+
+	// CacheWriteDerived marks that CacheWrite was not declared but computed from the
+	// standard input price (CORE-FIN-001). Not serialized.
+	CacheWriteDerived bool `json:"-"`
+
+	// Free marks a route whose price is KNOWN to be zero (a genuinely free self-hosted
+	// model), as distinct from an undeclared/unknown price. Without it a declared 0/0 is
+	// indistinguishable from "unpriced", so auto-cheapest can never pick a free model.
+	// Opt-in: a zero price without this flag stays PricingUnknown, which keeps the
+	// wizard's $0 default from beating a real price.
+	Free bool `json:"free,omitempty"`
 }
 
 // Price provenance.
@@ -179,9 +196,14 @@ func SelectPrice(h PriceHistory, now time.Time) (PriceTier, string) {
 	if !found {
 		return PriceTier{}, PricingUnknown
 	}
-	// A zero or absent price is UNKNOWN, not "free" (Req 3.1). That is what keeps
-	// the wizard's $0 default from beating auto-cheapest.
+	// A zero or absent price is UNKNOWN, not "free" (Req 3.1) — UNLESS the route declares
+	// free:true, which is an explicit "known free" distinct from "unpriced" (CORE-FIN-001).
+	// That is what keeps the wizard's $0 default from beating auto-cheapest while still
+	// letting a genuinely free self-hosted model be selected.
 	if chosen.Standard.Input == 0 && chosen.Standard.Output == 0 {
+		if chosen.Free {
+			return chosen, PricingKnown
+		}
 		return chosen, PricingUnknown
 	}
 
@@ -189,6 +211,15 @@ func SelectPrice(h PriceHistory, now time.Time) (PriceTier, string) {
 	if chosen.CacheRead.Input == 0 { // Req 5.6
 		chosen.CacheRead.Input = chosen.Standard.Input * cacheReadFactorDefault
 		chosen.CacheReadDerived = true
+		status = PricingDerived
+	}
+	// CORE-FIN-001: derive the cache_write price the same way. Previously an undeclared
+	// cache_write layer stayed 0, so RealizedCost charged every prompt-cache WRITE at $0
+	// and understated the cost of every prompt-cache route. 1.25× input is the
+	// Anthropic/Bedrock write premium.
+	if chosen.CacheWrite.Input == 0 && chosen.Standard.Input > 0 {
+		chosen.CacheWrite.Input = chosen.Standard.Input * cacheWriteFactorDefault
+		chosen.CacheWriteDerived = true
 		status = PricingDerived
 	}
 	return chosen, status

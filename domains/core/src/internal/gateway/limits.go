@@ -48,7 +48,16 @@ func checkRate(ctx context.Context, scope string, lim *Limits) bool {
 	}
 	if lim.RPM > 0 {
 		n, err := bump(ctx, pk, "reqs", 1, exp)
-		if err == nil && n > float64(lim.RPM) {
+		if err != nil {
+			// CORE-NFR-005: the rate limiter fails OPEN on a backend error (serving beats
+			// refusing every request on a transient blip), but it must not do so silently —
+			// a limits-table outage would otherwise lift every rate limit with no trace. Log
+			// it so the operator sees traffic was unmetered.
+			logJSON(map[string]interface{}{
+				"lvl": "error", "evt": "limits_backend_error", "op": "rate_check",
+				"scope": scope, "detail": err.Error(),
+			})
+		} else if n > float64(lim.RPM) {
 			return false
 		}
 	}

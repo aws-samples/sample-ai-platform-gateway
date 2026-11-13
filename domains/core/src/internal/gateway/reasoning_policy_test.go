@@ -163,13 +163,13 @@ func TestEffectiveThinkingCeiling(t *testing.T) {
 
 func TestDecorateReasoningRequest(t *testing.T) {
 	m := map[string]interface{}{}
-	decorateReasoningRequest(m, resolveReasoning("", nil, maxThinkingHardCap))
+	decorateReasoningRequest(m, resolveReasoning("", nil, maxThinkingHardCap), "")
 	if len(m) != 0 {
 		t.Errorf("a request that asked for nothing must add nothing to the record: %v", m)
 	}
 
 	m = map[string]interface{}{}
-	decorateReasoningRequest(m, resolveReasoning("high", nil, 2048))
+	decorateReasoningRequest(m, resolveReasoning("high", nil, 2048), "")
 	// Effort and budget are two fields because they can legitimately disagree, and that
 	// disagreement is exactly what an operator needs to see when a ceiling is doing its job.
 	if m["reasoning_effort"] != "high" || m["thinking_budget_tokens"] != 2048 {

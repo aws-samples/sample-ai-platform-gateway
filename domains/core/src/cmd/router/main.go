@@ -22,8 +22,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/aws/aws-lambda-go/lambda"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
@@ -86,6 +88,19 @@ func main() {
 		Keys:     ddbkeys.New(ddb, os.Getenv("API_KEYS_TABLE")),
 		Hints:    hints,
 	})
+	// CORE-NFR-003: warm this sandbox before serving. A burst of new sandboxes paid ~2s
+	// each resolving credentials and reading config INSIDE the first request (Init itself
+	// was only ~76ms). Resolve SigV4 credentials once and prime the default-scope config so
+	// the first request hits a warm path. Best-effort and time-boxed; a failure just means
+	// the first request does the work. warmup_ms is logged so the cost stays visible.
+	if os.Getenv("AIPLAT_SERVE_ADDR") == "" {
+		warmStart := time.Now()
+		wctx, wcancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, _ = cfg.Credentials.Retrieve(wctx)
+		gateway.Prewarm(wctx)
+		wcancel()
+		fmt.Printf(`{"lvl":"info","evt":"router_warmup","warmup_ms":%d}`+"\n", time.Since(warmStart).Milliseconds())
+	}
 	if addr := os.Getenv("AIPLAT_SERVE_ADDR"); addr != "" {
 		if err := http.ListenAndServe(addr, httpapi.New(gateway.Handle)); err != nil {
 			panic(err)

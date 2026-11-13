@@ -89,36 +89,12 @@ func FromResponse(r httpapi.Response) events.APIGatewayProxyResponse {
 
 // --- Response streaming ------------------------------------------------------
 //
-// AdaptStream differs from Adapt in the RETURN TYPE only:
-// *events.APIGatewayProxyStreamingResponse instead of the buffered
-// APIGatewayProxyResponse. The inbound translation is identical — API Gateway sends the
-// same event either way.
-//
-// The return type alone does NOT produce a streamed response: aws-lambda-go never sets
-// `Lambda-Runtime-Function-Response-Mode: streaming` on its response POST, so under
-// lambda.Start the bytes reach Lambda buffered no matter which type the handler returns.
-// That header is why cmd/router uses StartStreaming (internal/awslambda/runtimeapi.go)
-// rather than lambda.Start(AdaptStream(...)) when streaming is enabled.
-//
-// AdaptStream is kept because it is the lambda.Start-compatible shape, and it becomes the
-// one-line wiring the moment aws-lambda-go implements the header upstream — at which point
-// runtimeapi.go can be deleted.
-
-// AdaptStream wraps an httpapi.HandlerFunc into the shape lambda.Start expects for a
-// streaming integration.
-func AdaptStream(h httpapi.HandlerFunc) func(context.Context, events.APIGatewayProxyRequest) (*events.APIGatewayProxyStreamingResponse, error) {
-	return func(ctx context.Context, e events.APIGatewayProxyRequest) (*events.APIGatewayProxyStreamingResponse, error) {
-		req, err := ToRequest(e)
-		if err != nil {
-			return FromResponseStream(httpapi.Response{StatusCode: 400, Body: "bad request"}), nil
-		}
-		resp, err := h(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		return FromResponseStream(resp), nil
-	}
-}
+// CORE-ARC-001: AdaptStream (the lambda.Start-compatible streaming shape) was removed —
+// it had no caller. The real streaming path is cmd/router's StartStreaming via
+// runtimeapi.go, which sets the `Lambda-Runtime-Function-Response-Mode: streaming` header
+// that aws-lambda-go's lambda.Start never sets. FromResponseStream below is kept because
+// runtimeapi.go uses it. If aws-lambda-go implements the header upstream, the one-line
+// lambda.Start wiring can be restored from history.
 
 // FromResponseStream translates the neutral response into the streaming format: the
 // metadata JSON, the 8-null-byte delimiter and then the payload. The SDK's response type

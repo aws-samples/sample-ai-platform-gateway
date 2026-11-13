@@ -8,24 +8,11 @@ import (
 	"time"
 )
 
-// The interfaces below are DECLARED in Phase 0 so the boundary is explicit
-// (Req 7.4), but the implementations stay inline in cmd/router until the later
-// adapter migration task. Req 7.9 requires preserving the observable behavior of
-// auth, cache, rate limit, budget and fallback — hence the migration is its own
-// commit, with characterization tests before moving budget/rate limit.
-
-// ConfigSource delivers the effective config for a scope (global → org → team → app).
-// The consumer needs a FALLBACK: unavailable config must not take the gateway down.
-type ConfigSource interface {
-	Effective(ctx context.Context, org, team, app string) (map[string]interface{}, error)
-}
-
-// HintSource delivers the Routing_Hints artifact published by Observability.
-// Asynchronous contract: an item read, never a call to a Lambda or API of another
-// domain. Returning (nil, nil) is valid and means "no hints" → heuristic.
-type HintSource interface {
-	Hints(ctx context.Context, org, feature string) ([]byte, error)
-}
+// CORE-ARC-001: the ConfigSource and HintSource interfaces were removed. They were
+// declared as a Phase-0 boundary sketch but never implemented or referenced — the live
+// contracts are ConfigStore (below, which carries the fallback `base`) and the hints
+// adapter (ddbhints). An unimplemented interface in the tree reads as a seam that exists
+// when it does not.
 
 // UsageSink publishes the Usage_Record. It is fire-and-forget on purpose: the
 // response to the client never waits for the usage emission.

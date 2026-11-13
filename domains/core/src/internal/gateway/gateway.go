@@ -23,9 +23,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -696,8 +698,16 @@ func (m chatMsg) withText(s string) chatMsg {
 func toPortsMessages(msgs []chatMsg) []ports.Message {
 	out := make([]ports.Message, len(msgs))
 	for i, m := range msgs {
+		role := m.Role
+		// CORE-BND-005: the OpenAI dialect renamed the system role to "developer". Map it
+		// to "system" here (a single place) so every adapter treats it as a system turn
+		// instead of coercing an unknown role to "user" and silently losing the
+		// instruction.
+		if role == "developer" {
+			role = "system"
+		}
 		pm := ports.Message{
-			Role:       m.Role,
+			Role:       role,
 			Text:       m.text(),
 			Name:       m.Name,
 			ToolCallID: m.ToolCallID,
@@ -815,6 +825,72 @@ func (i invocation) input(msgs []chatMsg, tools []toolDef) ports.InvokeInput {
 	}
 }
 
+// reRoleARN is the allowlist shape for a BYO Bedrock role: the CloudFormation template the
+// customer runs always names the role AIPlatGatewayAccess*, so a role_arn that does not
+// match is either a typo or an attempt to make the gateway assume an arbitrary role.
+var reRoleARN = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/AIPlatGatewayAccess[\w+=,.@-]*$`)
+
+// streamingUnsupported recognises a provider error that means "this model cannot stream"
+// (e.g. a Bedrock ValidationException for a model without ConverseStream) as opposed to a
+// genuine failure. Such an error is a capability fact, so the streaming path falls back to
+// the buffered call on the SAME route, exactly like errNoNativeStream — while a throttle
+// or auth failure advances the chain (CORE-NFR-004).
+func streamingUnsupported(e error) bool {
+	if e == nil {
+		return false
+	}
+	s := strings.ToLower(e.Error())
+	if !strings.Contains(s, "stream") {
+		return false
+	}
+	return strings.Contains(s, "not supported") || strings.Contains(s, "unsupported") || strings.Contains(s, "does not support") || strings.Contains(s, "no native stream")
+}
+
+// validateRouteFn is the route guard providerFor applies. It is a seam (like
+// callProviderFn/openProviderStreamFn) so the wire/stream tests, which legitimately point
+// base_url at a local http httptest server, can relax it; production always uses the real
+// validateRoute. The logic itself is unit-tested directly via validateRoute.
+var validateRouteFn = validateRoute
+
+// validateRoute is the data-plane guard on the config-supplied route (CORE-SEC-005).
+func validateRoute(r Route) error {
+	if r.BaseURL != "" {
+		u, err := url.Parse(strings.TrimSpace(r.BaseURL))
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("invalid base_url")
+		}
+		if u.Scheme != "https" {
+			return fmt.Errorf("base_url must use https")
+		}
+		host := u.Hostname()
+		if strings.EqualFold(host, "localhost") {
+			return fmt.Errorf("base_url host is not allowed")
+		}
+		// Reject a literal non-routable IP. DNS resolution is NOT done here: it belongs to
+		// the governance write path (it already resolves and rejects), and repeating a
+		// LookupIP on every request would add latency to the hot path (CORE-NFR-003) while
+		// a rebinding attacker could defeat a check-then-connect race anyway.
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+				return fmt.Errorf("base_url resolves to a non-routable address")
+			}
+		}
+	}
+	if r.RoleARN != "" {
+		if !reRoleARN.MatchString(r.RoleARN) {
+			return fmt.Errorf("role_arn must be an arn:aws:iam::<account>:role/AIPlatGatewayAccess* role")
+		}
+		// Confused-deputy: the derived ExternalID is "aiplat-"+deploymentOrg. When the
+		// deployment org is unset ("default"), that value is shared across deployments and
+		// no longer distinguishes "assume MY role" from "assume ANYONE's", so refuse unless
+		// the route carries an explicit ExternalID.
+		if r.ExternalID == "" && deploymentOrg == "default" {
+			return fmt.Errorf("role_arn requires an explicit external_id when the deployment org is unset")
+		}
+	}
+	return nil
+}
+
 // errNoNativeStream says the route's adapter has no native streaming API — not that the
 // call failed. The streaming path uses it to fall back to the buffered call on the SAME
 // route instead of skipping to the next one, which would throw away a working route.
@@ -846,6 +922,15 @@ func openProviderStream(ctx context.Context, r Route, msgs []chatMsg, tools []to
 // paths on purpose — this is the single place that knows which concrete adapter serves a
 // provider name.
 func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
+	// CORE-SEC-005: validate the config-supplied base_url / role_arn / external_id in the
+	// data plane too. Governance validates at write time, but the gateway carries the
+	// provider credential, so it must not trust the stored config blindly (a TEAM# scope
+	// can override routing.*). Rejects a non-https or private/loopback/link-local host, a
+	// role_arn that is not an AIPlatGatewayAccess* role, and a derived ExternalID when the
+	// deployment org is unknown (confused-deputy).
+	if err := validateRouteFn(r); err != nil {
+		return nil, err
+	}
 	var p ports.Provider
 	switch r.Provider {
 	case "bedrock":
@@ -1013,20 +1098,34 @@ var authResolveFn = authResolve
 func authResolve(ctx context.Context, headers map[string]string) (identity, bool, error) {
 	// Extracting the key from the header is protocol shell (it stays here); resolving
 	// it in the table belongs to the ddbkeys adapter (ports.KeyStore).
-	auth := ""
+	// CORE-SEC-007: read the two credential headers SEPARATELY. Previously x-aiplat-key
+	// always overwrote Authorization, so a request with a bad bearer and a good key was
+	// accepted, and with case-duplicated headers the winner depended on map iteration.
+	// Now: strip the bearer prefix from Authorization; if both headers are present and
+	// differ, refuse (401) rather than letting one silently shadow the other.
+	bearer, xkey := "", ""
 	for k, v := range headers {
 		switch strings.ToLower(k) {
 		case "authorization":
-			if auth == "" {
-				auth = v
+			b := strings.TrimSpace(v)
+			if strings.HasPrefix(strings.ToLower(b), "bearer ") {
+				b = strings.TrimSpace(b[7:])
+			}
+			if b != "" {
+				bearer = b
 			}
 		case "x-aiplat-key":
-			auth = v
+			if t := strings.TrimSpace(v); t != "" {
+				xkey = t
+			}
 		}
 	}
-	key := strings.TrimSpace(auth)
-	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		key = strings.TrimSpace(auth[7:])
+	key := bearer
+	if xkey != "" {
+		if bearer != "" && bearer != xkey {
+			return identity{}, false, nil // conflicting credentials → unauthorized
+		}
+		key = xkey
 	}
 	ident, ok, err := keyStore.Resolve(ctx, key)
 	if err != nil || !ok {
@@ -1087,6 +1186,52 @@ func allowedApps(id identity) string {
 		}
 	}
 	return strings.Join(out, ", ")
+}
+
+// unsupportedParam rejects OpenAI parameters the gateway does not implement (CORE-BND-003).
+// Returning a field name (non-empty) means the request must be refused with 400, naming
+// the field, rather than silently dropping it and returning a different product.
+func unsupportedParam(n *int, responseFormat, toolChoice, logitBias json.RawMessage) (field, msg string) {
+	present := func(r json.RawMessage) bool { return len(r) > 0 && string(r) != "null" }
+	if n != nil && *n > 1 {
+		return "n", "parameter 'n' greater than 1 is not supported; omit it or set n=1"
+	}
+	if present(responseFormat) {
+		return "response_format", "parameter 'response_format' (JSON mode) is not supported"
+	}
+	if present(logitBias) {
+		return "logit_bias", "parameter 'logit_bias' is not supported"
+	}
+	if present(toolChoice) {
+		var s string
+		if json.Unmarshal(toolChoice, &s) != nil || s != "auto" {
+			return "tool_choice", `parameter 'tool_choice' only supports "auto"`
+		}
+	}
+	return "", ""
+}
+
+// scopeLabel renders a scope for a CALLER-facing 429 body as team/app the caller knows,
+// never the internal DynamoDB key (CORE-SEC-006). Empty parts are rendered as "default".
+func scopeLabel(team, app string) string {
+	if team == "" {
+		team = "default"
+	}
+	if app == "" {
+		app = "default"
+	}
+	return "team=" + team + " app=" + app
+}
+
+// secondsToWindowEnd is the Retry-After for the fixed 1-minute rate window: the seconds
+// remaining until the next minute boundary (at least 1), so a client waits only as long
+// as the window actually lasts (CORE-SEC-006).
+func secondsToWindowEnd() int {
+	ra := 60 - time.Now().UTC().Second()
+	if ra < 1 {
+		ra = 1
+	}
+	return ra
 }
 
 // The rate limit, budget and credit counters live in limits.go.
@@ -1745,18 +1890,29 @@ func stopSequences(raw json.RawMessage) []string {
 // ceiling is doing its job. `reasoning_clamped` names WHY they disagree; without it, a
 // budget silently reduced by policy would look like the model simply choosing to think
 // less.
-func decorateReasoningRequest(m map[string]interface{}, plan reasoningPlan) {
+func decorateReasoningRequest(m map[string]interface{}, plan reasoningPlan, style string) {
 	if plan.Req == nil {
 		return
 	}
 	if plan.Req.Effort != "" {
 		m["reasoning_effort"] = plan.Req.Effort
 	}
-	if plan.Req.BudgetTokens > 0 {
+	// CORE-FIN-002: on an "adaptive" route the MODEL chooses its own thinking budget — the
+	// token count the gateway resolved is NOT sent and NOT enforced. Recording it as
+	// thinking_budget_tokens made the ledger claim an enforced ceiling that did not exist,
+	// so a caller could multiply output cost with reasoning_effort:high unbounded. For
+	// adaptive routes we omit the enforced-budget field and stamp an honest
+	// reasoning_clamped:"adaptive_unbounded" marker instead.
+	adaptive := style == "adaptive"
+	if plan.Req.BudgetTokens > 0 && !adaptive {
 		m["thinking_budget_tokens"] = plan.Req.BudgetTokens
 	}
-	if plan.Clamped != "" {
-		m["reasoning_clamped"] = plan.Clamped
+	clamped := plan.Clamped
+	if adaptive && !plan.Req.Disabled {
+		clamped = "adaptive_unbounded"
+	}
+	if clamped != "" {
+		m["reasoning_clamped"] = clamped
 	}
 }
 
@@ -2135,6 +2291,14 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		return sresp(405, allowCORS(map[string]string{"content-type": "application/json", "allow": "POST, OPTIONS"}, reqOrigin),
 			`{"error":{"message":"method not allowed; this endpoint accepts POST","type":"invalid_request_error","code":"method_not_allowed"}}`)
 	}
+	// CORE-FUN-005: the {proxy+} ANY route forwards every path, and handle used to serve
+	// ALL of them as chat completions (so /v1/embeddings got a chat answer, even from
+	// cache). Only /v1/chat/completions is implemented; anything else is 404 so an SDK
+	// probing another endpoint is told the truth instead of a misleading 200.
+	if !strings.HasSuffix(req.Path, "/v1/chat/completions") {
+		return sresp(404, jsonHeaders(reqOrigin),
+			`{"error":{"message":"not found; this gateway serves POST /v1/chat/completions","type":"invalid_request_error","code":"not_found"}}`)
+	}
 
 	id, ok, aerr := authResolveFn(ctx, req.Headers)
 	if aerr != nil {
@@ -2181,10 +2345,26 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		// App attributes this request to one of the key's apps. Same purpose as the
 		// x-aiplat-app header, for callers that control the body but not the headers.
 		App string `json:"app,omitempty"`
+		// CORE-BND-003: parameters the gateway does NOT implement but that silently
+		// changing the product if ignored. They are decoded only to be rejected with a
+		// clear 400 (see unsupportedParam) instead of being dropped — a request for
+		// JSON mode / n>1 / a forced tool must not get a plain prose answer cached under
+		// a key that ignored the parameter.
+		N              *int            `json:"n,omitempty"`
+		ResponseFormat json.RawMessage `json:"response_format,omitempty"`
+		ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
+		LogitBias      json.RawMessage `json:"logit_bias,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		emitFailure(ctx, req.RequestID, ident, "", "", "", "blocked", "invalid_body", "", int(time.Since(start).Milliseconds()))
 		return jerr(reqOrigin, 400, "invalid JSON body")
+	}
+	// CORE-BND-003: reject unsupported parameters up front rather than silently dropping
+	// them (which returned a different product than requested and cached it under a key
+	// that omitted the parameter).
+	if f, msg := unsupportedParam(body.N, body.ResponseFormat, body.ToolChoice, body.LogitBias); f != "" {
+		emitFailure(ctx, req.RequestID, ident, body.Feature, "", body.Model, "blocked", reasonInvalidRequest, "unsupported parameter: "+f, int(time.Since(start).Milliseconds()))
+		return jerr(reqOrigin, 400, msg)
 	}
 
 	// Per-request app attribution. This runs BEFORE loadConfig on purpose: `app` is the
@@ -2273,9 +2453,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	// --- Rate limit (in the scope that DEFINED the limit) ---
 	if !checkRate(ctx, c.limitsScope, c.Limits) {
 		emitFailure(ctx, req.RequestID, ident, feature, "", requested, "blocked", "rate_limit_exceeded", "", int(time.Since(start).Milliseconds()))
+		// CORE-SEC-006: do not leak the internal DynamoDB scope key in the body; name the
+		// scope the caller understands (team/app). Retry-After is the seconds left in the
+		// current 1-minute window, not a constant 60 (which told clients to back off up
+		// to 59 s longer than needed).
 		return sresp(429, allowCORS(map[string]string{"content-type": "application/json",
-			"retry-after": "60"}, reqOrigin),
-			`{"error":{"message":"rate limit exceeded for scope `+c.limitsScope+`","type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
+			"retry-after": strconv.Itoa(secondsToWindowEnd())}, reqOrigin),
+			`{"error":{"message":"rate limit exceeded for `+scopeLabel(team, app)+`","type":"rate_limit_error","code":"rate_limit_exceeded"}}`)
 	}
 
 	// --- Monthly budget: alert | degrade | block ---
@@ -2286,8 +2470,9 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			switch c.Budget.Action {
 			case "block":
 				emitFailure(ctx, req.RequestID, ident, feature, "", requested, "blocked", "budget_exceeded", "", int(time.Since(start).Milliseconds()))
+				// CORE-SEC-006: name the scope as team/app, not the storage key.
 				return sresp(429, jsonHeaders(reqOrigin),
-					`{"error":{"message":"monthly budget exceeded for scope `+c.budgetScope+`","type":"insufficient_quota","code":"budget_exceeded"}}`)
+					`{"error":{"message":"monthly budget exceeded for `+scopeLabel(team, app)+`","type":"insufficient_quota","code":"budget_exceeded"}}`)
 			case "degrade":
 				budgetState = "exceeded_degraded"
 			default:
@@ -2474,6 +2659,14 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			// A cache hit is 100% VERIFIED savings: same model, identical response, no
 			// call to the provider. There is no assumed baseline.
 			routing.DecorateSavings(cacheRec, savedCache, savedCache, "cache")
+			// CORE-BND-004: a cache-hit row carries the same baseline/mode decoration as a
+			// served row, so per-model and requested-model breakdowns do not under-count
+			// cached traffic and the SLI seam does not fall back to a default mode.
+			cacheRec["mode"] = "sync"
+			cacheRec["requested_model"] = requested
+			cacheRec["requested_cost_usd"] = dec.RequestedCostUSD
+			cacheRec["pricing_status"] = dec.PricingStatus
+			cacheRec["price_source"] = priceSourceOf(c, servedModel, now)
 			emitRecord(ctx, cacheRec)
 			if body.Stream {
 				cachedReasoning, text := cachedMessageParts(cached)
@@ -2535,6 +2728,12 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 						// Semantic is NOT verified savings (approximate response):
 						// verifiedPortion=0 → everything is filed as counterfactual.
 						routing.DecorateSavings(cacheRec, savedCache, 0, routing.ReasonSemanticCache)
+						// CORE-BND-004: same baseline/mode decoration as a served row.
+						cacheRec["mode"] = "sync"
+						cacheRec["requested_model"] = requested
+						cacheRec["requested_cost_usd"] = dec.RequestedCostUSD
+						cacheRec["pricing_status"] = dec.PricingStatus
+						cacheRec["price_source"] = priceSourceOf(c, chosen, now)
 						emitRecord(ctx, cacheRec)
 						if body.Stream {
 							cachedReasoning, text := cachedMessageParts(cached)
@@ -2609,8 +2808,23 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			if st, e := openProviderStreamFn(ctx, s.r, body.Messages, body.Tools, inf); e == nil {
 				provStream, okStream = st, true
 				break
-			} else if !errors.Is(e, errNoNativeStream) {
+			} else if !errors.Is(e, errNoNativeStream) && !streamingUnsupported(e) {
+				// CORE-NFR-004: a real stream-open failure (429/4xx/5xx) must NOT be retried
+				// as a buffered call on the SAME route — that doubled the provider call (and
+				// the input-token billing on providers that charge rejected-after-start
+				// requests) and defeated the single-fallback-owner rule. A client fault stops
+				// here; anything else advances the chain, exactly like the buffered loop.
+				//
+				// The exception is a provider signalling it cannot stream THIS model
+				// (errNoNativeStream, or a runtime "streaming not supported" ValidationException
+				// recognised by streamingUnsupported): that is a capability fact, not a
+				// failure, so it falls through to the buffered call on the same route below.
+				if resp, rerr, stop := clientFault(ctx, req.RequestID, ident, feature, s.r.Provider, s.name, e, reqOrigin, int(time.Since(start).Milliseconds())); stop {
+					return resp, rerr
+				}
+				logProviderAttempt(s.r.Provider, s.name, e)
 				perr = e
+				continue
 			}
 			res, e := callProviderFn(ctx, s.r, body.Messages, body.Tools, inf)
 			if e == nil {
@@ -2746,9 +2960,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			decorateSwap(rec, swapClass, servedModelID)
 			decorateCanary(rec, canaryRoute)
 			decorateReasoning(rec, streamRes.reasoningChars, streamRes.reasoningRedacted)
-			decorateReasoningRequest(rec, rplan)
+			decorateReasoningRequest(rec, rplan, c.Routing[usedName].ReasoningStyle)
 			rec["price_source"] = priceSourceOf(c, usedName, now)
 			routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
+			// CORE-FIN-003: the streaming path does not escalate (single attempt), but the
+			// record must still carry attempt_count and the ex-post saved_net_usd, which
+			// previously only the buffered path emitted.
+			routing.DecorateEscalation(rec, false, "", "", 1, saved)
 			decorateGatewayOwnership(rec, c.Routing[usedName].GatewayFallback)
 			if tokensEstimated {
 				rec["tokens_estimated"] = true
@@ -2765,7 +2983,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			decorateSwap(streamMeta, swapClass, servedModelID)
 			decorateCanary(streamMeta, canaryRoute)
 			decorateReasoning(streamMeta, streamRes.reasoningChars, streamRes.reasoningRedacted)
-			decorateReasoningRequest(streamMeta, rplan)
+			decorateReasoningRequest(streamMeta, rplan, c.Routing[usedName].ReasoningStyle)
 			if tokensEstimated {
 				streamMeta["tokens_estimated"] = true
 			}
@@ -2867,7 +3085,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		decorateSwap(meta, swapClass, servedModelID)
 		decorateCanary(meta, canaryRoute)
 		decorateReasoning(meta, res.reasoningChars, res.reasoningRedacted)
-		decorateReasoningRequest(meta, rplan)
+		decorateReasoningRequest(meta, rplan, usedRoute.ReasoningStyle)
 		out := map[string]interface{}{
 			"id": "chatcmpl-" + ck[:12], "object": "chat.completion", "model": usedName,
 			"choices": []map[string]interface{}{{"index": 0, "message": msgContent, "finish_reason": finishReason}},
@@ -2894,10 +3112,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		decorateSwap(rec, swapClass, servedModelID)
 		decorateCanary(rec, canaryRoute)
 		decorateReasoning(rec, res.reasoningChars, res.reasoningRedacted)
-		decorateReasoningRequest(rec, rplan)
+		decorateReasoningRequest(rec, rplan, usedRoute.ReasoningStyle)
 		rec["price_source"] = priceSourceOf(c, usedName, now)
 		routing.DecorateSavings(rec, saved, verifiedPortion(saved, cacheSaved, reason), reason)
-		routing.DecorateEscalation(rec, escalated, escReason, escOutcome, attempts, dec.RequestedCostUSD, cost)
+		routing.DecorateEscalation(rec, escalated, escReason, escOutcome, attempts, saved)
 		decorateGatewayOwnership(rec, usedRoute.GatewayFallback)
 		emitRecord(ctx, rec)
 		return jbody(reqOrigin, 200, out)
@@ -2991,7 +3209,15 @@ func validateRequest(messages []chatMsg, maxTokens *int, temperature, topP *floa
 	// malformed request.
 	for i, m := range messages {
 		switch m.Role {
-		case "system", "user", "assistant", "tool", "developer", "function":
+		case "tool":
+			// CORE-BND-005: a tool result MUST name the call it answers. Without a
+			// tool_call_id the adapters dropped the message and the request surfaced as a
+			// generic "the model rejected the request" 400 — tell the caller exactly what
+			// is wrong instead.
+			if strings.TrimSpace(m.ToolCallID) == "" {
+				return reasonInvalidRequest, fmt.Sprintf("messages[%d] has role \"tool\" but no tool_call_id", i)
+			}
+		case "system", "user", "assistant", "developer", "function":
 		case "":
 			return reasonInvalidRequest, fmt.Sprintf("messages[%d] is missing a role", i)
 		default:
@@ -3068,6 +3294,19 @@ func Wire(d Deps) {
 	keyStore = d.Keys
 	hintsReader = d.Hints
 	deploymentOrg = d.Org
+}
+
+// Prewarm primes the per-sandbox caches so the FIRST request on a cold sandbox does not
+// pay the config read on the critical path (CORE-NFR-003). A burst of 20 concurrent
+// requests measured p50 ~3.1s vs ~1.3s steady, with Init Duration only ~76ms — i.e. the
+// warm-up was happening INSIDE the handler (credential/STS/config fetch), not in Init.
+// Resolving credentials is done by the caller (cmd/router) since it owns the aws.Config;
+// here we prime the effective config for the default scope through the same loadConfig the
+// handler uses. Best-effort: any failure just means the first request does the work.
+func Prewarm(ctx context.Context) {
+	if configStore != nil {
+		loadConfig(ctx, "", "")
+	}
 }
 
 // Handle is the exported entry point on the neutral boundary — what both wrappers

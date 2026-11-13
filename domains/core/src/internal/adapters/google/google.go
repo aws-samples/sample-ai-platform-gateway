@@ -228,7 +228,7 @@ func (a *Adapter) Invoke(ctx context.Context, in ports.InvokeInput) (ports.Resul
 	}
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
-		return ports.Result{}, err
+		return ports.Result{}, a.redactErr(err) // CORE-SEC-004: never leak the key via *url.Error
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)

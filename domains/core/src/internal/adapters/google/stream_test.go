@@ -165,3 +165,39 @@ func TestBufferedAndStreamShareTheBody(t *testing.T) {
 		t.Errorf("system instruction missing: %s", bufBody)
 	}
 }
+
+// CORE-SEC-004: the API key must travel in the x-goog-api-key HEADER, never the URL query,
+// so it cannot leak through *url.Error into the Usage_Record detail or CloudWatch.
+func TestKeyInHeaderNotURL(t *testing.T) {
+	var gotURL, gotKeyHeader, gotQueryKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.String()
+		gotKeyHeader = r.Header.Get("x-goog-api-key")
+		gotQueryKey = r.URL.Query().Get("key")
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}`))
+	}))
+	defer srv.Close()
+
+	a := &Adapter{HTTP: srv.Client(), BaseURL: srv.URL, ModelID: "gemini-x", APIKey: "AIzaSECRET123"}
+	if _, err := a.Invoke(context.Background(), ports.InvokeInput{Messages: []ports.Message{{Role: "user", Text: "hi"}}}); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if gotKeyHeader != "AIzaSECRET123" {
+		t.Errorf("x-goog-api-key header = %q, want the key", gotKeyHeader)
+	}
+	if gotQueryKey != "" {
+		t.Errorf("key leaked into the URL query: %q", gotQueryKey)
+	}
+	if strings.Contains(gotURL, "AIzaSECRET123") {
+		t.Errorf("key present in the request URL: %q", gotURL)
+	}
+}
+
+// redactErr strips the key if it ever appears in a transport error string.
+func TestRedactErr(t *testing.T) {
+	a := &Adapter{APIKey: "AIzaSECRET123"}
+	err := a.redactErr(errors.New(`Post "https://x/?key=AIzaSECRET123": dial tcp: timeout`))
+	if strings.Contains(err.Error(), "AIzaSECRET123") {
+		t.Errorf("redactErr did not strip the key: %v", err)
+	}
+}

@@ -101,9 +101,18 @@ func TestSelectPrice(t *testing.T) {
 			PriceHistory{{Standard: Layer{0, 0}}}, day("2026-08-09"), 0, PricingUnknown,
 		},
 		{
-			"a declared cache_read is not derived",
-			PriceHistory{{Standard: Layer{0.002, 0.01}, CacheRead: Layer{Input: 0.0002}}},
+			// Both cache layers declared → nothing is derived → status stays known.
+			// (cache_write is declared here too since CORE-FIN-001 now derives an absent
+			// cache_write from the input price, which would otherwise flip this to derived.)
+			"declared cache layers are not derived",
+			PriceHistory{{Standard: Layer{0.002, 0.01}, CacheRead: Layer{Input: 0.0002}, CacheWrite: Layer{Input: 0.0025}}},
 			day("2026-08-09"), 0.002, PricingKnown,
+		},
+		{
+			// CORE-FIN-001: free:true makes a declared 0/0 KNOWN (selectable by
+			// auto-cheapest), distinct from an unpriced 0/0 which stays unknown.
+			"a price of zero with free:true is known",
+			PriceHistory{{Standard: Layer{0, 0}, Free: true}}, day("2026-08-09"), 0, PricingKnown,
 		},
 		{"an empty history is unknown", nil, day("2026-08-09"), 0, PricingUnknown},
 	}
@@ -131,6 +140,26 @@ func TestSelectPrice_DerivaCacheReadEm10PorCento(t *testing.T) {
 	}
 	if !tier.CacheReadDerived {
 		t.Error("CacheReadDerived should be true")
+	}
+}
+
+// CORE-FIN-001: an undeclared cache_write is derived at 1.25× the input price, so a
+// prompt-cache write is no longer charged at $0, and RealizedCost reflects it.
+func TestSelectPrice_DerivesCacheWrite(t *testing.T) {
+	tier, st := SelectPrice(PriceHistory{{Standard: Layer{0.004, 0.02}}}, day("2026-08-09"))
+	if st != PricingDerived {
+		t.Fatalf("status = %q, expected %q", st, PricingDerived)
+	}
+	if math.Abs(tier.CacheWrite.Input-0.005) > 1e-12 { // 1.25 × 0.004
+		t.Errorf("CacheWrite.Input = %v, expected 0.005", tier.CacheWrite.Input)
+	}
+	if !tier.CacheWriteDerived {
+		t.Error("CacheWriteDerived should be true")
+	}
+	// RealizedCost must now charge the write: 1000 cache-write tokens cost 1.25×input.
+	cost := RealizedCost(tier, 0, InputSplit{CacheWrite: 1000}, 0)
+	if math.Abs(float64(cost)-0.005) > 1e-12 {
+		t.Errorf("RealizedCost with 1000 cache-write tokens = %v, expected 0.005", cost)
 	}
 }
 

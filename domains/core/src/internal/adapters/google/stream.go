@@ -15,10 +15,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/aiplat/core/internal/adapters/ssestream"
 	"github.com/aiplat/core/internal/ports"
 )
+
+// redactErr strips the API key from an error string as defence in depth (CORE-SEC-004).
+// The key now travels in the x-goog-api-key header, so *url.Error no longer carries it,
+// but a future change or a provider echoing the key must not reintroduce the leak into
+// the Usage_Record `detail` or CloudWatch.
+func (a *Adapter) redactErr(err error) error {
+	if err == nil || a.APIKey == "" {
+		return err
+	}
+	if s := err.Error(); strings.Contains(s, a.APIKey) {
+		return fmt.Errorf("%s", strings.ReplaceAll(s, a.APIKey, "«redacted»"))
+	}
+	return err
+}
 
 var _ ports.StreamProvider = (*Adapter)(nil) // compile-time assertion
 
@@ -35,7 +50,7 @@ func (a *Adapter) OpenStream(ctx context.Context, in ports.InvokeInput) (ports.P
 	}
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, a.redactErr(err)
 	}
 	if resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(resp.Body)
@@ -71,16 +86,22 @@ func (a *Adapter) buildRequest(ctx context.Context, in ports.InvokeInput, stream
 	}
 	b, _ := json.Marshal(payload)
 
-	method, extra := ":generateContent?", ""
+	// CORE-SEC-004: the API key goes in the x-goog-api-key HEADER, never the URL query.
+	// In the query it leaked into *url.Error ("Post \"https://…?key=AIza…\": dial…") and
+	// from there into the Usage_Record `detail` and CloudWatch. Gemini accepts the header
+	// form for every endpoint.
+	method := ":generateContent"
+	query := ""
 	if stream {
-		method, extra = ":streamGenerateContent?", "alt=sse&"
+		method, query = ":streamGenerateContent", "?alt=sse"
 	}
-	url := baseURL + "/v1beta/models/" + a.ModelID + method + extra + "key=" + a.APIKey
+	url := baseURL + "/v1beta/models/" + a.ModelID + method + query
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("content-type", "application/json")
+	req.Header.Set("x-goog-api-key", a.APIKey)
 	return req, nil
 }
 

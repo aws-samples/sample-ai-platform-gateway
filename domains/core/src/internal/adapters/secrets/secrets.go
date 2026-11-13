@@ -205,27 +205,7 @@ func (s *Store) ClearAll() {
 	}
 }
 
-// StartGarbageCollector removes expired entries periodically
-func (s *Store) StartGarbageCollector(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			s.ClearAll()
-			return
-		case <-ticker.C:
-			s.mu.Lock()
-			now := time.Now()
-			for name, entry := range s.cache {
-				if now.Sub(entry.timestamp) > s.maxAge {
-					secureZero(entry.encrypted)
-					secureZero(entry.nonce)
-					delete(s.cache, name)
-				}
-			}
-			s.mu.Unlock()
-		}
-	}
-}
+// CORE-ARC-001: StartGarbageCollector was removed — it had no caller. The secret cache is
+// bounded by its per-entry maxAge (checked on read) and by ClearAll on shutdown; a
+// never-started background goroutine only suggested a lifecycle that did not exist. Each
+// Lambda sandbox is short-lived, so periodic sweeping bought nothing.

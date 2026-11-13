@@ -15,10 +15,7 @@
 package routing
 
 import (
-	"encoding/json"
 	"regexp"
-
-	"github.com/aiplat/core/internal/ports"
 )
 
 var (
@@ -156,33 +153,8 @@ type GuardrailPolicy struct {
 	NoStore        bool
 }
 
-// ApplyGuardrails applies the policy to the set of messages. Blocking takes PRECEDENCE
-// over masking (if there is a secret/injection, refuse before masking).
-// Returns (possibly masked messages, block reason or "").
-//
-// The evaluated text is the textual projection (Message.Text); when masking, Text and Raw
-// are rewritten with the masked string — the same semantics the shell applied (the
-// content becomes the masked string, flattening multimodal, inherited behavior).
-func ApplyGuardrails(msgs []ports.Message, p GuardrailPolicy) ([]ports.Message, string) {
-	for _, m := range msgs {
-		c := m.Text
-		if p.BlockSecrets && ContainsSecret(c) {
-			return msgs, "secret_detected"
-		}
-		if p.BlockInjection && LooksLikeInjection(c) {
-			return msgs, "prompt_injection"
-		}
-	}
-	if p.MaskPII {
-		out := make([]ports.Message, len(msgs))
-		for i, m := range msgs {
-			masked := MaskPII(m.Text)
-			m.Text = masked
-			b, _ := json.Marshal(masked)
-			m.Raw = b
-			out[i] = m
-		}
-		return out, ""
-	}
-	return msgs, ""
-}
+// CORE-ARC-001: the message-level ApplyGuardrails was removed. It duplicated the shell's
+// applyGuardrails (gateway.go) but was never called, and it flattened multimodal content
+// into the masked string — so the only unit-tested guardrail was NOT the one that ran. The
+// pure helpers it used (ContainsSecret, LooksLikeInjection, MaskPII) remain and are what
+// the shell calls directly, so there is now a single guardrail implementation.

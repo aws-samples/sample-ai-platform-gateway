@@ -63,7 +63,15 @@ func DecorateUsage(rec map[string]interface{}, dec Decision, requested, pricingS
 }
 
 // DecorateEscalation records the escalation in the Usage_Record.
-func DecorateEscalation(rec map[string]interface{}, escalated bool, reason, outcome string, attempts int, requestedCost, totalCost float64) {
+//
+// CORE-FIN-003: saved_net_usd is the request's NET savings as already computed EX-POST by
+// the gateway (savings() compares the requested model's cost over the RESPONSE's real
+// tokens against the served cost, and the served cost is the SUM of every attempt — so
+// the extra attempts are already subtracted). Passing that value through — instead of
+// recomputing NetSavings(ex-ante requested_cost, total cost) — removes the estimate-vs-
+// realized mix that produced phantom net numbers. Emitted on both the buffered and
+// streaming paths so a streamed record carries attempt_count/saved_net_usd too.
+func DecorateEscalation(rec map[string]interface{}, escalated bool, reason, outcome string, attempts int, netSaved float64) {
 	rec["attempt_count"] = attempts
 	rec["escalated"] = escalated
 	if reason != "" {
@@ -72,7 +80,9 @@ func DecorateEscalation(rec map[string]interface{}, escalated bool, reason, outc
 	if outcome != "" {
 		rec["escalation_outcome"] = outcome
 	}
-	saved, floored := NetSavings(requestedCost, totalCost)
-	rec["saved_net_usd"] = saved
-	rec["savings_floored"] = floored
+	if netSaved < 0 {
+		netSaved = 0
+	}
+	rec["saved_net_usd"] = netSaved
+	rec["savings_floored"] = netSaved == 0
 }

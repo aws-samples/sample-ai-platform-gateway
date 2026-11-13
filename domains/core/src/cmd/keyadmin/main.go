@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -213,6 +214,22 @@ func genKey() string {
 	return "sk-aiplat-" + hex.EncodeToString(buf)
 }
 
+// keyPepper is read once; empty means the legacy unsalted SHA-256 is used (CORE-SEC-008).
+var keyPepper = []byte(os.Getenv("KEY_HASH_PEPPER"))
+
+// hashKey computes the stored hash of an API key: HMAC-SHA256 under the pepper when one is
+// configured, otherwise the legacy unsalted SHA-256. Must stay byte-for-byte identical to
+// ddbkeys.candidateHashes' primary form, or newly issued keys would not resolve.
+func hashKey(key string) string {
+	if len(keyPepper) > 0 {
+		m := hmac.New(sha256.New, keyPepper)
+		m.Write([]byte(key))
+		return hex.EncodeToString(m.Sum(nil))
+	}
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
 func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	method := req.HTTPMethod
 	// Captured once and threaded through every response: CORS is decided by the
@@ -382,8 +399,11 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			}
 		}
 		key := genKey()
-		sum := sha256.Sum256([]byte(key))
-		hash := hex.EncodeToString(sum[:])
+		// CORE-SEC-008: store the peppered HMAC when KEY_HASH_PEPPER is configured (the
+		// gateway's ddbkeys reader uses the same pepper, falling back to legacy SHA-256 for
+		// keys issued before it). When unset, stays the legacy unsalted SHA-256, so nothing
+		// changes until a pepper is provisioned into both Lambdas.
+		hash := hashKey(key)
 		created := time.Now().UTC().Format(time.RFC3339)
 		prefix := key[:14] + "…"
 		item := map[string]ddbtypes.AttributeValue{

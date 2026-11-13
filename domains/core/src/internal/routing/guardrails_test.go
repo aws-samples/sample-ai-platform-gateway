@@ -6,8 +6,6 @@ package routing
 import (
 	"strings"
 	"testing"
-
-	"github.com/aiplat/core/internal/ports"
 )
 
 // --- Masking properties ----------------------
@@ -158,34 +156,6 @@ func TestLooksLikeInjection(t *testing.T) {
 	}
 }
 
-// --- ApplyGuardrails ---------------------------------------------------------
-
-func TestApplyGuardrails_BloqueioTemPrecedencia(t *testing.T) {
-	msgs := []ports.Message{{Role: "user", Text: "sk-abcdefghij0123456789 e email a@b.com"}}
-	_, reason := ApplyGuardrails(msgs, GuardrailPolicy{MaskPII: true, BlockSecrets: true})
-	if reason != "secret_detected" {
-		t.Errorf("reason = %q, expected secret_detected (blocking before masking)", reason)
-	}
-}
-
-func TestApplyGuardrails_Mascara(t *testing.T) {
-	msgs := []ports.Message{{Role: "user", Text: "email a@b.com"}}
-	out, reason := ApplyGuardrails(msgs, GuardrailPolicy{MaskPII: true})
-	if reason != "" {
-		t.Fatalf("reason = %q, expected empty", reason)
-	}
-	if out[0].Text != "email [email]" {
-		t.Errorf("Text = %q, expected masked", out[0].Text)
-	}
-	if string(out[0].Raw) != `"email [email]"` {
-		t.Errorf("Raw = %q, expected the JSON of the masked string", string(out[0].Raw))
-	}
-}
-
-func TestApplyGuardrails_SemPoliticaNaoMuda(t *testing.T) {
-	msgs := []ports.Message{{Role: "user", Text: "email a@b.com"}}
-	out, reason := ApplyGuardrails(msgs, GuardrailPolicy{})
-	if reason != "" || out[0].Text != "email a@b.com" {
-		t.Errorf("with no policy nothing should change: out=%q reason=%q", out[0].Text, reason)
-	}
-}
+// CORE-ARC-001: the ApplyGuardrails tests were removed with the function they covered
+// (the message-level duplicate that never ran). MaskPII/ContainsSecret/LooksLikeInjection
+// — the helpers the shell actually calls — stay covered above.

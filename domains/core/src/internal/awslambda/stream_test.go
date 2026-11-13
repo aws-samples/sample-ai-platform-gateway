@@ -12,12 +12,9 @@ package awslambda
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"strings"
 	"testing"
-
-	"github.com/aws/aws-lambda-go/events"
 
 	"github.com/aiplat/core/internal/httpapi"
 )
@@ -126,35 +123,6 @@ func TestFromResponseStream_PanicBecomesStreamError(t *testing.T) {
 	}
 }
 
-// AdaptStream must preserve the inbound translation Adapt already does (base64 body,
-// lowercase header access) and hand back the streaming type.
-func TestAdaptStream_PassesRequestThrough(t *testing.T) {
-	var gotBody, gotAuth string
-	h := func(_ context.Context, req httpapi.Request) (httpapi.Response, error) {
-		gotBody = req.Body
-		gotAuth = req.Headers["authorization"]
-		return httpapi.Response{StatusCode: 200, Body: "done"}, nil
-	}
-
-	fn := AdaptStream(h)
-	out, err := fn(context.Background(), events.APIGatewayProxyRequest{
-		HTTPMethod:      "POST",
-		Path:            "/v1/chat/completions",
-		Headers:         map[string]string{"authorization": "Bearer k"},
-		Body:            "eyJhIjoxfQ==", // {"a":1}
-		IsBase64Encoded: true,
-	})
-	if err != nil {
-		t.Fatalf("AdaptStream: %v", err)
-	}
-	if gotBody != `{"a":1}` {
-		t.Errorf("body not base64-decoded: %q", gotBody)
-	}
-	if gotAuth != "Bearer k" {
-		t.Errorf("authorization = %q", gotAuth)
-	}
-	_, payload := splitPrelude(t, out)
-	if payload != "done" {
-		t.Errorf("payload = %q", payload)
-	}
-}
+// CORE-ARC-001: the AdaptStream test was removed with the unused function it covered. The
+// live streaming path is StartStreaming (runtimeapi.go); FromResponseStream stays covered
+// by the TestFromResponseStream_* cases above.
