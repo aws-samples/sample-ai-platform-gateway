@@ -268,27 +268,25 @@ resource "aws_lambda_event_source_mapping" "archive" {
   }
 }
 
-# AUD-NFR-001: on-failure destination for the archiver stream. A record the archiver
-# cannot persist after its retries lands here for an operator to recover, rather than
-# vanishing when the hot-tier TTL expires.
+# AUD-NFR-001: on-failure destination for the archiver stream. For a DynamoDB-stream
+# event source mapping this destination receives the failure METADATA — the shard id,
+# the failed sequence-number range, the error and the attempt count — NOT the record
+# payloads. So it tells an operator WHICH records failed; recovery is re-reading those
+# sequence numbers from the stream (within its 24 h retention) or from the hot tier
+# before its TTL. The value is that a poison record is no longer lost silently, not that
+# the payload is parked here.
 resource "aws_sqs_queue" "archive_dlq" {
   name                      = "${local.name}-archive-dlq"
   message_retention_seconds = 1209600 # 14 days
   sqs_managed_sse_enabled   = true
 }
 
-resource "aws_sqs_queue_policy" "archive_dlq" {
-  queue_url = aws_sqs_queue.archive_dlq.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-      Action    = "sqs:SendMessage"
-      Resource  = aws_sqs_queue.archive_dlq.arn
-    }]
-  })
-}
+# NOTE: no aws_sqs_queue_policy here on purpose. A DynamoDB-stream ESM writes to the
+# on-failure destination using the FUNCTION's execution role, which already holds
+# sqs:SendMessage on this queue (see the role policy above). The previous resource
+# granted the lambda.amazonaws.com SERVICE principal instead — the wrong principal for
+# an ESM destination, lacking SourceArn/SourceAccount, and redundant with the role
+# grant. Removing it closes a needless cross-service trust with no loss of function.
 
 # ========================= Bus + ingestion queue ============================
 resource "aws_cloudwatch_event_bus" "audit" {
@@ -297,20 +295,29 @@ resource "aws_cloudwatch_event_bus" "audit" {
 
 # AUD-SEC-002: restrict PutEvents on the audit bus to the two legitimate publishers — the
 # governance config-api and the core keyadmin roles — so an in-account principal that
-# happens to hold events:PutEvents cannot forge trail entries. Scoped by the publisher role
-# ARNs; within the same account the identity policy still applies, this is the second gate.
+# happens to hold events:PutEvents cannot forge trail entries.
+#
+# This MUST be a Deny, not an Allow. Within the same account EventBridge authorises a
+# PutEvents when EITHER the caller's identity policy OR this resource policy allows it, so
+# an Allow-only resource policy adds nothing: any role that already holds events:PutEvents
+# in its identity policy stays authorised regardless. An explicit Deny, by contrast,
+# overrides every Allow (identity or resource). We deny PutEvents for every principal whose
+# ARN is NOT one of the two approved publisher roles (ArnNotLike), leaving those two — which
+# carry events:PutEvents in their own identity policies — as the only principals that can
+# write to the bus. aws:PrincipalArn resolves to the IAM role ARN for an assumed-role
+# session, so matching the bare role ARNs is correct.
 resource "aws_cloudwatch_event_bus_policy" "audit" {
   event_bus_name = aws_cloudwatch_event_bus.audit.name
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid       = "AllowGovernanceAndKeyadminPublishersOnly"
-      Effect    = "Allow"
-      Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+      Sid       = "DenyPutEventsExceptApprovedPublishers"
+      Effect    = "Deny"
+      Principal = "*"
       Action    = "events:PutEvents"
       Resource  = aws_cloudwatch_event_bus.audit.arn
       Condition = {
-        ArnLike = { "aws:PrincipalArn" = [
+        ArnNotLike = { "aws:PrincipalArn" = [
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-${var.environment}-gov-config-api",
           "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-${var.environment}-inf-keyadmin",
         ] }

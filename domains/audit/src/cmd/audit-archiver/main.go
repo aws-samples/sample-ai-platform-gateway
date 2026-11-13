@@ -55,11 +55,18 @@ func attrToInterface(av events.DynamoDBAttributeValue) interface{} {
 	case events.DataTypeString:
 		return av.String()
 	case events.DataTypeNumber:
-		// AUD-UX-001: keep the number as a STRING, as the comment always said and the
-		// code did not. A numeric AttributeValue may be an integer (change_count) or lose
-		// precision as float64 in JSON; the archive is for reading, not arithmetic, and
-		// ddbtrail.go already made this same trade-off for `changes`. Returning av.Float()
-		// here contradicted the comment and reintroduced the precision loss it warned about.
+		// AUD-BND-001: emit the number as a JSON NUMBER (av.Float), not a quoted string.
+		// The archive's original shape was numeric; switching to av.Number() in AUD-UX-001
+		// silently changed the type of every numeric field (change_count, truncated
+		// counts) for Athena/Glue and any other downstream consumer — a schema break worse
+		// than the precision concern it was meant to address. Audit numeric fields are
+		// small integer counts well within float64's exact range, so there is no real
+		// precision loss here. The type change is noted in CHANGELOG for consumers.
+		if f, err := av.Float(); err == nil {
+			return f
+		}
+		// Not representable as float64 (not expected for audit counts): fall back to the
+		// string form rather than drop the field entirely.
 		return av.Number()
 	case events.DataTypeBoolean:
 		return av.Boolean()

@@ -53,3 +53,21 @@ output "audit_bus_arn" { value = module.domain.audit_bus_arn }
 output "trail_table" { value = module.domain.trail_table }
 output "ingest_dlq_url" { value = module.domain.ingest_dlq_url }
 output "archive_bucket" { value = module.domain.archive_bucket }
+
+# XC-IAC-006: adopt the live auto-created Lambda log groups into state. Import blocks
+# are only valid in the ROOT module, so they target the child module's resources.
+# Plan shows import + retention update, not create (which fails
+# ResourceAlreadyExistsException). One-time bootstrap on an EXISTING stack; remove for
+# a greenfield deploy. See README "Quick start".
+import {
+  to = module.domain.aws_cloudwatch_log_group.archiver
+  id = "/aws/lambda/aiplat-poc-aud-archiver"
+}
+import {
+  to = module.domain.aws_cloudwatch_log_group.writer_logs
+  id = "/aws/lambda/aiplat-poc-aud-writer"
+}
+import {
+  to = module.domain.aws_cloudwatch_log_group.api_logs
+  id = "/aws/lambda/aiplat-poc-aud-api"
+}
