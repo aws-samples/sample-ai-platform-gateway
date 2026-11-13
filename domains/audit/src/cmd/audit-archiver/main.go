@@ -55,11 +55,12 @@ func attrToInterface(av events.DynamoDBAttributeValue) interface{} {
 	case events.DataTypeString:
 		return av.String()
 	case events.DataTypeNumber:
-		// Kept as a string: a numeric AttributeValue may be an integer (change_count)
-		// or lose precision as float64 in JSON. The archive is for reading, not
-		// arithmetic — ddbtrail.go already made this same trade-off for `changes`.
-		n, _ := av.Float()
-		return n
+		// AUD-UX-001: keep the number as a STRING, as the comment always said and the
+		// code did not. A numeric AttributeValue may be an integer (change_count) or lose
+		// precision as float64 in JSON; the archive is for reading, not arithmetic, and
+		// ddbtrail.go already made this same trade-off for `changes`. Returning av.Float()
+		// here contradicted the comment and reintroduced the precision loss it warned about.
+		return av.Number()
 	case events.DataTypeBoolean:
 		return av.Boolean()
 	case events.DataTypeNull:

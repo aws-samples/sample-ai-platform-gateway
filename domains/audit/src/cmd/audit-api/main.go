@@ -302,17 +302,23 @@ func export(ctx context.Context, reqOrigin string, q ports.TrailQuery) (events.A
 		for _, c := range e.Changes {
 			diff = append(diff, c.Path+": "+fmtVal(c.Before)+" -> "+fmtVal(c.After))
 		}
+		// AUD-SEC-001: neutralise spreadsheet formula injection. Config values (base_url,
+		// display names, team ids in detail) reach these cells verbatim, and the file is
+		// served as an .csv attachment Excel opens — a cell starting with = + - @ would run
+		// as a formula in the auditor's spreadsheet. csvSafe() prefixes those with a quote.
 		_ = w.Write([]string{
-			e.TS, e.Actor.Email, e.Actor.Role, e.Actor.Type, e.Action, e.Category,
-			e.Scope, e.Target, e.Detail, strconv.Itoa(e.ChangeCount), strconv.FormatBool(e.Truncated),
-			strings.Join(diff, " | "), e.SourceIP, e.UserAgent,
+			csvSafe(e.TS), csvSafe(e.Actor.Email), csvSafe(e.Actor.Role), csvSafe(e.Actor.Type),
+			csvSafe(e.Action), csvSafe(e.Category), csvSafe(e.Scope), csvSafe(e.Target),
+			csvSafe(e.Detail), strconv.Itoa(e.ChangeCount), strconv.FormatBool(e.Truncated),
+			csvSafe(strings.Join(diff, " | ")), csvSafe(e.SourceIP), csvSafe(e.UserAgent),
 		})
 	}
 	w.Flush()
 
 	h := map[string]string{
-		"content-type":        "text/csv; charset=utf-8",
-		"content-disposition": `attachment; filename="auditoria.csv"`,
+		"content-type": "text/csv; charset=utf-8",
+		// AUD-UX-001: English-source filename (the console is English with i18n).
+		"content-disposition": `attachment; filename="audit-trail.csv"`,
 	}
 	// Explicit truncation: an export silently cut short would make the auditor
 	// conclude that is all there is.
@@ -341,6 +347,21 @@ func fmtVal(v any) string {
 		b, _ := json.Marshal(t)
 		return string(b)
 	}
+}
+
+// csvSafe neutralises spreadsheet formula injection (AUD-SEC-001). A cell whose first
+// character is one of = + - @ (or a leading tab/CR, which some spreadsheets treat as a
+// formula lead-in) is prefixed with a single quote, per OWASP CSV-injection guidance, so
+// the spreadsheet renders it as text instead of evaluating it. Empty cells pass through.
+func csvSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	}
+	return s
 }
 
 func main() {

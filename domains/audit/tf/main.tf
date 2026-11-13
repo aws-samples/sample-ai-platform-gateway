@@ -117,6 +117,11 @@ resource "aws_dynamodb_table" "trail" {
   # for an audit trail. See the "Cold tier (S3)" block below.
   stream_enabled   = true
   stream_view_type = "NEW_IMAGE"
+
+  # AUD-NFR-001: the trail is append-only evidence; a single DeleteTable call must not be
+  # able to erase it. Removing the table now requires flipping this to false in a
+  # deliberate apply first.
+  deletion_protection_enabled = true
 }
 
 # ====================== Cold tier (S3) + archiver ============================
@@ -164,6 +169,36 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "archive" {
   }
 }
 
+# AUD-NFR-001: deny any non-TLS access to the evidence archive. Plaintext transport would
+# defeat the point of a tamper-evident trail.
+resource "aws_s3_bucket_policy" "archive" {
+  bucket = aws_s3_bucket.archive.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource = [
+        aws_s3_bucket.archive.arn,
+        "${aws_s3_bucket.archive.arn}/*",
+      ]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+}
+
+# AUD-NFR-001 (WORM): true S3 Object Lock makes the archive write-once, so even a principal
+# with s3:DeleteObjectVersion cannot erase history. It CANNOT be retrofitted onto an
+# existing bucket — Object Lock must be enabled at bucket creation — so enabling it on the
+# already-deployed archive would force a destroy/recreate and lose the evidence it protects.
+# For a NEW deployment, create the archive bucket with `object_lock_enabled = true` and add
+# an aws_s3_bucket_object_lock_configuration in GOVERNANCE mode with a retention matching the
+# trail's retention. This is left as a documented production migration rather than an
+# in-place change, to avoid replacing the live evidence bucket. Versioning (above), the
+# TLS-only policy, PITR on the hot table and deletion protection are the in-place guards.
+
 resource "aws_iam_role" "archiver" {
   name               = "${local.name}-archiver"
   assume_role_policy = data.aws_iam_policy_document.assume.json
@@ -183,6 +218,9 @@ resource "aws_iam_role_policy" "archiver" {
         "dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams",
       ], Resource = aws_dynamodb_table.trail.stream_arn },
       { Effect = "Allow", Action = ["s3:PutObject"], Resource = "${aws_s3_bucket.archive.arn}/*" },
+      # AUD-NFR-001: the event source mapping writes failed records to the archive DLQ on
+      # the function's behalf, so the role needs SendMessage on it.
+      { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.archive_dlq.arn },
       # X-Ray requires Resource = "*": trace segments are not addressable
       # resources, so this is the documented AWS pattern for tracing.
       { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
@@ -210,19 +248,75 @@ resource "aws_lambda_function" "archiver" {
 }
 
 resource "aws_lambda_event_source_mapping" "archive" {
-  event_source_arn  = aws_dynamodb_table.trail.stream_arn
-  function_name     = aws_lambda_function.archiver.arn
-  starting_position = "LATEST"
-  batch_size        = 100
-  # Higher retry than the default (the other writers default to the SQS DLQ, but a
-  # DynamoDB Stream has no queue of its own) — losing an archiving batch to a
-  # transient failure would be worse than reprocessing 3x before giving up on the shard.
+  event_source_arn = aws_dynamodb_table.trail.stream_arn
+  function_name    = aws_lambda_function.archiver.arn
+  # AUD-NFR-001: TRIM_HORIZON (not LATEST) so events written between the table's creation
+  # and this mapping are archived too — LATEST silently skipped them. The archiver's
+  # PutObject is keyed by event date + event_id, so reprocessing the stream's window is
+  # idempotent.
+  starting_position      = "TRIM_HORIZON"
+  batch_size             = 100
   maximum_retry_attempts = 3
+  # AUD-NFR-001: a poison batch must land somewhere instead of being dropped after the
+  # retries and then TTL-deleted from the hot tier (permanent evidence loss). Bisect on
+  # error isolates the bad record so one malformed event cannot block a whole shard.
+  bisect_batch_on_function_error = true
+  destination_config {
+    on_failure {
+      destination_arn = aws_sqs_queue.archive_dlq.arn
+    }
+  }
+}
+
+# AUD-NFR-001: on-failure destination for the archiver stream. A record the archiver
+# cannot persist after its retries lands here for an operator to recover, rather than
+# vanishing when the hot-tier TTL expires.
+resource "aws_sqs_queue" "archive_dlq" {
+  name                      = "${local.name}-archive-dlq"
+  message_retention_seconds = 1209600 # 14 days
+  sqs_managed_sse_enabled   = true
+}
+
+resource "aws_sqs_queue_policy" "archive_dlq" {
+  queue_url = aws_sqs_queue.archive_dlq.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sqs:SendMessage"
+      Resource  = aws_sqs_queue.archive_dlq.arn
+    }]
+  })
 }
 
 # ========================= Bus + ingestion queue ============================
 resource "aws_cloudwatch_event_bus" "audit" {
   name = "${local.name}-events"
+}
+
+# AUD-SEC-002: restrict PutEvents on the audit bus to the two legitimate publishers — the
+# governance config-api and the core keyadmin roles — so an in-account principal that
+# happens to hold events:PutEvents cannot forge trail entries. Scoped by the publisher role
+# ARNs; within the same account the identity policy still applies, this is the second gate.
+resource "aws_cloudwatch_event_bus_policy" "audit" {
+  event_bus_name = aws_cloudwatch_event_bus.audit.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowGovernanceAndKeyadminPublishersOnly"
+      Effect    = "Allow"
+      Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+      Action    = "events:PutEvents"
+      Resource  = aws_cloudwatch_event_bus.audit.arn
+      Condition = {
+        ArnLike = { "aws:PrincipalArn" = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-${var.environment}-gov-config-api",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-${var.environment}-inf-keyadmin",
+        ] }
+      }
+    }]
+  })
 }
 
 # Encryption at rest with SSE-SQS (AWS-managed key). This queue carries the audit
@@ -355,7 +449,8 @@ resource "aws_iam_role_policy" "api" {
         aws_dynamodb_table.trail.arn,
         "${aws_dynamodb_table.trail.arn}/index/*",
       ] },
-      { Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = "arn:aws:dynamodb:${var.region}:${data.aws_caller_identity.current.account_id}:table/${local.config_table}" },
+      # AUD-IAC-001: the GetItem on the governance config table was removed — audit-api
+      # never reads it (grep CONFIG_TABLE in cmd/audit-api → none). Least privilege.
       # X-Ray requires Resource = "*": trace segments are not addressable
       # resources, so this is the documented AWS pattern for tracing.
       { Effect = "Allow", Action = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"], Resource = "*" },
@@ -461,13 +556,19 @@ resource "aws_api_gateway_integration" "proxy_options" {
 resource "aws_api_gateway_deployment" "audit" {
   rest_api_id = aws_api_gateway_rest_api.audit.id
   triggers = {
+    # XC-IAC-001: hash the security/behaviour ATTRIBUTES, not just resource ids, so an
+    # authorizer/authorization/uri/timeout change actually replaces the deployment.
     redeployment = sha1(jsonencode([
       aws_api_gateway_resource.proxy.id,
       aws_api_gateway_method.proxy_any.id,
-      aws_api_gateway_integration.proxy_any.id,
+      aws_api_gateway_method.proxy_any.authorization,
+      aws_api_gateway_integration.proxy_any.uri,
+      aws_api_gateway_integration.proxy_any.timeout_milliseconds,
       aws_api_gateway_method.proxy_options.id,
       aws_api_gateway_integration.proxy_options.id,
       aws_api_gateway_authorizer.cognito.id,
+      aws_api_gateway_authorizer.cognito.provider_arns,
+      aws_api_gateway_authorizer.cognito.authorizer_uri,
     ]))
   }
   lifecycle {
@@ -620,3 +721,19 @@ output "audit_bus_arn" { value = aws_cloudwatch_event_bus.audit.arn }
 output "trail_table" { value = aws_dynamodb_table.trail.name }
 output "ingest_dlq_url" { value = aws_sqs_queue.dlq.id }
 output "archive_bucket" { value = aws_s3_bucket.archive.id }
+
+# XC-IAC-004: managed Lambda log groups with retention (auto-created groups keep logs
+# forever). Names match the functions' default groups. Existing deployments import these
+# once; orphan groups from removed Lambdas are deleted by hand (out of Terraform).
+resource "aws_cloudwatch_log_group" "archiver" {
+  name              = "/aws/lambda/${local.name}-archiver"
+  retention_in_days = 90
+}
+resource "aws_cloudwatch_log_group" "writer_logs" {
+  name              = "/aws/lambda/${local.name}-writer"
+  retention_in_days = 90
+}
+resource "aws_cloudwatch_log_group" "api_logs" {
+  name              = "/aws/lambda/${local.name}-api"
+  retention_in_days = 90
+}

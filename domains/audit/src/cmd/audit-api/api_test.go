@@ -168,3 +168,26 @@ func TestAPI_NaoExisteRotaDeEscrita(t *testing.T) {
 		t.Error("the API should not create records")
 	}
 }
+
+// AUD-SEC-001: CSV cells beginning with a formula lead-in are quoted so a spreadsheet
+// renders them as text instead of evaluating them.
+func TestCsvSafe(t *testing.T) {
+	danger := map[string]string{
+		`=HYPERLINK("https://evil","x")`: `'=HYPERLINK("https://evil","x")`,
+		"+1+1":                           "'+1+1",
+		"-2+3":                           "'-2+3",
+		"@SUM(A1)":                       "'@SUM(A1)",
+		"\tTAB":                          "'\tTAB",
+		"\rCR":                           "'\rCR",
+	}
+	for in, want := range danger {
+		if got := csvSafe(in); got != want {
+			t.Errorf("csvSafe(%q)=%q want %q", in, got, want)
+		}
+	}
+	for _, safe := range []string{"", "alice@x.com is fine", "ORG#X#TEAM#y", "rate: 5 -> 10"} {
+		if got := csvSafe(safe); got != safe {
+			t.Errorf("csvSafe(%q) altered a safe cell to %q", safe, got)
+		}
+	}
+}
