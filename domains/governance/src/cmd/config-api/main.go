@@ -1238,6 +1238,54 @@ func validateProviderHost(rawURL string) error {
 	return nil
 }
 
+// validateWebhookURL is the write-time SSRF guard on an alert webhook (OBS-SEC-001):
+// https only, host must not be (or resolve to) a loopback/private/link-local/unspecified
+// address. The observability alert-notifier applies the identical rule at delivery time;
+// a domain does not import another domain, so the shared contract is the rule, not the
+// code. Rejecting at write time stops a bad URL from ever being stored.
+func validateWebhookURL(rawURL string) error {
+	u, err := neturl.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return errors.New("invalid webhook_url")
+	}
+	if u.Scheme != "https" {
+		return errors.New("webhook_url must use https")
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return errors.New("webhook_url host is not allowed")
+	}
+	var ips []net.IP
+	if ip := net.ParseIP(host); ip != nil {
+		ips = []net.IP{ip}
+	} else {
+		addrs, lerr := net.LookupIP(host)
+		if lerr != nil {
+			return errors.New("webhook_url host does not resolve")
+		}
+		ips = addrs
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return errors.New("webhook_url resolves to a private or loopback address")
+		}
+	}
+	return nil
+}
+
+// webhookURLFromConfig extracts alerts.webhook_url from a config body, returning "" when
+// the write does not touch it (so an unrelated PUT is not forced to re-validate).
+func webhookURLFromConfig(cfg map[string]interface{}) string {
+	alerts, ok := cfg["alerts"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	if w, ok := alerts["webhook_url"].(string); ok {
+		return strings.TrimSpace(w)
+	}
+	return ""
+}
+
 // baseURLDeclaredIn is the pure comparison orgDeclaresBaseURL applies to a routing map —
 // split out so the matching rule (case-insensitive, trailing slash ignored) is testable
 // without DynamoDB.
@@ -1700,6 +1748,15 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		for k := range cfg {
 			if strings.HasPrefix(k, "_") {
 				delete(cfg, k)
+			}
+		}
+		// OBS-SEC-001: validate an alert webhook URL at write time so an SSRF target
+		// (non-https, or a host resolving to a private/loopback/link-local address) can
+		// never be stored. The alert-notifier also checks at delivery; this stops it at
+		// the source. Only runs when the write actually sets alerts.webhook_url.
+		if wh := webhookURLFromConfig(cfg); wh != "" {
+			if err := validateWebhookURL(wh); err != nil {
+				return resp(400, map[string]string{"error": "invalid_webhook_url", "message": err.Error()}, origin)
 			}
 		}
 		// GOV-SEC-001: the team/app in the write target must exist in the org

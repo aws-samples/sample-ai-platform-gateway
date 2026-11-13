@@ -119,3 +119,29 @@ func TestAuditClassifyModelScoped(t *testing.T) {
 		t.Errorf("new model: got %q want %q", got, audModelAdd)
 	}
 }
+
+// OBS-SEC-001: config-api rejects an SSRF alert webhook at write time and accepts a
+// public https one; webhookURLFromConfig only fires when the write sets it.
+func TestValidateWebhookURL_ConfigAPI(t *testing.T) {
+	for _, u := range []string{
+		"http://example.com/hook",
+		"https://169.254.169.254/latest/meta-data/",
+		"https://127.0.0.1/x",
+		"https://10.1.2.3/x",
+		"https://localhost/x",
+	} {
+		if err := validateWebhookURL(u); err == nil {
+			t.Errorf("expected %q rejected", u)
+		}
+	}
+	if err := validateWebhookURL("https://example.com/hook"); err != nil {
+		t.Errorf("expected public https to pass, got %v", err)
+	}
+	if got := webhookURLFromConfig(map[string]interface{}{"budget": 1}); got != "" {
+		t.Errorf("no alerts block should yield empty, got %q", got)
+	}
+	cfg := map[string]interface{}{"alerts": map[string]interface{}{"webhook_url": "https://example.com/h"}}
+	if got := webhookURLFromConfig(cfg); got != "https://example.com/h" {
+		t.Errorf("expected webhook extracted, got %q", got)
+	}
+}
