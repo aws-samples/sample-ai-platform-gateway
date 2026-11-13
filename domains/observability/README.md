@@ -23,10 +23,17 @@ observability/
 
 ## Cost-correlation layer + ROI ledger (the differentiator)
 `GET /usage/summary?from=<iso>&to=<iso>&bucket=day|hour` (authenticated with a Cognito ID token: `Authorization: Bearer <token>`) returns, from the real Cost_Store data, the **unified across-LLMs** view:
-- `totals` — cost, **saved_usd**, **gross_usd**, **saved_pct** (ROI), requests, tokens, cache hits, average latency
+- `totals` — cost, **saved_usd**, **gross_usd**, and two ROI percentages (see below), requests, tokens, cache hits, average latency
 - `by_provider`, `by_model`, `by_app`, `by_feature` — breakdown ordered by cost
 - `savings_by_reason` — savings by reason (`auto_cheapest`, `fallback`, `cache`)
 - `series` — cost/requests per day or hour
+
+**How `saved_pct` is reported (see the root README "How savings are counted").** The headline
+**`saved_pct` is verified-only** — it is `saved_verified_usd / (cost + saved_verified)`, the share
+backed by observable, counterfactual-free savings (cache / provider prompt cache). The blended
+figure (verified **plus** counterfactual model-swap savings) is reported separately as
+**`saved_blended_pct`**, and `saved_verified_pct` remains available. The two are never collapsed
+into one flattering number.
 
 The Usage_Record carries `feature`, `saved_usd`, and `savings_reason` (produced by the gateway): savings are measured per request (cost of the requested model − cost of the model actually used; plus cost avoided by the cache) and aggregated here as an auditable ledger.
 

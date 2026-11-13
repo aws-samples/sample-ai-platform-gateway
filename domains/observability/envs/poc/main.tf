@@ -57,5 +57,4 @@ module "domain" {
 output "usage_queue_url" { value = module.domain.usage_queue_url }
 output "usage_queue_arn" { value = module.domain.usage_queue_arn }
 output "cost_store_table" { value = module.domain.cost_store_table }
-output "event_bus_name" { value = module.domain.event_bus_name }
 output "usage_api_endpoint" { value = module.domain.usage_api_endpoint }

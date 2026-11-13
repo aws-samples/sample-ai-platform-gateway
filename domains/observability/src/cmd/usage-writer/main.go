@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -315,29 +316,49 @@ func buildItem(u usage) map[string]ddbtypes.AttributeValue {
 	return item
 }
 
-func handle(ctx context.Context, e events.SQSEvent) error {
+// putFn is the Cost_Store write, indirected behind a package variable so handle's
+// partial-batch logic can be unit-tested (OBS-NFR-001) without a live table. The
+// default binds the real DynamoDB client; a test swaps it.
+var putFn = func(ctx context.Context, item map[string]ddbtypes.AttributeValue) error {
+	_, err := ddb.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           &table,
+		Item:                item,
+		ConditionExpression: awsString("attribute_not_exists(sk)"),
+	})
+	return err
+}
+
+// handle processes an SQS batch with PARTIAL-batch failure reporting (OBS-NFR-001).
+// The function source mapping is configured with ReportBatchItemFailures, so only the
+// MessageIds returned here are retried; the rest are deleted from the queue. Before
+// this, any non-conditional DynamoDB error returned the whole batch, re-driving every
+// good record (idempotency prevents double counting but still costs the extra writes),
+// and a malformed record was dropped with no trace.
+func handle(ctx context.Context, e events.SQSEvent) (events.SQSEventResponse, error) {
+	var failures []events.SQSBatchItemFailure
 	for _, rec := range e.Records {
 		var u usage
 		if err := json.Unmarshal([]byte(rec.Body), &u); err != nil {
-			continue // a malformed record must not stall the batch
+			// A malformed record cannot be retried into validity. Log its MessageId
+			// (never the body — it may carry customer data) and drop it from the batch
+			// so it does not re-drive every good record forever.
+			log.Printf(`{"event":"usage_writer_decode_failed","message_id":%q,"error":%q}`, rec.MessageId, err.Error())
+			continue
 		}
-		item := buildItem(u)
 		// Idempotency: pk+sk already embeds ts+request_id. If the message is
 		// reprocessed (retry/DLQ), the item already exists and we do not double count.
-		_, err := ddb.PutItem(ctx, &dynamodb.PutItemInput{
-			TableName:           &table,
-			Item:                item,
-			ConditionExpression: awsString("attribute_not_exists(sk)"),
-		})
-		if err != nil {
+		if err := putFn(ctx, buildItem(u)); err != nil {
 			var ccf *ddbtypes.ConditionalCheckFailedException
 			if errors.As(err, &ccf) {
 				continue // already written before → ignore (idempotent)
 			}
-			return err // real error → message goes back to the queue / DLQ
+			// Report ONLY this record as failed, so a single throttled/failing item is
+			// retried in isolation instead of re-driving the whole batch.
+			log.Printf(`{"event":"usage_writer_put_failed","message_id":%q,"request_id":%q,"error":%q}`, rec.MessageId, u.RequestID, err.Error())
+			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: rec.MessageId})
 		}
 	}
-	return nil
+	return events.SQSEventResponse{BatchItemFailures: failures}, nil
 }
 
 func awsString(s string) *string { return &s }

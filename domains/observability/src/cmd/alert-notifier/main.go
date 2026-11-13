@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -38,8 +40,45 @@ var (
 	ddb       *dynamodb.Client
 	costTable = os.Getenv("COST_STORE_TABLE")
 	cfgTable  = os.Getenv("CONFIG_TABLE")
-	httpc     = &http.Client{Timeout: 8 * time.Second}
+	// OBS-SEC-001: refuse redirects. Without CheckRedirect a validated https host
+	// could 302 to http://169.254.169.254/… and the client would follow it, defeating
+	// the SSRF guard. ErrUseLastResponse stops at the first response.
+	httpc = &http.Client{
+		Timeout:       8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 )
+
+// validateWebhookURL is the SSRF guard on a customer-supplied alert webhook
+// (OBS-SEC-001): https only, and the host must not resolve to a loopback, private,
+// link-local or unspecified address (which would let a config write POST to
+// 169.254.169.254 or an internal service). The same rule runs at write time in the
+// governance config-api; this is the delivery-time check, since a config may predate
+// validation. Kept deliberately identical in both places (a domain does not import
+// another domain) — the shared contract is the rule, not the code.
+func validateWebhookURL(raw string) error {
+	u, err := neturl.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("invalid URL")
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("webhook must use https")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("webhook has no host")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("webhook host does not resolve")
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("webhook host resolves to a non-routable address")
+		}
+	}
+	return nil
+}
 
 // rule describes how to evaluate each config.alerts key.
 // cmp ">=" fires when value >= threshold; "<" when value < threshold.
@@ -132,6 +171,10 @@ func metrics(ctx context.Context, org string) map[string]float64 {
 			ExclusiveStartKey: lek,
 		})
 		if err != nil {
+			// OBS-NFR-003: a query failure mid-aggregation used to be swallowed, so a
+			// partial month silently under-counted cost/cache. Log it (the metrics for
+			// this org this tick are not trustworthy) and stop.
+			log.Printf(`{"event":"alert_metrics_query_failed","org":%q,"error":%q}`, org, err.Error())
 			break
 		}
 		for _, it := range out.Items {
@@ -151,12 +194,21 @@ func metrics(ctx context.Context, org string) map[string]float64 {
 		}
 		lek = out.LastEvaluatedKey
 	}
-	if reqs > 0 {
+	if reqs >= cacheMinReqs {
 		m["avg_latency_ms"] = latSum / reqs
 		m["cache_pct"] = cacheHits / reqs * 100
+	} else {
+		// OBS-NFR-003: below a minimum request count the cache ratio is noise. Return
+		// the -1 "insufficient data" sentinel so the `cache_below` rule does not fire a
+		// daily "Low cache" alert on an idle org (0 < threshold would otherwise fire).
+		m["cache_pct"] = -1
 	}
 	return m
 }
+
+// cacheMinReqs is the minimum served requests in the month before the cache ratio is
+// trustworthy enough to drive the `cache_below` alert.
+const cacheMinReqs = 5
 
 // errorRateRecent computes the error % over the last hour (the real monitoring
 // window, not the month). Returns -1 when there is not enough traffic (< minReqs),
@@ -179,11 +231,22 @@ func errWindowRange(ctx context.Context, org, fromISO, toISO string) (errs, tota
 			ExclusiveStartKey: lek,
 		})
 		if err != nil {
+			// OBS-NFR-003: do not silently return a partial count — a half-read window
+			// understates the error rate and would mask a real burn.
+			log.Printf(`{"event":"alert_errwindow_query_failed","org":%q,"from":%q,"to":%q,"error":%q}`, org, fromISO, toISO, err.Error())
 			break
 		}
 		for _, it := range out.Items {
 			st := str(it["status"])
 			if st == "blocked" {
+				continue
+			}
+			isSuccess := st == "" || st == "success"
+			// OBS-NFR-003: mirror telemetry.SLI eligibility (eligible = success OR
+			// sli_eligible). A failure that does not count against us — a client typo or
+			// a provider-quota refusal (sli_eligible=false) — must not enter the error
+			// rate / burn rate, or a customer's bad requests would drain the budget.
+			if !isSuccess && !boolOf(it["sli_eligible"]) {
 				continue
 			}
 			total++
@@ -235,6 +298,9 @@ func providerQuotaRecent(ctx context.Context, org string) float64 {
 			ExclusiveStartKey: lek,
 		})
 		if err != nil {
+			// OBS-NFR-003: log rather than swallow — a partial read undercounts the
+			// capacity signal.
+			log.Printf(`{"event":"alert_quota_query_failed","org":%q,"error":%q}`, org, err.Error())
 			break
 		}
 		for _, it := range out.Items {
@@ -461,6 +527,12 @@ func handle(ctx context.Context) (map[string]interface{}, error) {
 		if ac.WebhookURL == "" {
 			continue // no channel, nothing to deliver
 		}
+		// OBS-SEC-001: refuse to deliver to a webhook that fails the SSRF guard
+		// (non-https, or a host resolving to a private/loopback/link-local address).
+		if err := validateWebhookURL(ac.WebhookURL); err != nil {
+			log.Printf(`{"event":"alert_webhook_rejected","org":%q,"host":%q,"error":%q}`, org, hostOf(ac.WebhookURL), err.Error())
+			continue
+		}
 		burnOn := false
 		if rc, ok := ac.Rules["slo_burn"]; ok && rc.On {
 			burnOn = true
@@ -537,6 +609,12 @@ func handle(ctx context.Context) (map[string]interface{}, error) {
 			}
 			evaluated++
 			val := mvals[r.metric]
+			// OBS-NFR-003: -1 is the "insufficient data" sentinel (cache_pct/error_rate
+			// below the minimum request count). Skip rather than fire on noise — with a
+			// "<" comparator, -1 would otherwise always trip cache_below.
+			if val < 0 {
+				continue
+			}
 			if !fires(r.cmp, val, rc.Threshold) {
 				continue
 			}

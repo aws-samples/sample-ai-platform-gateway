@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"os"
 	"sort"
 	"strconv"
@@ -264,7 +265,10 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		}
 		items, err := queryAlertLog(ctx, now.AddDate(0, 0, -days).Format(time.RFC3339), limit)
 		if err != nil {
-			return resp(reqOrigin, 500, map[string]string{"error": err.Error()})
+			// OBS-NFR-004: the DynamoDB error (table name/ARN) stays in the log; the
+			// console user gets a generic message.
+			log.Printf(`{"event":"usage_api_query_failed","route":"usage/alerts","error":%q}`, err.Error())
+			return resp(reqOrigin, 500, map[string]string{"error": "failed to query alert history"})
 		}
 		return resp(reqOrigin, 200, map[string]interface{}{"alerts": items, "count": len(items)})
 	}
@@ -276,6 +280,21 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	to := q["to"]
 	if to == "" {
 		to = now.Format(time.RFC3339)
+	}
+	// OBS-NFR-002: from/to are interpolated straight into the sort-key range
+	// ("TS#"+from … "TS#"+to+"~"), and the store loops LastEvaluatedKey to exhaustion.
+	// An unvalidated from=0&to=~ would read the whole 120-day partition. Require
+	// RFC3339 and clamp the span to 90 days (the UI's longest period).
+	fromT, ferr := time.Parse(time.RFC3339, from)
+	toT, terr := time.Parse(time.RFC3339, to)
+	if ferr != nil || terr != nil {
+		return resp(reqOrigin, 400, map[string]string{"error": "from/to must be RFC3339 timestamps"})
+	}
+	if !toT.After(fromT) {
+		return resp(reqOrigin, 400, map[string]string{"error": "to must be after from"})
+	}
+	if toT.Sub(fromT) > 90*24*time.Hour {
+		return resp(reqOrigin, 400, map[string]string{"error": "range too large (max 90 days)"})
 	}
 	bucket := q["bucket"]
 	if bucket != "hour" {
@@ -307,7 +326,9 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		recs, err = costStore.Query(ctx, from, to)
 	}
 	if err != nil {
-		return resp(reqOrigin, 500, map[string]string{"error": err.Error()})
+		// OBS-NFR-004: log the DynamoDB detail, return a generic body.
+		log.Printf(`{"event":"usage_api_query_failed","route":"usage","error":%q}`, err.Error())
+		return resp(reqOrigin, 500, map[string]string{"error": "failed to query usage"})
 	}
 	// The choke point of per-team enforcement: it filters the records down to the
 	// claim's team BEFORE any aggregation — covering summary, records and sli at once.
@@ -420,9 +441,14 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	avgLat := telemetry.AvgLatencySync(recs)
 	// ROI: savings over the gross cost (the cost that would have been paid without the gateway).
 	gross := total.CostUSD + total.SavedUSD
-	savedPct := 0.0
+	// OBS-FIN-001: the HEADLINE saved_pct is verified-only (cache: same model,
+	// observable avoided cost). A stakeholder quotes one number, and it must not blend
+	// in counterfactual, assumed savings. The blended figure is still exposed, clearly
+	// labelled as saved_blended_pct, for anyone who wants the full picture.
+	savedVerifiedPct := pctOf(total.SavedVer, total.CostUSD+total.SavedVer)
+	savedBlendedPct := 0.0
 	if gross > 0 {
-		savedPct = total.SavedUSD / gross * 100
+		savedBlendedPct = total.SavedUSD / gross * 100
 	}
 
 	// Savings ledger, only for the records with attributed savings.
@@ -446,9 +472,12 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			// REQUESTED model — real money, but only valid if the request was a real intent.
 			"saved_verified_usd":       total.SavedVer,
 			"saved_counterfactual_usd": total.SavedCf,
-			"saved_verified_pct":       pctOf(total.SavedVer, total.CostUSD+total.SavedVer),
+			"saved_verified_pct":       savedVerifiedPct,
 			"gross_usd":                gross,
-			"saved_pct":                savedPct,
+			// saved_pct is verified-only (OBS-FIN-001); saved_blended_pct carries the
+			// verified+counterfactual blend the ROI cards used to read as the headline.
+			"saved_pct":         savedVerifiedPct,
+			"saved_blended_pct": savedBlendedPct,
 			// Split of `cost_usd` by pocket. It is NOT savings: burned credit is
 			// consumed balance. The ledger shows it separately precisely so proven
 			// savings are not inflated with money the customer already had.

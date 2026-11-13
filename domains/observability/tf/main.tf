@@ -127,10 +127,7 @@ resource "aws_sqs_queue" "usage" {
   sqs_managed_sse_enabled    = true
 }
 
-# --- FinOps event bus ---
-resource "aws_cloudwatch_event_bus" "finops" {
-  name = "${local.name}-finops"
-}
+# OBS-ARC-001: the FinOps EventBridge bus had no producer and no consumer — removed.
 
 # --- usage-writer (Go) ---
 resource "aws_iam_role" "writer" {
@@ -175,6 +172,26 @@ resource "aws_lambda_event_source_mapping" "usage" {
   event_source_arn = aws_sqs_queue.usage.arn
   function_name    = aws_lambda_function.writer.arn
   batch_size       = 10
+  # OBS-NFR-001: partial-batch responses. Without this, one failing record returns
+  # the whole batch and re-drives every good record; the writer now returns only the
+  # MessageIds that failed and SQS retries just those.
+  function_response_types = ["ReportBatchItemFailures"]
+}
+
+# OBS-NFR-001: DLQ growth was invisible. Alarm when any message lands in the usage
+# DLQ — a non-zero depth means records exhausted maxReceiveCount and need a look.
+resource "aws_cloudwatch_metric_alarm" "usage_dlq_depth" {
+  alarm_name          = "${local.name}-usage-dlq-not-empty"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.dlq.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Usage-writer DLQ has messages: records failed after maxReceiveCount retries."
 }
 
 # --- usage-api (Go): unified cost correlation layer (read/aggregation) ---
@@ -622,11 +639,10 @@ data "aws_caller_identity" "current" {}
 output "usage_queue_url" { value = aws_sqs_queue.usage.url }
 output "usage_queue_arn" { value = aws_sqs_queue.usage.arn }
 output "cost_store_table" { value = aws_dynamodb_table.cost_store.name }
-output "event_bus_name" { value = aws_cloudwatch_event_bus.finops.name }
 output "usage_api_endpoint" { value = aws_api_gateway_stage.usage.invoke_url }
 
 # --- Environment Contract (SSM): observability publishes usage_api_url ---
-# Table/queue/DLQ/bus names do NOT go to SSM — they are derived from the convention.
+# Table/queue/DLQ names do NOT go to SSM — they are derived from the convention.
 resource "aws_ssm_parameter" "usage_api_url" {
   name  = "${local.ssm_root}/observability/usage_api_url"
   type  = "String"
