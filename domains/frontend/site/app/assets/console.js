@@ -889,6 +889,38 @@ const I18N={
     'your role cannot list provider models (owner/admin only)':'seu papel não pode listar modelos do provedor (só owner/admin)',
     'base_url must match a base_url already saved on one of this org\'s routes':'base_url precisa corresponder a um base_url já salvo em uma das rotas desta org',
     'your role cannot view the org credit':'seu papel não pode ver o crédito da org',
+    // FE-UX-004: backend error messages (the English string is the key)
+    'could not list models for that role':'não foi possível listar modelos para esse papel',
+    'failed to query alert history':'falha ao consultar o histórico de alertas',
+    'failed to query usage':'falha ao consultar o uso',
+    'from/to must be RFC3339 timestamps':'from/to devem ser timestamps RFC3339',
+    'invalid_webhook_url':'webhook_url inválido',
+    'only an owner can grant the owner role':'apenas um owner pode conceder o papel de owner',
+    'range too large (max 90 days)':'intervalo grande demais (máx. 90 dias)',
+    'role_arn must be an AIPlatGatewayAccess role already configured on one of this org\'s routes':'role_arn precisa ser um papel AIPlatGatewayAccess já configurado em uma das rotas desta org',
+    'scope_widening':'ampliação de escopo',
+    'to must be after from':'to precisa ser depois de from',
+    'unknown_app':'app desconhecido',
+    'unknown_team':'time desconhecido',
+    'your role cannot list Bedrock models (owner/admin only)':'seu papel não pode listar modelos do Bedrock (só owner/admin)',
+    'your role is limited to a team or app, but your token carries no team/app scope':'seu papel está limitado a um time ou app, mas seu token não carrega escopo de time/app',
+    'view only':'somente leitura',
+    // FE-UX-003: status-based error fallbacks
+    'Your session is not valid. Please sign in again.':'Sua sessão não é válida. Entre novamente.',
+    'You do not have permission to do that.':'Você não tem permissão para fazer isso.',
+    'Too many requests or a limit was reached. Try again shortly.':'Muitas requisições ou um limite foi atingido. Tente de novo em instantes.',
+    'The upstream service failed. Try again.':'O serviço de upstream falhou. Tente de novo.',
+    'The service is temporarily unavailable. Try again.':'O serviço está temporariamente indisponível. Tente de novo.',
+    'Request failed':'A requisição falhou',
+    'No data for this period yet.':'Ainda não há dados para este período.',
+    // FE-UX-001: sign-in challenge messages
+    'could not complete sign-in':'não foi possível concluir o login',
+    'Email verification is not supported by this console. Use an authenticator app (TOTP).':'A verificação por e-mail não é suportada por este console. Use um app autenticador (TOTP).',
+    'SMS verification is not supported by this console. Use an authenticator app (TOTP).':'A verificação por SMS não é suportada por este console. Use um app autenticador (TOTP).',
+    'Social sign-in failed: invalid state (possible CSRF). Please try again.':'Falha no login social: state inválido (possível CSRF). Tente novamente.',
+    'This account must enrol an authenticator app before signing in. Ask your administrator to enable first sign-in (the demo runs with optional MFA), then set up 2FA under Settings.':'Esta conta precisa cadastrar um app autenticador antes de entrar. Peça ao administrador para habilitar o primeiro login (a demo roda com MFA opcional) e configure o 2FA em Configurações.',
+    'This account requires a custom sign-in challenge that this console does not implement. Contact your administrator.':'Esta conta exige um desafio de login personalizado que este console não implementa. Contate seu administrador.',
+    'Your account has more than one MFA method; selecting one at sign-in is not supported here. Use your authenticator app.':'Sua conta tem mais de um método de MFA; selecionar um no login não é suportado aqui. Use seu app autenticador.',
   },
   es:{
     'Overview':'Visión general', 'the pulse of your account at a glance':'el pulso de tu cuenta de un vistazo',
@@ -1734,6 +1766,38 @@ const I18N={
     'your role cannot list provider models (owner/admin only)':'tu rol no puede listar modelos del proveedor (solo owner/admin)',
     'base_url must match a base_url already saved on one of this org\'s routes':'base_url debe coincidir con un base_url ya guardado en una de las rutas de esta organización',
     'your role cannot view the org credit':'tu rol no puede ver el crédito de la organización',
+    // FE-UX-004: backend error messages (the English string is the key)
+    'could not list models for that role':'no se pudieron listar modelos para ese rol',
+    'failed to query alert history':'no se pudo consultar el historial de alertas',
+    'failed to query usage':'no se pudo consultar el uso',
+    'from/to must be RFC3339 timestamps':'from/to deben ser marcas de tiempo RFC3339',
+    'invalid_webhook_url':'webhook_url no válido',
+    'only an owner can grant the owner role':'solo un owner puede otorgar el rol de owner',
+    'range too large (max 90 days)':'rango demasiado grande (máx. 90 días)',
+    'role_arn must be an AIPlatGatewayAccess role already configured on one of this org\'s routes':'role_arn debe ser un rol AIPlatGatewayAccess ya configurado en una de las rutas de esta organización',
+    'scope_widening':'ampliación de alcance',
+    'to must be after from':'to debe ser posterior a from',
+    'unknown_app':'app desconocida',
+    'unknown_team':'equipo desconocido',
+    'your role cannot list Bedrock models (owner/admin only)':'tu rol no puede listar modelos de Bedrock (solo owner/admin)',
+    'your role is limited to a team or app, but your token carries no team/app scope':'tu rol está limitado a un equipo o app, pero tu token no lleva alcance de equipo/app',
+    'view only':'solo lectura',
+    // FE-UX-003: status-based error fallbacks
+    'Your session is not valid. Please sign in again.':'Tu sesión no es válida. Inicia sesión de nuevo.',
+    'You do not have permission to do that.':'No tienes permiso para hacer eso.',
+    'Too many requests or a limit was reached. Try again shortly.':'Demasiadas solicitudes o se alcanzó un límite. Inténtalo en unos instantes.',
+    'The upstream service failed. Try again.':'El servicio upstream falló. Inténtalo de nuevo.',
+    'The service is temporarily unavailable. Try again.':'El servicio no está disponible temporalmente. Inténtalo de nuevo.',
+    'Request failed':'La solicitud falló',
+    'No data for this period yet.':'Aún no hay datos para este período.',
+    // FE-UX-001: sign-in challenge messages
+    'could not complete sign-in':'no se pudo completar el inicio de sesión',
+    'Email verification is not supported by this console. Use an authenticator app (TOTP).':'La verificación por correo no es compatible con esta consola. Usa una app de autenticación (TOTP).',
+    'SMS verification is not supported by this console. Use an authenticator app (TOTP).':'La verificación por SMS no es compatible con esta consola. Usa una app de autenticación (TOTP).',
+    'Social sign-in failed: invalid state (possible CSRF). Please try again.':'Error de inicio de sesión social: state no válido (posible CSRF). Inténtalo de nuevo.',
+    'This account must enrol an authenticator app before signing in. Ask your administrator to enable first sign-in (the demo runs with optional MFA), then set up 2FA under Settings.':'Esta cuenta debe registrar una app de autenticación antes de iniciar sesión. Pide a tu administrador que habilite el primer inicio (la demo usa MFA opcional) y configura 2FA en Ajustes.',
+    'This account requires a custom sign-in challenge that this console does not implement. Contact your administrator.':'Esta cuenta requiere un desafío de inicio personalizado que esta consola no implementa. Contacta a tu administrador.',
+    'Your account has more than one MFA method; selecting one at sign-in is not supported here. Use your authenticator app.':'Tu cuenta tiene más de un método MFA; seleccionar uno al iniciar sesión no es compatible aquí. Usa tu app de autenticación.',
   },
 };
 let LANG='en';
@@ -1822,12 +1886,42 @@ function setLang(l,persist){
 // `_terr(d,r)` inline. Translating at 26 places would guarantee
 // that the 27th forgets.
 function _terr(payload, response){
-  const raw=(payload&&payload.error)||'';
+  // FE-UX-003: read every error shape the stack produces — the gateway's
+  // {"error":{"message":…}}, governance/keyadmin's {"error":"<string>"}, and API
+  // Gateway's own {"message":…} — instead of only {"error":"<string>"}.
+  let raw='';
+  if(payload){
+    if(typeof payload.error==='string') raw=payload.error;
+    else if(payload.error&&typeof payload.error.message==='string') raw=payload.error.message;
+    else if(typeof payload.message==='string') raw=payload.message;
+  }
   if(raw) return _t(raw);
-  return 'HTTP '+((response&&response.status)||'?');
+  // No body: map the common statuses to human text rather than a bare "HTTP <code>".
+  const st=(response&&response.status)||0;
+  const byStatus={
+    401:'Your session is not valid. Please sign in again.',
+    403:'You do not have permission to do that.',
+    429:'Too many requests or a limit was reached. Try again shortly.',
+    502:'The upstream service failed. Try again.',
+    503:'The service is temporarily unavailable. Try again.',
+  };
+  if(byStatus[st]) return _t(byStatus[st]);
+  return st?('HTTP '+st):_t('Request failed');
 }
 
-const fmtUSD=(v,d=6)=>'$'+Number(v||0).toFixed(d);
+// FE-UX-004: money is formatted with Intl.NumberFormat in the user's locale and the
+// configured currency (CFG.currency, default USD), instead of a hard-coded '$' and dot
+// decimals. pt/es then see "US$ 1,23" with their own separators rather than "$1.230000".
+// `d` keeps the old minimum/maximum fraction-digit control so dense tables stay compact.
+const fmtUSD=(v,d=6)=>{
+  const cur=(typeof CFG!=='undefined'&&CFG&&CFG.currency)||'USD';
+  try{
+    return new Intl.NumberFormat(LOCALE_TAG[LANG]||'en-US',{style:'currency',currency:cur,minimumFractionDigits:Math.min(d,2),maximumFractionDigits:d}).format(Number(v||0));
+  }catch(e){
+    // An invalid currency code (bad config) must not blank the whole figure.
+    return (cur==='USD'?'$':cur+' ')+Number(v||0).toFixed(d);
+  }
+};
 // Number formatting follows the language: 1.234,56 in pt/es, 1,234.56 in en. It was
 // pinned to pt-BR, which would show the wrong separator to an English-speaking user.
 const fmtN=v=>Number(v||0).toLocaleString(LOCALE_TAG[LANG]||'en-US');
@@ -1910,6 +2004,10 @@ const auth = {
   // AccessToken: required by Cognito's self-service operations (MFA management).
   get accessToken(){ return localStorage.getItem('aiplat_at')||''; },
   set accessToken(v){ v?localStorage.setItem('aiplat_at',v):localStorage.removeItem('aiplat_at'); },
+  // FE-UX-002: the refresh token lets the console rotate an expiring Id/Access token
+  // without sending the user back to the login screen mid-task. Stored like the others.
+  get refreshToken(){ return localStorage.getItem('aiplat_rt')||''; },
+  set refreshToken(v){ v?localStorage.setItem('aiplat_rt',v):localStorage.removeItem('aiplat_rt'); },
   claims(){ const t=this.token; if(!t) return {};
     try{ const p=t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
       return JSON.parse(atob(p+'='.repeat((4-p.length%4)%4))); }catch(e){ return {}; } },
@@ -1929,9 +2027,43 @@ function orgQ(){ const o=orgParam(); return o?'org='+encodeURIComponent(o):''; }
 // the gateway key (playground) stays in the browser only.
 const gwKey = { get v(){ return localStorage.getItem('aiplat_gwkey')||''; }, set v(x){ localStorage.setItem('aiplat_gwkey',x); } };
 
+// FE-UX-002: refresh the Id/Access token using the stored refresh token (Cognito
+// REFRESH_TOKEN_AUTH). Returns true on success. De-duplicated via a shared promise so a
+// burst of parallel api() calls triggers a single refresh, not one per call.
+let _refreshing=null;
+async function refreshSession(){
+  if(!auth.refreshToken) return false;
+  if(_refreshing) return _refreshing;
+  _refreshing=(async()=>{
+    try{
+      const d=await cognitoCall('InitiateAuth',{AuthFlow:'REFRESH_TOKEN_AUTH',AuthParameters:{REFRESH_TOKEN:auth.refreshToken}});
+      const res=d.AuthenticationResult;
+      if(!res||!res.IdToken) return false;
+      auth.token=res.IdToken;
+      if(res.AccessToken) auth.accessToken=res.AccessToken;
+      // A refresh does NOT return a new refresh token (rotation off by default); keep the one we have.
+      return true;
+    }catch(e){ return false; }
+    finally{ _refreshing=null; }
+  })();
+  return _refreshing;
+}
+
+// expiringSoon: true within 60s of the Id token's exp, the window to rotate proactively.
+function expiringSoon(){ const c=auth.claims(); return !!c.exp && (c.exp*1000 - Date.now() < 60000); }
+
 async function api(base, path, opts){
-  const r = await fetch(base+path, Object.assign({headers:auth.headers(opts&&opts.body?{'content-type':'application/json'}:null)}, opts||{}));
-  if(r.status===401){ auth.token=''; requireLogin(); throw new Error(_t('session expired')); }
+  // FE-UX-002: rotate proactively when the token is about to expire, so a long-open
+  // console does not drop the NEXT click with "session expired".
+  if(auth.token && expiringSoon()){ await refreshSession(); }
+  let r = await fetch(base+path, Object.assign({headers:auth.headers(opts&&opts.body?{'content-type':'application/json'}:null)}, opts||{}));
+  if(r.status===401){
+    // A mid-work 401 tries one refresh before giving up, instead of kicking the user out.
+    if(await refreshSession()){
+      r = await fetch(base+path, Object.assign({headers:auth.headers(opts&&opts.body?{'content-type':'application/json'}:null)}, opts||{}));
+    }
+    if(r.status===401){ auth.token=''; auth.refreshToken=''; requireLogin(); throw new Error(_t('session expired')); }
+  }
   return r;
 }
 
@@ -1961,6 +2093,8 @@ function finishAuth(res){
   if(!tk) throw new Error(_t('response with no token'));
   auth.token=tk;
   if(res.AccessToken) auth.accessToken=res.AccessToken;
+  // FE-UX-002: keep the refresh token so the session can rotate (see refreshSession).
+  if(res.RefreshToken) auth.refreshToken=res.RefreshToken;
   _authPass=''; _authSession='';
   boot();
 }
@@ -1987,8 +2121,23 @@ async function handleAuthResponse(d){
     case 'NEW_PASSWORD_REQUIRED':
       $('#newpassWrap').classList.remove('hidden'); $('#npPass').focus();
       lgOk(_t('Your account requires a new password.')); break;
+    // FE-UX-001: the challenges below were all falling into the cryptic default
+    // ("could not authenticate (MFA_SETUP)"). Give each an actionable message instead of
+    // a raw challenge name. TOTP enrolment (MFA_SETUP) is self-service under Settings → 2FA
+    // once signed in; the public demo runs mfa_configuration=OPTIONAL precisely so first
+    // sign-in is not blocked before enrolment (see GOV-IAC-001 / the README).
+    case 'MFA_SETUP':
+      throw new Error(_t('This account must enrol an authenticator app before signing in. Ask your administrator to enable first sign-in (the demo runs with optional MFA), then set up 2FA under Settings.'));
+    case 'SELECT_MFA_TYPE':
+      throw new Error(_t('Your account has more than one MFA method; selecting one at sign-in is not supported here. Use your authenticator app.'));
+    case 'SMS_MFA':
+      throw new Error(_t('SMS verification is not supported by this console. Use an authenticator app (TOTP).'));
+    case 'EMAIL_OTP':
+      throw new Error(_t('Email verification is not supported by this console. Use an authenticator app (TOTP).'));
+    case 'CUSTOM_CHALLENGE':
+      throw new Error(_t('This account requires a custom sign-in challenge that this console does not implement. Contact your administrator.'));
     default:
-      throw new Error(d.message||_t('could not authenticate')+' ('+(d.ChallengeName||_t('no token'))+')');
+      throw new Error(d.message||(_t('could not complete sign-in')+' ('+(d.ChallengeName||_t('no token'))+')'));
   }
 }
 // Second factor at sign-in.
@@ -2088,11 +2237,20 @@ $('#rsConfirm')&&($('#rsConfirm').onclick=async()=>{
 $('#lgBtn').onclick=doLogin;
 $('#lgPass').addEventListener('keydown',e=>{ if(e.key==='Enter'){ doLogin(); }});
 $('#logout').onclick=()=>{
-  // Clears everything: JWT, gateway key and any session state
+  // FE-UX-002: revoke the session server-side (GlobalSignOut invalidates the refresh
+  // token across devices) before clearing local state. Best-effort and fire-and-forget:
+  // a network failure must not trap the user in a half-logged-out console.
+  const at=auth.accessToken;
+  if(at){ cognitoRaw('GlobalSignOut',{AccessToken:at}).catch(()=>{}); }
+  // Clears everything: JWT, access + refresh tokens, gateway key and any session state
   localStorage.removeItem('aiplat_jwt');
   localStorage.removeItem('aiplat_at');
+  localStorage.removeItem('aiplat_rt');
   localStorage.removeItem('aiplat_gwkey');
   sessionStorage.clear();
+  // FE-UX-002: reset in-memory state so a NEXT user on a shared browser does not inherit
+  // the previous user's loaded config and cached usage (same reset invalidate() does).
+  try{ invalidate(); }catch(e){}
   // Forces showing the login screen instead of reloading (avoids cache/race)
   $('#login').classList.remove('hidden');
   resetLoginState();
@@ -2117,12 +2275,17 @@ function renderSocial(){
   const wrap=$('#socialWrap'); if(!socialOn()){ wrap.classList.add('hidden'); return; }
   wrap.classList.remove('hidden');
   $('#socialBtns').innerHTML=API.social.map(p=>{ const m=SOCIAL_META[p]||{label:p,icon:'•'};
-    return `<button data-social="${p}" class="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-line text-sm hover:bg-panel2"><span class="font-semibold">${m.icon}</span>${esc(m.label)}</button>`;}).join('');
+    return `<button data-social="${esc(p)}" class="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-line text-sm hover:bg-panel2"><span class="font-semibold">${esc(m.icon)}</span>${esc(m.label)}</button>`;}).join('');
   $$('#socialBtns [data-social]').forEach(b=>b.onclick=()=>startSocial(b.dataset.social));
 }
 async function startSocial(provider){
   const {verifier,challenge}=await pkce();
   sessionStorage.setItem('aiplat_pkce',verifier);
+  // FE-UX-001: a `state` nonce binds the callback to THIS browser's request, so a link
+  // crafted by an attacker (login CSRF) with its own code cannot complete a sign-in in
+  // the victim's session. Verified on return in handleSocialCallback.
+  const state=b64url(crypto.getRandomValues(new Uint8Array(16)));
+  sessionStorage.setItem('aiplat_oauth_state',state);
   const u=new URL(API.cognito.domain+'/oauth2/authorize');
   u.searchParams.set('response_type','code');
   u.searchParams.set('client_id',API.cognito.clientId);
@@ -2131,12 +2294,23 @@ async function startSocial(provider){
   u.searchParams.set('identity_provider',provider);
   u.searchParams.set('code_challenge',challenge);
   u.searchParams.set('code_challenge_method','S256');
+  u.searchParams.set('state',state);
   location.assign(u.toString());
 }
 // Exchanges the ?code= for a token on the provider's return. Returns true if it handled a callback.
 async function handleSocialCallback(){
   const p=new URLSearchParams(location.search); const code=p.get('code');
   if(!code || !API.cognito || !API.cognito.domain) return false;
+  // FE-UX-001: reject a callback whose state does not match the one we issued (login CSRF).
+  const expState=sessionStorage.getItem('aiplat_oauth_state')||'';
+  const gotState=p.get('state')||'';
+  if(!expState || gotState!==expState){
+    sessionStorage.removeItem('aiplat_oauth_state');
+    history.replaceState({}, document.title, location.origin+location.pathname);
+    lgError(_t('Social sign-in failed: invalid state (possible CSRF). Please try again.'));
+    return true;
+  }
+  sessionStorage.removeItem('aiplat_oauth_state');
   const verifier=sessionStorage.getItem('aiplat_pkce')||'';
   try{
     const body=new URLSearchParams({grant_type:'authorization_code',client_id:API.cognito.clientId,
@@ -2771,6 +2945,9 @@ RENDER.usage=async function(){
     card(_t('Tokens'), fmtN(Number(t.tokens_in||0)+Number(t.tokens_out||0)), fmtN(t.tokens_in)+' in · '+fmtN(t.tokens_out)+' out')+
     card(_t('Average latency'), (t.avg_latency_ms||0)+' ms', _t('synchronous path only'));
   const s=d.series||[], labels=s.map(x=>x.key); let acc=0;
+  // FE-UX-003: an empty window drew blank cards and an empty chart with no explanation.
+  // Show a clear empty state instead (the cards above still render as zeros).
+  if(!s.length){ msg.classList.remove('hidden'); msg.textContent=_t('No data for this period yet.'); }
   const cum=s.map(x=>{acc+=Number(x.cost_usd||0);return Number(acc.toFixed(6));});
   // A line needs 2+ points to draw a visible segment; with a single bucket (e.g.
   // "today" right after the first request) pointRadius:0 leaves nothing on screen
@@ -2784,13 +2961,12 @@ RENDER.usage=async function(){
   dough('chTeam',d.by_team,'cost_usd'); dough('chApp',d.by_app,'cost_usd');
   const tb=$('#usageRows'); tb.innerHTML='';
   (d.by_provider||[]).forEach(r=>{const tr=document.createElement('tr');tr.className='border-t border-line';
-    tr.innerHTML=`<td class="py-1.5">${esc(r.key)}</td><td>${r.requests}</td><td class="text-mut">${fmtN(Number(r.tokens_in||0)+Number(r.tokens_out||0))}</td><td class="text-brand">${fmtUSD(r.cost_usd)}</td><td class="text-brand">${fmtUSD(r.saved_usd,4)}</td><td>${r.cache_hits||0}</td>`;
+    tr.innerHTML=`<td class="py-1.5">${esc(r.key)}</td><td>${esc(r.requests)}</td><td class="text-mut">${fmtN(Number(r.tokens_in||0)+Number(r.tokens_out||0))}</td><td class="text-brand">${fmtUSD(r.cost_usd)}</td><td class="text-brand">${fmtUSD(r.saved_usd,4)}</td><td>${esc(r.cache_hits||0)}</td>`;
     tb.appendChild(tr);});
-  // team selector (progressive disclosure)
-  const teams=(d.by_team||[]).map(x=>x.key).filter(Boolean);
-  const wrap=$('#uTeamWrap'); if(teams.length>1){ wrap.classList.remove('hidden');
-    const sel=$('#uTeam'); if(sel.options.length<=1) teams.forEach(t=>{const o=document.createElement('option');o.value=o.textContent=t;sel.appendChild(o);}); }
-  else wrap.classList.add('hidden');
+  // FE-UX-003: the per-team usage filter was removed. It was a no-op — /usage/summary has
+  // no team filter for a broad-read (admin) token, so selecting a team changed nothing.
+  // The by-team breakdown table already shows the per-team split. Re-introduce a real
+  // control only alongside backend support for a team query parameter.
 };
 $('#uReload').onclick=()=>RENDER.usage();
 $('#uPeriod').onchange=()=>RENDER.usage(); $('#uBucket').onchange=()=>RENDER.usage();
@@ -3033,7 +3209,7 @@ async function sendPrompt(){
   try{
     const r=await fetch(API.gateway+'/v1/chat/completions',{method:'POST',
       headers:{'content-type':'application/json','authorization':'Bearer '+gwKey.v}, body:JSON.stringify(body)});
-    if(!r.ok){ const e=await r.json().catch(()=>({})); bubble('⚠ '+(e.error&&e.error.message||('HTTP '+r.status)),'bot'); return; }
+    if(!r.ok){ const e=await r.json().catch(()=>({})); bubble('⚠ '+_terr(e,r),'bot'); return; }
     // Decided by the RESPONSE, not by the toggle: the deployment may have streaming turned
     // off at the API Gateway integration, in which case the same request comes back as one
     // JSON body. Reading r.json() on an event-stream (what this used to do unconditionally)
@@ -3442,7 +3618,7 @@ function renderModelList(){
     const row=document.createElement('div');
     row.className='flex items-center gap-3 bg-panel border border-line rounded-xl p-4'+(on?'':' opacity-60');
     const badges=[kindBadge(route)];
-    if(caps.tier) badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-line text-mut">'+caps.tier+'</span>');
+    if(caps.tier) badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-line text-mut">'+esc(caps.tier)+'</span>');
     if(!caps.tool_use) badges.push('<span class="text-[10px] px-2 py-0.5 rounded-full border border-amber-500 text-amber-400" title="'+esc(_t('does not accept requests with tools'))+'">'+esc(_t('no tool use'))+'</span>');
     // Extended thinking is a DECLARATION, not something we can detect: no provider API
     // reports whether a model supports it, and guessing wrong makes the provider reject the
@@ -3460,19 +3636,19 @@ function renderModelList(){
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 flex-wrap"><span class="font-medium text-sm">${esc(name)}</span>${badges.join('')}</div>
         <div class="text-[11px] text-mut truncate">${esc(route.provider||'?')} · ${esc(route.provider_model_id||'')}${route.base_url?' · '+esc(route.base_url):''}</div>
-        ${route.role_arn?`<div class="text-[11px] text-mut truncate" title="${route.role_arn}${route.region?' · '+route.region:''}">🔐 ${esc(_t('your AWS account'))} · ${shortArn(route.role_arn)}${route.region?' · '+route.region:''}</div>`:''}
+        ${route.role_arn?`<div class="text-[11px] text-mut truncate" title="${esc(route.role_arn)}${route.region?' · '+esc(route.region):''}">🔐 ${esc(_t('your AWS account'))} · ${esc(shortArn(route.role_arn))}${route.region?' · '+esc(route.region):''}</div>`:''}
         <div class="flex items-center gap-2 mt-1">
           <span class="text-[11px] text-mut">${esc(_t('per 1K tok — in'))}</span>
-          <input data-pin="${name}" type="number" step="0.0000001" min="0" value="${price.input||''}" placeholder="0" class="w-24 bg-panel2 border ${semPreco?'border-amber-500/60':'border-line'} rounded px-2 py-1 text-[11px] font-mono" aria-label="${esc(_t('Input price for'))} ${name}" />
+          <input data-pin="${esc(name)}" type="number" step="0.0000001" min="0" value="${price.input||''}" placeholder="0" class="w-24 bg-panel2 border ${semPreco?'border-amber-500/60':'border-line'} rounded px-2 py-1 text-[11px] font-mono" aria-label="${esc(_t('Input price for'))} ${esc(name)}" />
           <span class="text-[11px] text-mut">out</span>
-          <input data-pout="${name}" type="number" step="0.0000001" min="0" value="${price.output||''}" placeholder="0" class="w-24 bg-panel2 border ${semPreco?'border-amber-500/60':'border-line'} rounded px-2 py-1 text-[11px] font-mono" aria-label="${esc(_t('Output price for'))} ${name}" />
+          <input data-pout="${esc(name)}" type="number" step="0.0000001" min="0" value="${price.output||''}" placeholder="0" class="w-24 bg-panel2 border ${semPreco?'border-amber-500/60':'border-line'} rounded px-2 py-1 text-[11px] font-mono" aria-label="${esc(_t('Output price for'))} ${esc(name)}" />
           ${caps.context_window_tokens?`<span class="text-[11px] text-mut">· ctx ${(caps.context_window_tokens/1000)|0}k</span>`:''}
-          ${price.source==='contract'?`<button data-plist="${name}" class="text-[11px] text-brand2 hover:underline" title="${esc(_t("discards your price and goes back to the provider's public price"))}">${esc(_t('back to list price'))}</button>`:''}
+          ${price.source==='contract'?`<button data-plist="${esc(name)}" class="text-[11px] text-brand2 hover:underline" title="${esc(_t("discards your price and goes back to the provider's public price"))}">${esc(_t('back to list price'))}</button>`:''}
         </div>
         ${identityRowHtml(name)}
       </div>
-      <button data-m="${name}" class="mtoggle relative w-11 h-6 rounded-full ${on?'bg-brand':'bg-line'} transition shrink-0" role="switch" aria-checked="${on}" aria-label="${esc(_t('Enable'))} ${name}"><span class="absolute top-0.5 ${on?'right-0.5':'left-0.5'} w-5 h-5 rounded-full bg-knob"></span></button>
-      <button data-del="${name}" class="text-mut hover:text-amber-400 text-lg leading-none px-1" title="${esc(_t('remove'))}" aria-label="${esc(_t('Remove'))} ${name}">×</button>`;
+      <button data-m="${esc(name)}" class="mtoggle relative w-11 h-6 rounded-full ${on?'bg-brand':'bg-line'} transition shrink-0" role="switch" aria-checked="${on}" aria-label="${esc(_t('Enable'))} ${esc(name)}"><span class="absolute top-0.5 ${on?'right-0.5':'left-0.5'} w-5 h-5 rounded-full bg-knob"></span></button>
+      <button data-del="${esc(name)}" class="text-mut hover:text-amber-400 text-lg leading-none px-1" title="${esc(_t('remove'))}" aria-label="${esc(_t('Remove'))} ${esc(name)}">×</button>`;
     box.appendChild(row);
   });
 
@@ -3553,7 +3729,7 @@ function renderRouteList(){
     // a toggle that does work, which reads as "the gateway route cannot cache".
     if(route.provider==='bedrock'||route.provider==='anthropic'||route.provider==='bedrock_gateway'){
       const pc=!!route.prompt_cache;
-      badges.push(`<button data-pc="${name}" class="text-[10px] px-2 py-0.5 rounded-full border ${pc?'border-brand text-brand':'border-line text-mut'}" title="${esc(_t('Provider prompt caching. The gateway marks the end of the system message to cache the stable prefix: later reads with the same prefix cost ~90% less. The first write charges a small premium, so it only pays off when the system message repeats. Click to turn it on/off, then Save.'))}">⚡ ${esc(_t('prefix cache:'))} ${esc(pc?_t('on'):_t('off'))}</button>`);
+      badges.push(`<button data-pc="${esc(name)}" class="text-[10px] px-2 py-0.5 rounded-full border ${pc?'border-brand text-brand':'border-line text-mut'}" title="${esc(_t('Provider prompt caching. The gateway marks the end of the system message to cache the stable prefix: later reads with the same prefix cost ~90% less. The first write charges a small premium, so it only pays off when the system message repeats. Click to turn it on/off, then Save.'))}">⚡ ${esc(_t('prefix cache:'))} ${esc(pc?_t('on'):_t('off'))}</button>`);
     }
     // Extended-thinking shape, on the routes whose adapter honours it. NOT shown for the
     // `bedrock` provider: it sends the budget shape through additionalModelRequestFields and
@@ -3561,7 +3737,7 @@ function renderRouteList(){
     // worse than no toggle.
     if(route.provider==='bedrock_gateway'||route.provider==='anthropic'){
       const adaptive=route.reasoning_style==='adaptive';
-      badges.push(`<button data-rs="${name}" class="text-[10px] px-2 py-0.5 rounded-full border ${adaptive?'border-brand2 text-brand2':'border-line text-mut'}" title="${esc(_t('Which extended-thinking request shape this model accepts. The two are mutually exclusive and the wrong one is rejected outright: plain requests keep working while every reasoning request fails. Haiku 4.5 and older take budget; Sonnet 5 and Opus 4.7 or newer take adaptive. Click to switch, then Save.'))}">🧠 ${esc(_t('thinking:'))} ${esc(adaptive?_t('adaptive'):_t('budget'))}</button>`);
+      badges.push(`<button data-rs="${esc(name)}" class="text-[10px] px-2 py-0.5 rounded-full border ${adaptive?'border-brand2 text-brand2':'border-line text-mut'}" title="${esc(_t('Which extended-thinking request shape this model accepts. The two are mutually exclusive and the wrong one is rejected outright: plain requests keep working while every reasoning request fails. Haiku 4.5 and older take budget; Sonnet 5 and Opus 4.7 or newer take adaptive. Click to switch, then Save.'))}">🧠 ${esc(_t('thinking:'))} ${esc(adaptive?_t('adaptive'):_t('budget'))}</button>`);
     }
     row.innerHTML=`
       <div class="cursor-grab select-none text-mut text-lg leading-none shrink-0" title="${esc(_t('drag to reorder'))}" aria-hidden="true">⠿</div>
@@ -3961,7 +4137,7 @@ $('#wzProvider')&&($('#wzProvider').onchange=()=>{
   const p=EXT_PROVIDERS[$('#wzProvider').value];
   if(!p){ $('#wzStep2').classList.add('hidden'); $('#wzStep3').classList.add('hidden'); return; }
   $('#wzBase').value=p.base||''; $('#wzKeyHint').textContent=p.hint||'';
-  $('#wzModelOpts').innerHTML=(p.models||[]).map(m=>`<option value="${m}">`).join('');
+  $('#wzModelOpts').innerHTML=(p.models||[]).map(m=>`<option value="${esc(m)}">`).join('');
   $('#wzModel').value=(p.models&&p.models[0])||'';
   $('#wzAlias').value=$('#wzProvider').value+'-'+wzShortModel($('#wzModel').value||'model');
   $('#wzStep2').classList.remove('hidden'); $('#wzStep3').classList.add('hidden'); $('#wzKeyMsg').textContent='';
@@ -3981,7 +4157,7 @@ $('#wzFetch')&&($('#wzFetch').onclick=async()=>{
     if(!r.ok) throw new Error(_terr(d,r));
     const ids=d.models||[];
     if(!ids.length){ m.className='text-[11px] text-amber-400'; m.textContent=_t('no model returned — type the id manually'); return; }
-    $('#wzModelOpts').innerHTML=ids.map(x=>`<option value="${x}">`).join('');
+    $('#wzModelOpts').innerHTML=ids.map(x=>`<option value="${esc(x)}">`).join('');
     $('#wzModel').value=ids[0]; $('#wzModel').dispatchEvent(new Event('input'));
     m.className='text-[11px] text-brand'; m.textContent=ids.length+' '+_t('models found — pick one in the field above');
   }catch(e){ m.className='text-[11px] text-amber-400'; m.textContent=_t('failed to list: ')+e.message; }
@@ -4786,6 +4962,10 @@ function fillKAppsForTeam(teamId){
 $('#kTeam').onchange=()=>fillKAppsForTeam($('#kTeam').value);
 RENDER.keys=async function(){
   $('#kBase').textContent=API.gateway||'—';
+  // FE-UX-003: hide the one-time plaintext-key banner whenever the Keys view re-renders.
+  // It is shown once right after creating a key; leaving it on screen across tab switches
+  // and reloads left a secret visible long after the moment it was needed.
+  { const kn=$('#kNew'); if(kn) kn.classList.add('hidden'); }
   // Every key belongs to this org (across all its teams/apps) — there is no per-team/app
   // filter on this list, so the label spells that out instead of leaving "Active keys"
   // ambiguous about scope (it looked, at a glance, like it might be scoped to whatever
@@ -4800,7 +4980,7 @@ RENDER.keys=async function(){
   tb.innerHTML='';
   keys.forEach(k=>{ const tr=document.createElement('tr'); tr.className='border-t border-line';
     tr.innerHTML=`<td class="py-2 font-mono text-xs">${esc(k.key_prefix||'—')}</td><td>${esc(k.team||'default')}</td><td>${esc(k.app||'default')}</td><td class="text-mut text-xs">${esc((k.created_at||'').slice(0,10))}</td>
-      <td class="text-right"><button data-rev="${k.id}" class="text-mut hover:text-amber-400 text-xs">${esc(_t('revoke'))}</button></td>`;
+      <td class="text-right"><button data-rev="${esc(k.id)}" class="text-mut hover:text-amber-400 text-xs">${esc(_t('revoke'))}</button></td>`;
     tb.appendChild(tr); });
   $$('[data-rev]',tb).forEach(b=>b.onclick=async()=>{
     if(!confirm(_t('Revoke this key? The applications using it stop immediately.'))) return;
@@ -4845,7 +5025,7 @@ async function loadCredits(){
   const el=$('#crList'); if(!el) return;
   const canAdmin=auth.role==='owner'||auth.role==='admin'||auth.isPlatform;
   const sel=$('#crProvider');
-  sel.innerHTML=creditProviders().map(p=>`<option value="${p}">${PROVIDER_LABEL[p]||p}</option>`).join('');
+  sel.innerHTML=creditProviders().map(p=>`<option value="${esc(p)}">${esc(PROVIDER_LABEL[p]||p)}</option>`).join('');
   ['crAmount','crExpires','crSave'].forEach(id=>{ const n=$('#'+id); if(n){ n.disabled=!canAdmin; n.classList.toggle('opacity-50',!canAdmin); } });
   sel.disabled=!canAdmin; sel.classList.toggle('opacity-50',!canAdmin);
 
@@ -4874,15 +5054,15 @@ async function loadCredits(){
       const corr=c.corrected_remaining_usd!==undefined
         ? `<div class="text-[10px] text-mut">${esc(_t('corrected by'))} ${esc(c.corrected_by||'—')} ${esc(_t('on'))} ${esc((c.corrected_at||'').slice(0,10))}</div>` : '';
       return `<tr class="border-t border-line">
-        <td class="py-2">${PROVIDER_LABEL[c.provider]||c.provider}</td>
+        <td class="py-2">${esc(PROVIDER_LABEL[c.provider]||c.provider)}</td>
         <td>${fmtUSD(c.amount_usd,2)}</td>
         <td>${fmtUSD(c.consumed_usd,4)}</td>
         <td class="${c.active?'text-brand':''}">${fmtUSD(c.remaining_usd,2)}${corr}</td>
         <td>${esc(c.expires_at||'—')}</td>
         <td>${estado}</td>
         <td class="text-right whitespace-nowrap">
-          <button data-crfix="${c.provider}" data-rem="${c.remaining_usd}" class="text-[11px] text-brand2 hover:underline">${esc(_t('correct balance'))}</button>
-          <button data-crdel="${c.provider}" class="text-[11px] text-amber-400 hover:underline ml-3">${esc(_t('remove'))}</button>
+          ${canAdmin?`<button data-crfix="${esc(c.provider)}" data-rem="${esc(c.remaining_usd)}" class="text-[11px] text-brand2 hover:underline">${esc(_t('correct balance'))}</button>
+          <button data-crdel="${esc(c.provider)}" class="text-[11px] text-amber-400 hover:underline ml-3">${esc(_t('remove'))}</button>`:`<span class="text-[11px] text-mut">${esc(_t('view only'))}</span>`}
         </td></tr>`;
     }).join('')}</tbody></table>
     <div class="text-[11px] text-mut mt-2">${esc(_t('Remaining = granted (or your correction) minus consumption through the gateway. Since credit is also spent outside the platform, the real figure tends to be lower.'))}</div>`;
@@ -5094,7 +5274,7 @@ function renderMemApps(){
 function fillMemTeam(sel){
   const s=$('#memTeam'); if(!s) return;
   const teams=(window._teams||['default']).slice();
-  s.innerHTML=teams.map(t=>`<option value="${t}">${t}</option>`).join('')+'<option value="__new__">'+esc(_t('new team…'))+'</option>';
+  s.innerHTML=teams.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('')+'<option value="__new__">'+esc(_t('new team…'))+'</option>';
   if(sel && teams.includes(sel)) s.value=sel;
   $('#memTeamNewWrap').classList.toggle('hidden', s.value!=='__new__');
 }
@@ -5308,15 +5488,15 @@ function alRuleHtml(r){
   const status = !st.on ? '<span class="text-[10px] px-2 py-0.5 rounded-full border border-line text-mut">'+esc(_t('off'))+'</span>'
     : firing ? '<span class="text-[10px] px-2 py-0.5 rounded-full border border-danger text-danger">'+esc(_t('firing'))+'</span>'
     : '<span class="text-[10px] px-2 py-0.5 rounded-full border border-brand text-brand">ok</span>';
-  const opts=r.opts.map(o=>`<option value="${o}" ${o==st.threshold?'selected':''}>${r.unit==='US$'?'US$ '+o:o+(r.unit==='%'?'%':(r.unit==='ms'?' ms':''))}</option>`).join('');
+  const opts=r.opts.map(o=>`<option value="${esc(o)}" ${o==st.threshold?'selected':''}>${r.unit==='US$'?'US$ '+esc(o):esc(o)+(r.unit==='%'?'%':(r.unit==='ms'?' ms':''))}</option>`).join('');
   return `<div class="bg-panel border border-line rounded-xl p-4">
     <div class="flex items-start justify-between gap-4">
       <div><div class="text-sm font-medium">${esc(_t(r.label))} ${status}</div><div class="text-xs text-mut mt-0.5">${esc(_t(r.desc))}</div></div>
-      <button data-al="${esc(r.key)}" role="switch" aria-checked="${st.on}" class="relative w-12 h-6 rounded-full ${st.on?'bg-brand':'bg-line'} transition shrink-0"><span class="absolute top-0.5 ${st.on?'right-0.5':'left-0.5'} w-5 h-5 rounded-full bg-knob"></span></button>
+      <button data-al="${esc(r.key)}" role="switch" aria-checked="${esc(st.on)}" class="relative w-12 h-6 rounded-full ${st.on?'bg-brand':'bg-line'} transition shrink-0"><span class="absolute top-0.5 ${st.on?'right-0.5':'left-0.5'} w-5 h-5 rounded-full bg-knob"></span></button>
     </div>
     <div class="mt-3 flex items-center gap-3 text-xs">
       <span class="text-mut">${esc(r.cmp==='<'?_t('below'):_t('above'))}</span>
-      <select data-alth="${r.key}" class="bg-panel2 border border-line rounded-lg px-2 py-1.5 text-xs">${opts}</select>
+      <select data-alth="${esc(r.key)}" class="bg-panel2 border border-line rounded-lg px-2 py-1.5 text-xs">${opts}</select>
       <span class="text-mut ml-auto">${esc(_t('now:'))} <b class="${firing?'text-danger':''}">${curTxt}</b></span>
     </div></div>`;
 }
@@ -5413,7 +5593,7 @@ RENDER.logs=async function(){
     let swapCell='<span class="text-mut">—</span>';
     if(sw){
       const from=r.requested_model&&r.requested_model!==r.model?esc(r.requested_model)+' → ':'';
-      swapCell=`<span class="text-[10px] px-2 py-0.5 rounded-full border ${sw[0]}" title="${esc(_t(sw[2]))}">${from}${esc(_t(sw[1]))}</span>`;
+      swapCell=`<span class="text-[10px] px-2 py-0.5 rounded-full border ${esc(sw[0])}" title="${esc(_t(sw[2]))}">${from}${esc(_t(sw[1]))}</span>`;
     }
     if(r.canary) swapCell+=` <span class="text-[10px] px-2 py-0.5 rounded-full border border-brand2 text-brand2" title="${esc(_t('Sampled by a declared canary experiment on route'))+' '+esc(r.canary_route||'')}">${esc(_t('canary'))}</span>`;
     const up=r.upstream||'', prov=r.provider||'';
@@ -5525,7 +5705,7 @@ RENDER.alertLog=async function(){
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(_terr(e,r)); }
     d=await r.json();
   }catch(e){
-    rows.innerHTML='<tr><td class="py-3 text-amber-400" colspan="6">'+esc(_t('Failed to load: '))+avEsc(e.message)+'</td></tr>';
+    rows.innerHTML='<tr><td class="py-3 text-amber-400" colspan="6">'+esc(_t('Failed to load: '))+esc(e.message)+'</td></tr>';
     return;
   }
 
@@ -5554,14 +5734,14 @@ RENDER.alertLog=async function(){
     let valor=alogNum(a.value,unit), limiar=alogNum(a.threshold,unit);
     if(a.rule==='slo_burn'){ valor=(a.burn_rate!=null?Number(a.burn_rate).toFixed(1)+'×':'—'); limiar='SLO '+(a.slo_target!=null?Number(a.slo_target).toFixed(1)+'%':'—'); }
     if(a.rule==='anomaly'){ valor=alogNum(a.current_pct,'%'); limiar=_t('normal')+' '+alogNum(a.baseline_pct,'%'); }
-    const sev=a.severity?' <span class="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/50 text-amber-400">'+avEsc(a.severity)+'</span>':'';
+    const sev=a.severity?' <span class="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/50 text-amber-400">'+esc(a.severity)+'</span>':'';
     return `<tr class="border-t border-line/60">
-      <td class="px-4 py-2 whitespace-nowrap">${avEsc((a.ts||'').replace('T',' ').replace('Z',''))}</td>
-      <td>${avEsc(ALOG_RULE[a.rule]?_t(ALOG_RULE[a.rule]):(a.rule||'—'))}${sev}</td>
-      <td>${avEsc(valor)}</td>
-      <td class="text-mut">${avEsc(limiar)}</td>
+      <td class="px-4 py-2 whitespace-nowrap">${esc((a.ts||'').replace('T',' ').replace('Z',''))}</td>
+      <td>${esc(ALOG_RULE[a.rule]?_t(ALOG_RULE[a.rule]):(a.rule||'—'))}${sev}</td>
+      <td>${esc(valor)}</td>
+      <td class="text-mut">${esc(limiar)}</td>
       <td>${entrega}</td>
-      <td class="font-mono text-[11px] text-mut">${avEsc(a.host||'—')}</td>
+      <td class="font-mono text-[11px] text-mut">${esc(a.host||'—')}</td>
     </tr>`;
   }).join('') : '<tr><td class="py-3 text-mut" colspan="6">'+esc(_t('No alert fired in this period.'))+'</td></tr>';
 };
@@ -5583,8 +5763,9 @@ const AUD_ACTION={
   org_create:'created the account', plan_change:'changed plan', org_status_change:'changed account status',
 };
 
-function avEsc(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
-function avVal(v){ if(v===undefined||v===null) return '<span class="text-mut">—</span>'; return avEsc(typeof v==='object'?JSON.stringify(v):v); }
+// FE-SEC-001: avEsc was a byte-for-byte duplicate of esc(); removed in favour of the
+// single esc() helper so there is one escaping path to audit.
+function avVal(v){ if(v===undefined||v===null) return '<span class="text-mut">—</span>'; return esc(typeof v==='object'?JSON.stringify(v):v); }
 
 function avQuery(){
   const t=LTABS[curLTab]||{};
@@ -5617,14 +5798,14 @@ RENDER.auditTrail=async function(){
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(_terr(e,r)); }
     d=await r.json();
   }catch(e){
-    rows.innerHTML='<tr><td class="py-3 text-amber-400" colspan="6">'+esc(_t('Failed to load the trail: '))+avEsc(e.message)+'</td></tr>';
+    rows.innerHTML='<tr><td class="py-3 text-amber-400" colspan="6">'+esc(_t('Failed to load the trail: '))+esc(e.message)+'</td></tr>';
     return;
   }
 
   const recs=d.records||[];
   // Populates the filters with what actually showed up (avoids offering an empty option).
   const fillSel=(sel,vals,label)=>{ const el=$(sel); if(!el) return; const cur=el.value;
-    el.innerHTML='<option value="">'+esc(_t('all'))+'</option>'+[...new Set(vals)].sort().map(v=>`<option value="${avEsc(v)}">${avEsc(label?label(v):v)}</option>`).join('');
+    el.innerHTML='<option value="">'+esc(_t('all'))+'</option>'+[...new Set(vals)].sort().map(v=>`<option value="${esc(v)}">${esc(label?label(v):v)}</option>`).join('');
     el.value=cur; };
   fillSel('#avAction', recs.map(r=>r.action), v=>AUD_ACTION[v]?_t(AUD_ACTION[v]):v);
   fillSel('#avActor', recs.map(r=>r.actor?.email).filter(Boolean));
@@ -5634,15 +5815,15 @@ RENDER.auditTrail=async function(){
     // A platform operator is marked with an ICON + TEXT, not colour alone: if AIPlat
     // touched the customer's account, they have the right to see it — and the marker needs
     // to survive a reader who cannot distinguish colour.
-    const quem = avEsc(r.actor?.email||'—') + (op
+    const quem = esc(r.actor?.email||'—') + (op
       ? ' <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded border border-brand2 text-brand2" title="'+esc(_t('Action performed by an AIPlat platform operator'))+'">⚙ '+esc(_t('AIPlat operator'))+'</span>'
-      : ' <span class="text-[10px] text-mut">('+avEsc(r.actor?.role||'')+')</span>');
+      : ' <span class="text-[10px] text-mut">('+esc(r.actor?.role||'')+')</span>');
     const chs = r.changes||[];
-    const resumo = r.detail ? avEsc(r.detail)
+    const resumo = r.detail ? esc(r.detail)
       : (chs.length ? chs.length+' '+esc(chs.length>1?_t('fields'):_t('field')) : '<span class="text-mut">—</span>');
     const diff = chs.length ? `<tr id="avd${i}" class="hidden bg-panel2/60"><td colspan="6" class="px-4 py-2">
         <table class="text-[11px] w-full"><tbody>${chs.map(c=>`<tr>
-          <td class="py-0.5 pr-4 font-mono text-mut">${avEsc(c.path)}</td>
+          <td class="py-0.5 pr-4 font-mono text-mut">${esc(c.path)}</td>
           <td class="py-0.5 pr-2 text-amber-300/90">${avVal(c.before)}</td>
           <td class="py-0.5 pr-2 text-mut">→</td>
           <td class="py-0.5 text-brand">${avVal(c.after)}</td></tr>`).join('')}</tbody></table>
@@ -5652,11 +5833,11 @@ RENDER.auditTrail=async function(){
     // no keyboard handler — unreachable by keyboard. Now it is a data-attr + the bind
     // below, with role/tabindex/aria-expanded.
     return `<tr class="border-t border-line/60${chs.length?' cursor-pointer hover:bg-panel2/40':''}"${chs.length?` data-avtoggle="${i}" role="button" tabindex="0" aria-expanded="false" aria-controls="avd${i}"`:''}>
-      <td class="px-4 py-2 whitespace-nowrap">${avEsc((r.ts||'').replace('T',' ').replace('Z',''))}</td>
+      <td class="px-4 py-2 whitespace-nowrap">${esc((r.ts||'').replace('T',' ').replace('Z',''))}</td>
       <td>${quem}</td>
-      <td>${avEsc(AUD_ACTION[r.action]?_t(AUD_ACTION[r.action]):r.action)}</td>
-      <td class="font-mono text-[11px]">${avEsc(r.target||'—')}</td>
-      <td class="font-mono text-[11px] text-mut">${avEsc(r.scope||'—')}</td>
+      <td>${esc(AUD_ACTION[r.action]?_t(AUD_ACTION[r.action]):r.action)}</td>
+      <td class="font-mono text-[11px]">${esc(r.target||'—')}</td>
+      <td class="font-mono text-[11px] text-mut">${esc(r.scope||'—')}</td>
       <td>${resumo}${chs.length?' <span class="text-mut text-[10px]">▾</span>':''}</td>
     </tr>${diff}`;
   }).join('') : '<tr><td class="py-3 text-mut" colspan="6">'+esc(_t('No action recorded in this period.'))+'</td></tr>';

@@ -13,7 +13,13 @@
      that CDN sends no CORS header, so Subresource Integrity is impossible there,
      and an unpinned third-party script on an admin page is a supply-chain risk.
      See site/vendor/README.md. -->
-<script src="vendor/tailwind-3.4.16.js"></script>
+<!-- FE-IAC-001: Subresource Integrity on the self-hosted Tailwind build. SRI works
+     same-origin, so a vendored file modified in the bucket (or in transit) is refused by
+     the browser instead of running silently. The hash matches site/vendor/README.md and
+     is enforced at deploy time by a terraform precondition on filesha384. -->
+<script src="vendor/tailwind-3.4.16.js"
+        integrity="sha384-mS5Uq7sE90lgbBDN8xgf34ibEgbZo4gB3tfLY40ZRle+M188BQw8onzNHg6GUZaA"
+        crossorigin="anonymous"></script>
 <!-- Chart.js stays on jsDelivr because it DOES send CORS, so the bytes can be
      pinned with Subresource Integrity: if the CDN ever serves anything else, the
      browser refuses to execute it. -->
@@ -21,58 +27,13 @@
         integrity="sha384-JUh163oCRItcbPme8pYnROHQMC6fNKTBWtRG3I3I0erJkzNgL7uxKlNwcrcFKeqF"
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="env.js"></script>
-<script>
-  // The AIPlat token names (ink/panel/brand/…) stay the same — thousands of
-  // classes in the HTML depend on them. What changes is the SOURCE of the value: it now
-  // comes from the canonical design system variables declared in assets/console.css,
-  // instead of hex repeated here. One palette, one place.
-  //
-  // The `rgb(var(--x) / <alpha-value>)` form is mandatory: without it Tailwind cannot
-  // inject alpha and every opacity modifier in use (bg-brand/10,
-  // border-line/60, bg-brand2/15, text-mut/70…) would silently stop working.
-  // That is also why the variables hold RGB CHANNELS and not hex — the same convention
-  // shadCN uses for Tailwind v3.
-  // IIFE so a one-letter global does not leak into the page's shared scope.
-  (function(){
-    const T = (v) => `rgb(var(${v}) / <alpha-value>)`;
-    tailwind.config = { theme: { extend: { colors: {
-      ink:    T('--background'),        panel:  T('--card'),
-      panel2: T('--sidebar'),           line:   T('--border'),
-      brand:  T('--primary'),           brand2: T('--ring'),
-      mut:    T('--muted-foreground'),  danger: T('--destructive'),
-      fg:     T('--foreground'),        knob:   T('--switch-thumb'),
-      // slate PALETTE REMAPPING.
-      // The markup carries ~20 uses of text-slate-100/200/300 — a HARDCODED Tailwind
-      // color that did not follow the theme. In light mode that painted almost-white text
-      // on white: the metric numbers, the view title, the sidebar "AIPlat" and the active
-      // menu item simply disappeared. Instead of editing every occurrence, the
-      // slate scale itself now points at tokens. Only the 100/200/300 shades exist
-      // in the file (verified), so the remapping is complete and leaves no remainder.
-      slate:  { 100: T('--foreground'), 200: T('--foreground'), 300: T('--muted-foreground') },
-      // amber PALETTE REMAPPING — same problem as slate, 156 uses.
-      // amber-400 (#fbbf24) on the dark card gives 10.1:1, excellent; on white it gives
-      // ~1.7:1, illegible. A warning is precisely what the user must NOT fail to read.
-      // Two tokens because the uses differ: 200/300/400 are TEXT (they need to
-      // darken in the light theme) and 500 is surface/border (bg-amber-500/10,
-      // border-amber-500/40 and the solid Save button).
-      amber:  { 200: T('--warning-fg'), 300: T('--warning-fg'),
-                400: T('--warning-fg'), 500: T('--warning') }
-    }}}}
-  })();
-</script>
+<!-- FE-SEC-002: the Tailwind theme config and the pre-paint theme resolver were moved out
+     of inline script blocks into same-origin asset files, so the CSP drops
+     unsafe-inline. They keep document order (after vendor/tailwind, before the main
+     script), which is what they relied on. -->
+<script src="assets/theme-config.js"></script>
 <link rel="stylesheet" href="assets/console.css" />
-<script>
-  // Resolves the theme BEFORE the first paint, otherwise the console flashes dark and turns light.
-  // It only touches the <html> class; wiring the button stays in the main script.
-  // Order: explicit user choice > OS preference > dark.
-  (function(){
-    try{
-      var s=localStorage.getItem('aiplat_theme');
-      var t=s||(window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');
-      document.documentElement.classList.toggle('dark',t==='dark');
-    }catch(e){}
-  })();
-</script>
+<script src="assets/theme-boot.js"></script>
 </head>
 <body class="bg-ink text-slate-100 antialiased h-screen overflow-hidden">
 
@@ -98,7 +59,7 @@
       <span class="font-semibold text-lg">AIPlat</span>
     </div>
     <div class="bg-panel border border-line rounded-2xl p-6">
-      <h1 id="lgTitle" class="text-base font-semibold">Sign in to the console</h1>
+      <h1 id="lgTitle" class="text-base font-semibold" data-i18n="Sign in to the console">Sign in to the console</h1>
       <p id="lgSub" class="text-xs text-mut mt-1" data-i18n="Use the account your administrator created for you.">Use the account your administrator created for you.</p>
 
       <div class="mt-4">
@@ -273,10 +234,9 @@
               <option value="day" selected data-i18n="day">day</option>
             </select>
           </div>
-          <div id="uTeamWrap" class="hidden">
-            <label for="uTeam" class="block text-[11px] text-mut mb-1" data-i18n="Team">Team</label>
-            <select id="uTeam" class="bg-panel2 border border-line rounded-lg px-3 py-2 text-sm"><option value="" data-i18n="all">all</option></select>
-          </div>
+          <!-- FE-UX-003: the per-team usage filter was removed (it was a no-op; the
+               summary API has no team filter for admin tokens and the by-team table
+               already shows the split). -->
           <button id="uReload" class="px-3 py-2 rounded-lg border border-line text-sm hover:bg-panel" data-i18n="Refresh">Refresh</button>
         </div>
 

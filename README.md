@@ -440,7 +440,7 @@ flowchart TB
 | `observability` | Usage capture off the hot path, cost store, savings maths, SLI/SLO, alert evaluation and delivery | `usage-writer`, `usage-api`, `alert-notifier`, `hints-publisher` |
 | `audit` | Append-only control-plane trail with field-level diffs, CSV export, archival | `audit-writer`, `audit-api`, `audit-archiver` |
 | `help` | In-console FAQ and internal deep-dives, in English, Portuguese and Spanish | `help-api` |
-| `frontend` | The console as static content on private S3 behind CloudFront/OAC | `console.html`, WAF, response-header policy |
+| `frontend` | The console as static content on private S3 behind CloudFront/OAC | `console.html`, CSP/HSTS response-header policy |
 
 Every domain follows the same hexagonal layout. `internal/ports` declares the interfaces the
 domain needs, `internal/adapters` implements them against DynamoDB, SQS, Secrets Manager, Bedrock
@@ -519,8 +519,12 @@ controls the Terraform sets up, so you can check them against your own requireme
 - Role-based access (`owner`, `admin`, `billing`, `dev`, `platform_admin`) is enforced server-side
   from the token claims; the console hides what a role cannot use, but the backend is the gate.
 - CORS is deny-by-default: an origin has to be in the allowlist to get a response header.
-- The console is private S3 behind CloudFront with OAC, a CSP and HSTS response-header policy, WAF
-  in front, and its Tailwind build self-hosted rather than pulled from a CDN.
+- The console is private S3 behind CloudFront with OAC, a strict CSP (no `'unsafe-inline'` script
+  source) and an HSTS response-header policy, and its Tailwind build is self-hosted (with a
+  Subresource-Integrity hash enforced at deploy time) rather than pulled from a CDN. The public
+  **demo** runs on the CloudFront default certificate (TLS floor TLSv1) and has **no WAF**; a
+  production deployment should add a CLOUDFRONT-scope WAF (rate rule) and a custom domain with a
+  TLS1.2 certificate.
 - All four SQS queues and the SNS topic are encrypted at rest, and all eight DynamoDB tables have
   point-in-time recovery enabled.
 - Access logging is on for CloudFront and every API Gateway stage; control-plane mutations land in

@@ -191,28 +191,24 @@ resource "aws_cloudfront_origin_access_control" "site" {
 # Without a Content-Security-Policy the console has no origin restriction on what
 # it may load or talk to. The policy below is deliberately explicit:
 #
-#   script-src 'self' + jsDelivr — Tailwind is self-hosted (same origin) and
-#     Chart.js is pinned with Subresource Integrity; no other origin may run JS.
-#     It does NOT need 'unsafe-eval': the vendored Tailwind build contains no
-#     eval/new Function (verified against the downloaded artifact).
+#   script-src 'self' + a PINNED jsDelivr path — Tailwind is self-hosted (same
+#     origin) and Chart.js is pinned both by Subresource Integrity and by this path
+#     prefix (only chart.js@4.4.3 under /npm/ may load, not all of jsDelivr). No
+#     'unsafe-eval': the vendored Tailwind build contains no eval/new Function.
 #
-#     'unsafe-inline' is still required, and moving the application code out of
-#     console.html into assets/console.js did NOT change that — worth stating,
-#     because it looks like it should have. What pins it is the markup: ~140 inline
-#     event handler attributes (onclick=, onchange=), which CSP counts as inline
-#     script. Two inline <script> blocks also remain on purpose (the Tailwind theme
-#     config, and the theme resolver that has to run before first paint).
-#     Dropping 'unsafe-inline' therefore means converting all ~140 handlers to
-#     addEventListener first; hashes do not help (that needs 'unsafe-hashes' plus one
-#     sha256 per handler body) and a nonce is unavailable, since this policy is a
-#     static string with no CloudFront Function to inject a per-request value.
-#     The two remaining blocks are small and stable enough to be hashed on the day
-#     the handlers are gone.
+#     FE-SEC-002: 'unsafe-inline' was REMOVED. The markup now carries zero inline
+#     event-handler attributes (verified: grep -c 'on[a-z]*=' console.html == 0;
+#     the handlers are all addEventListener in console.js), and the two inline
+#     <script> blocks (the Tailwind theme config and the pre-paint theme resolver)
+#     were moved to same-origin files assets/theme-config.js and assets/theme-boot.js.
+#     With no inline script left, 'self' is sufficient and the XSS surface that
+#     FE-SEC-001 escaping closes can no longer be re-opened by an inline handler.
 #   style-src 'unsafe-inline' — the Tailwind runtime injects <style> elements. This
 #     one cannot be removed while Tailwind is a runtime build, regardless of the
 #     stylesheet now being an external file (the markup carries zero style="").
-#   connect-src — the console only ever calls this deployment's APIs
-#     (API Gateway) and Cognito, both scoped to the deployment region.
+#   connect-src — the console calls this deployment's APIs (API Gateway), Cognito's
+#     IDP endpoint, and the Cognito Hosted-UI domain (OAuth token exchange for social
+#     sign-in), all scoped to the deployment region.
 #   frame-ancestors 'none' — the console must never be embedded (clickjacking).
 resource "aws_cloudfront_response_headers_policy" "site" {
   name    = "${local.name}-security-headers"
@@ -223,11 +219,11 @@ resource "aws_cloudfront_response_headers_policy" "site" {
       override = true
       content_security_policy = join("; ", [
         "default-src 'none'",
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+        "script-src 'self' https://cdn.jsdelivr.net/npm/chart.js@4.4.3/",
         "style-src 'self' 'unsafe-inline'",
         "font-src 'self'",
         "img-src 'self' data:",
-        "connect-src 'self' https://*.execute-api.${var.region}.amazonaws.com https://cognito-idp.${var.region}.amazonaws.com",
+        "connect-src 'self' https://*.execute-api.${var.region}.amazonaws.com https://cognito-idp.${var.region}.amazonaws.com https://*.auth.${var.region}.amazoncognito.com",
         "frame-ancestors 'none'",
         "base-uri 'none'",
         "form-action 'none'",
@@ -441,6 +437,17 @@ resource "aws_s3_object" "vendor_tailwind" {
   cache_control = "public, max-age=31536000, immutable"
   source        = "${local.site}/vendor/tailwind-3.4.16.js"
   etag          = filemd5("${local.site}/vendor/tailwind-3.4.16.js")
+
+  # FE-IAC-001: refuse to deploy a vendored Tailwind whose bytes do not match the hash
+  # pinned in console.html's SRI integrity attribute (and documented in vendor/README.md).
+  # Without this a modified vendor file would upload silently and the browser would then
+  # refuse to run it (SRI mismatch), breaking the console with no deploy-time signal.
+  lifecycle {
+    precondition {
+      condition     = filesha256("${local.site}/vendor/tailwind-3.4.16.js") == "3f81aa7f6ecdb1acc14c202e513dfee00b6c7703cd81ce1be25bf5215a92e8cb"
+      error_message = "vendor/tailwind-3.4.16.js does not match the pinned hash; update the SRI integrity in console.html and vendor/README.md if this change is intentional."
+    }
+  }
 }
 
 # The console's stylesheet and application code, extracted out of console.html so the
@@ -477,6 +484,27 @@ resource "aws_s3_object" "console_js" {
   etag          = filemd5("${local.site}/app/assets/console.js")
 }
 
+# FE-SEC-002: the Tailwind theme config and the pre-paint theme resolver, moved out of
+# inline <script> blocks so the CSP can drop 'unsafe-inline'. They must be declared here
+# (no fileset in this module) or console.html would 404 on them and fail to theme.
+resource "aws_s3_object" "theme_config_js" {
+  bucket        = aws_s3_bucket.site.id
+  key           = "assets/theme-config.js"
+  content_type  = "application/javascript"
+  cache_control = "no-cache"
+  source        = "${local.site}/app/assets/theme-config.js"
+  etag          = filemd5("${local.site}/app/assets/theme-config.js")
+}
+
+resource "aws_s3_object" "theme_boot_js" {
+  bucket        = aws_s3_bucket.site.id
+  key           = "assets/theme-boot.js"
+  content_type  = "application/javascript"
+  cache_control = "no-cache"
+  source        = "${local.site}/app/assets/theme-boot.js"
+  etag          = filemd5("${local.site}/app/assets/theme-boot.js")
+}
+
 # env.js cache-buster: even with Cache-Control: no-cache, some browsers
 # reuse an old copy of a <script src> without revalidating correctly. The tag
 # in console.html loads env.js with ?v=<content hash>, so every time
@@ -506,8 +534,10 @@ locals {
   # and the browser is free to pair new markup with a cached old script. That failure is
   # invisible in the plan diff, which is why aws_s3_object.console below asserts all three
   # landed.
-  console_css_hash = filemd5("${local.site}/app/assets/console.css")
-  console_js_hash  = filemd5("${local.site}/app/assets/console.js")
+  console_css_hash  = filemd5("${local.site}/app/assets/console.css")
+  console_js_hash   = filemd5("${local.site}/app/assets/console.js")
+  theme_config_hash = filemd5("${local.site}/app/assets/theme-config.js")
+  theme_boot_hash   = filemd5("${local.site}/app/assets/theme-boot.js")
 
   console_html_raw = file("${local.site}/app/console.html")
   console_html_env = replace(
@@ -520,10 +550,22 @@ locals {
     "<link rel=\"stylesheet\" href=\"assets/console.css\" />",
     "<link rel=\"stylesheet\" href=\"assets/console.css?v=${local.console_css_hash}\" />",
   )
-  console_html = replace(
+  console_html_js = replace(
     local.console_html_css,
     "<script src=\"assets/console.js\"></script>",
     "<script src=\"assets/console.js?v=${local.console_js_hash}\"></script>",
+  )
+  # FE-SEC-002 theme assets: same cache-bust treatment so new markup never pairs with a
+  # cached old theme script.
+  console_html_tc = replace(
+    local.console_html_js,
+    "<script src=\"assets/theme-config.js\"></script>",
+    "<script src=\"assets/theme-config.js?v=${local.theme_config_hash}\"></script>",
+  )
+  console_html = replace(
+    local.console_html_tc,
+    "<script src=\"assets/theme-boot.js\"></script>",
+    "<script src=\"assets/theme-boot.js?v=${local.theme_boot_hash}\"></script>",
   )
 }
 
@@ -544,8 +586,10 @@ resource "aws_s3_object" "console" {
         can(regex("env\\.js\\?v=", local.console_html)),
         can(regex("assets/console\\.css\\?v=", local.console_html)),
         can(regex("assets/console\\.js\\?v=", local.console_html)),
+        can(regex("assets/theme-config\\.js\\?v=", local.console_html)),
+        can(regex("assets/theme-boot\\.js\\?v=", local.console_html)),
       ])
-      error_message = "A cache-buster did not apply: one of the env.js / assets/console.css / assets/console.js tags in console.html no longer matches the literal the replace() in locals searches for. Fix the tag or the search string — do not ignore this, the effect is a cached asset paired with new markup."
+      error_message = "A cache-buster did not apply: one of the env.js / assets/console.css / assets/console.js / assets/theme-config.js / assets/theme-boot.js tags in console.html no longer matches the literal the replace() in locals searches for. Fix the tag or the search string — do not ignore this, the effect is a cached asset paired with new markup."
     }
   }
 }

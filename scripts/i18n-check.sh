@@ -62,13 +62,12 @@ fi
 # so an unbalanced quote or bracket fails here instead of on screen. A SyntaxError takes
 # down the WHOLE file, so the symptom is a blank console with no other signal.
 #
-# Two sources, because the split left two kinds behind:
-#   · assets/console.js — the application, checked directly with node --check;
-#   · the inline <script> blocks still in console.html (the Tailwind theme config and the
-#     pre-paint theme resolver), extracted by line range and checked the same way.
-# The second half is still needed: those blocks are small but they run before everything
-# else, and a syntax error there is indistinguishable on screen from a broken app.
-hdr "1b. JS syntax (external + remaining inline blocks)"
+# FE-SEC-002 removed the inline <script> blocks from console.html (the Tailwind theme
+# config and the pre-paint theme resolver now live in assets/theme-config.js and
+# assets/theme-boot.js so the CSP can drop 'unsafe-inline'). The console is therefore
+# checked as external files only; any inline block that reappears is still extracted and
+# checked, but none is expected.
+hdr "1b. JS syntax (external files; no inline blocks after FE-SEC-002)"
 if command -v node >/dev/null 2>&1; then
   TMPD="$(mktemp -d)"
   PARSED=0
@@ -99,10 +98,11 @@ if command -v node >/dev/null 2>&1; then
 $(awk 'index($0,"<script")&&!index($0,"src=")&&!index($0,"</script>"){open=NR;next}
        index($0,"</script>")&&open{print open+1","NR-1;open=0}' "$CONSOLE")
 EOF
-  # A guard against the extraction silently inspecting nothing, which is how this check
-  # once reported success over zero files. console.js plus at least one inline block.
-  if [ "$PARSED" -lt 2 ]; then
-    say "FAIL — only $PARSED JS unit(s) parsed (expected console.js + $INLINE inline block(s)); extraction is broken"
+  # Guard against the extraction silently inspecting nothing (how this check once reported
+  # success over zero files). After FE-SEC-002 there are no inline blocks, so the floor is
+  # console.js itself (PARSED >= 1); any inline block that reappears is an extra.
+  if [ "$PARSED" -lt 1 ]; then
+    say "FAIL — console.js did not parse; extraction is broken"
     FAIL=1
   elif [ "$FAIL" -eq 0 ]; then
     say "ok — console.js + $INLINE inline block(s) parse"
