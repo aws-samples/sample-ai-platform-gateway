@@ -91,3 +91,38 @@ func TestPretoken_NoSub_NoClaim(t *testing.T) {
 		t.Fatalf("GOV-SEC-003: no sub must mean no scope (no e-mail fallback)")
 	}
 }
+
+// GOV-SEC-011: a non-admin role (dev/billing) with NO MEMBER# record must be scope-denied,
+// not silently org-wide. Owners/admins with no record stay org-wide (intentional). Fails on
+// the old code, which returned the event untouched for everyone with no record.
+func TestPretoken_NonAdminNoRecord_ScopeDenied(t *testing.T) {
+	const org, sub = "acme", "no-record-sub"
+	ddb = fakeDDB{items: map[string]string{}} // no MEMBER# record at all
+	configTable = "cfg"
+	t.Cleanup(func() { ddb = nil })
+
+	mk := func(role string) events.CognitoEventUserPoolsPreTokenGen {
+		ev := events.CognitoEventUserPoolsPreTokenGen{}
+		ev.Request.UserAttributes = map[string]string{"custom:org_id": org, "sub": sub, "custom:role": role}
+		return ev
+	}
+
+	// dev with no record → scope_denied, empty team.
+	out, err := handle(context.Background(), mk("dev"))
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	add := out.Response.ClaimsOverrideDetails.ClaimsToAddOrOverride
+	if add["scope_denied"] != "true" {
+		t.Fatalf("GOV-SEC-011: a dev with no MEMBER# record must be scope_denied; got %v", add)
+	}
+	if add["team"] != "" {
+		t.Fatalf("GOV-SEC-011: scope-denied token must carry an empty team; got %q", add["team"])
+	}
+
+	// owner with no record → org-wide (no override), unchanged.
+	outOwner, _ := handle(context.Background(), mk("owner"))
+	if len(outOwner.Response.ClaimsOverrideDetails.ClaimsToAddOrOverride) != 0 {
+		t.Fatalf("an owner with no record must stay org-wide (no claim override); got %v", outOwner.Response.ClaimsOverrideDetails.ClaimsToAddOrOverride)
+	}
+}

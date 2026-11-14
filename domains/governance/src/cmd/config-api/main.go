@@ -2324,27 +2324,33 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 		if isPlatform && b.Password != "" {
 			pw = b.Password
 		}
-		if err := identity.CreateUser(ctx, ports.User{Email: b.Email, Org: org, Role: b.Role, Name: b.Name}, pw); err != nil {
+		// GOV-SEC-011: the create returns the new user's sub directly (from the
+		// AdminCreateUser response). Writing the MEMBER# record keyed by that sub needs no
+		// second AdminGetUser, so there is no window where the user exists in Cognito but a
+		// throttled follow-up lookup fails and leaves no access record (a dev would then
+		// sign in org-wide — see the pretoken fail-closed change).
+		sub, err := identity.CreateUser(ctx, ports.User{Email: b.Email, Org: org, Role: b.Role, Name: b.Name}, pw)
+		if err != nil {
 			if errors.Is(err, ports.ErrUserExists) {
 				return resp(409, map[string]string{"error": "e-mail already registered"}, origin)
 			}
 			return resp(500, map[string]string{"error": err.Error()}, origin)
 		}
-		// Store the member's access (team + apps) outside Cognito, keyed by the
-		// member's immutable Cognito sub (GOV-SEC-003), resolved now that the user
-		// exists. If the sub can't be read the member is still created in Cognito —
-		// but their access record would be unkeyable, so fail loudly instead of
-		// silently writing an e-mail-keyed record that later reads miss.
-		sub, ok := subFor(ctx, b.Email)
-		if !ok {
-			return resp(500, map[string]string{"error": "member created but could not resolve its identity id; retry"}, origin)
+		// Belt-and-suspenders: if the create response carried no sub (older pool, or the
+		// double in a test path), fall back to the e-mail→sub lookup.
+		if sub == "" {
+			s, ok := subFor(ctx, b.Email)
+			if !ok {
+				return resp(500, map[string]string{"error": "member created but could not resolve its identity id; retry"}, origin)
+			}
+			sub = s
 		}
 		writeMemberMeta(ctx, org, sub, b.Team, b.Apps)
 		status := "invited"
 		if isPlatform && b.Password != "" {
 			status = "active"
 		}
-		writeAudit(ctx, org, claimEmail, role, govcore.AuditMemberInvite, b.Email, "papel="+b.Role+" time="+b.Team)
+		writeAudit(ctx, org, claimEmail, role, govcore.AuditMemberInvite, b.Email, "role="+b.Role+" team="+b.Team)
 		return resp(200, map[string]interface{}{"email": b.Email, "role": b.Role, "team": b.Team, "apps": b.Apps, "org": org, "status": status}, origin)
 
 	case strings.HasSuffix(path, "/admin/members") && method == "PUT":
@@ -2426,7 +2432,7 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			return resp(500, map[string]string{"error": "could not resolve the member identity id; retry"}, origin)
 		}
 		writeMemberMeta(ctx, org, sub, b.Team, b.Apps)
-		writeAudit(ctx, org, claimEmail, role, govcore.AuditMemberUpdate, b.Email, "papel="+b.Role+" time="+b.Team)
+		writeAudit(ctx, org, claimEmail, role, govcore.AuditMemberUpdate, b.Email, "role="+b.Role+" team="+b.Team)
 		return resp(200, map[string]interface{}{"email": b.Email, "role": b.Role, "team": b.Team, "apps": b.Apps, "status": "updated"}, origin)
 
 	case strings.HasSuffix(path, "/admin/members") && method == "DELETE":
@@ -3102,6 +3108,49 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 			"region": region,
 			"byo":    roleARN != "",
 		}, origin)
+
+	// ---- BYO Bedrock model listing, REQUEST-SCOPED (GOV-SEC-010) ----
+	// The console BYO wizard needs to list a new account's models BEFORE any route carries
+	// its role_arn. The GET above requires the ARN to be already declared on a route
+	// (GOV-SEC-002), which made the wizard dead-lock — round 3 "fixed" that by writing a
+	// placeholder routing entry (a callable data-plane route holding the customer's role_arn
+	// with no model id). This POST replaces that: it lists models for a caller-supplied ARN
+	// in the request body, WITHOUT writing any config. The AssumeRole-oracle protections are
+	// kept: owner/admin only, the ARN must have the AIPlatGatewayAccess* FORM, and the error
+	// is generic (never the raw STS/Bedrock error that names the execution role/account).
+	case strings.HasSuffix(path, "/admin/bedrock/models") && method == "POST":
+		if !canAdmin {
+			return resp(403, map[string]string{"error": "your role cannot list Bedrock models (owner/admin only)"}, origin)
+		}
+		var b struct {
+			RoleARN    string `json:"role_arn"`
+			ExternalID string `json:"external_id"`
+			Region     string `json:"region"`
+		}
+		if err := ReadAndValidateJSON(req.Body, &b); err != nil {
+			return resp(400, map[string]interface{}{"error": err.Error()}, origin)
+		}
+		b.RoleARN = strings.TrimSpace(b.RoleARN)
+		b.Region = strings.TrimSpace(b.Region)
+		if b.Region == "" {
+			b.Region = "us-east-1"
+		}
+		if b.RoleARN == "" {
+			return resp(400, map[string]string{"error": "role_arn is required"}, origin)
+		}
+		// FORM check only — NOT orgDeclaresRoleARN, so a brand-new account can be listed
+		// before it has a route. The form + owner/admin gate + generic error keep the
+		// oracle closed (a caller learns only "could list" / "could not", never the raw
+		// STS error). No config is written here.
+		if !gatewayRoleARNRe.MatchString(b.RoleARN) {
+			writeAudit(ctx, authCtx.Org, authCtx.Email, authCtx.Role, "unauthorized_bedrock_models_role", b.RoleARN, "")
+			return resp(400, map[string]string{"error": "role_arn must be an AIPlatGatewayAccess role (arn:aws:iam::<account>:role/AIPlatGatewayAccess*)"}, origin)
+		}
+		models, err := listBedrockModels(ctx, b.RoleARN, b.ExternalID, b.Region)
+		if err != nil {
+			return resp(502, map[string]string{"error": "could not list models for that role"}, origin)
+		}
+		return resp(200, map[string]interface{}{"models": models, "count": len(models), "region": b.Region, "byo": true}, origin)
 
 	// ---- Provider Models (lists an external/self-hosted provider's models) ----
 	// Uses the org's credential kept in the vault (aiplat/org/<org>/<provider>) —

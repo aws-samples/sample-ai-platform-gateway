@@ -15,11 +15,13 @@ func TestIdentityDouble(t *testing.T) {
 	ctx := context.Background()
 	id := NewIdentity()
 
-	if err := id.CreateUser(ctx, ports.User{Email: "A@x.com", Org: "acme", Role: "owner"}, "pw"); err != nil {
+	if sub, err := id.CreateUser(ctx, ports.User{Email: "A@x.com", Org: "acme", Role: "owner"}, "pw"); err != nil {
 		t.Fatal(err)
+	} else if sub == "" {
+		t.Fatal("CreateUser must return the new user's sub (GOV-SEC-011)")
 	}
 	// Case-insensitive e-mail: recreating must collide.
-	if err := id.CreateUser(ctx, ports.User{Email: "a@x.com", Org: "acme", Role: "dev"}, "pw"); !errors.Is(err, ports.ErrUserExists) {
+	if _, err := id.CreateUser(ctx, ports.User{Email: "a@x.com", Org: "acme", Role: "dev"}, "pw"); !errors.Is(err, ports.ErrUserExists) {
 		t.Fatalf("expected ErrUserExists, got %v", err)
 	}
 	org, ok, _ := id.GetUserOrg(ctx, "a@x.com")

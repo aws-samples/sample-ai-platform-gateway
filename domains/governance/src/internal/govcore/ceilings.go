@@ -144,11 +144,13 @@ func CeilingViolations(parent, child map[string]interface{}, belowOrg bool) []st
 		}
 	}
 	if cs, ok := gStr(child, "cache_scope"); ok {
-		// CORE-SEC-009: an UNDECLARED parent scope defaults to "team" (the documented
-		// default), so a child cannot opt into the looser "deployment" scope just because
-		// no ancestor declared one.
+		// CORE-SEC-009 / CORE-FUN-007: an UNDECLARED parent scope defaults to "team" ONLY
+		// when the child is a TEAM#/APP# scope (belowOrg) — that is the floor that stops a
+		// team opting into the looser "deployment" scope. An ORG write against a silent
+		// global has no such floor: the org may declare "deployment". Defaulting for ORG
+		// writes too made a legitimate ORG "deployment" write a false scope_widening.
 		ps, pok := gStr(parent, "cache_scope")
-		if !pok {
+		if !pok && belowOrg {
 			ps = "team"
 		}
 		if govCacheScopeRank[ps] > govCacheScopeRank[cs] {

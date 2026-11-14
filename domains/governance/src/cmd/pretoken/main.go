@@ -56,8 +56,22 @@ func handle(ctx context.Context, ev events.CognitoEventUserPoolsPreTokenGen) (ev
 	pk := "MEMBER#" + org + "#" + sub
 	out, err := ddb.GetItem(ctx, &dynamodb.GetItemInput{TableName: &configTable,
 		Key: map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: pk}}})
-	if err != nil || out.Item == nil {
-		return ev, nil // owner/admin with no member record → no restriction
+	if err != nil {
+		// Transient read error: the record MAY exist, so do NOT change the token — denying
+		// here would lock a legitimate member out on a DynamoDB blip.
+		return ev, nil
+	}
+	if out.Item == nil {
+		// GOV-SEC-011: NO access record. Owners/admins are intentionally org-wide (they
+		// carry no team), so leave their token untouched. A non-admin role (dev/billing)
+		// with no record must NOT fall open to org-wide — a partial create (Cognito user
+		// written, MEMBER# write missed) would otherwise sign in with deployment-wide read.
+		// Mark the token scope_denied (and team empty) so the data-plane APIs refuse it.
+		role := strings.ToLower(strings.TrimSpace(attrs["custom:role"]))
+		if role == "dev" || role == "billing" {
+			ev.Response.ClaimsOverrideDetails.ClaimsToAddOrOverride = map[string]string{"team": "", "scope_denied": "true"}
+		}
+		return ev, nil
 	}
 	var meta map[string]interface{}
 	if cv, ok := out.Item["config"].(*ddbtypes.AttributeValueMemberS); ok {

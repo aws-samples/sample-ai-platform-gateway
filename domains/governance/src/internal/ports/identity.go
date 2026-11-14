@@ -48,7 +48,13 @@ type Identity interface {
 	// PERMANENT password and no invite e-mail (the platform_admin flow); when
 	// password == "", it sends an e-mail invite with a temporary password. Returns
 	// ErrUserExists when the user already exists.
-	CreateUser(ctx context.Context, u User, password string) error
+	//
+	// GOV-SEC-011: it returns the new user's immutable Cognito `sub`, read from the
+	// AdminCreateUser response itself. The caller writes the MEMBER# record keyed by that
+	// sub WITHOUT a second AdminGetUser — closing the window where the create succeeded but
+	// a throttled follow-up lookup left a Cognito user with no access record (a dev would
+	// then sign in org-wide, see GOV-SEC-011/pretoken).
+	CreateUser(ctx context.Context, u User, password string) (sub string, err error)
 
 	// UpdateAttrs updates the user's attributes (e.g. custom:role).
 	UpdateAttrs(ctx context.Context, email string, attrs map[string]string) error

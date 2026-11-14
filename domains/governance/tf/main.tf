@@ -582,12 +582,12 @@ resource "aws_cognito_user_pool" "cp" {
     allow_admin_create_user_only = true
   }
 
-  # GOV-SEC-003: an email change must be re-verified before it takes effect. Scope
-  # (team/apps) is resolved by the pretoken trigger from the MEMBER#<org>#<email> record,
-  # so a self-service email change to an address with no MEMBER# record would otherwise
-  # drop the team scope on the next login and let a team-pinned member read/write every
-  # team. Requiring verification keeps the token's `email` on the last VERIFIED address,
-  # so neither the lookup nor the scope can be shifted by an unverified change.
+  # GOV-SEC-003: scope (team/apps) is resolved by the pretoken trigger from the
+  # MEMBER#<org>#<sub> record — keyed by the member's IMMUTABLE Cognito `sub`, not their
+  # e-mail. An existing deployment upgrading past GOV-SEC-003 must re-key its e-mail-keyed
+  # records with scripts/migrate-members-to-sub.sh, or team-scoped members lose their claim.
+  # Requiring e-mail re-verification (below) is still kept as defence in depth so the token's
+  # `email` only ever moves to a VERIFIED address.
   user_attribute_update_settings {
     attributes_require_verification_before_update = ["email"]
   }

@@ -37,13 +37,13 @@ func (m *Identity) ListUsers(_ context.Context, org string) ([]ports.User, error
 	return out, nil
 }
 
-func (m *Identity) CreateUser(_ context.Context, u ports.User, password string) error {
+func (m *Identity) CreateUser(_ context.Context, u ports.User, password string) (string, error) {
 	if m.FailCreate != nil {
-		return m.FailCreate
+		return "", m.FailCreate
 	}
 	k := m.key(u.Email)
 	if _, ok := m.Users[k]; ok {
-		return ports.ErrUserExists
+		return "", ports.ErrUserExists
 	}
 	if u.Status == "" {
 		if password != "" {
@@ -58,7 +58,7 @@ func (m *Identity) CreateUser(_ context.Context, u ports.User, password string) 
 		u.Sub = "sub-" + k
 	}
 	m.Users[k] = u
-	return nil
+	return u.Sub, nil // GOV-SEC-011: return the sub, like the real AdminCreateUser response
 }
 
 func (m *Identity) UpdateAttrs(_ context.Context, email string, attrs map[string]string) error {
