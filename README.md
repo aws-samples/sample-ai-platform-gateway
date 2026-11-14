@@ -478,6 +478,24 @@ change that was not rebuilt deploys nothing at all.
 Then open the CloudFront URL from the `frontend` output, sign in with the seeded admin user, and
 issue your first API key in the **API Keys** tab.
 
+### Existing deployment: first apply (adopting Lambda log groups)
+
+Each domain declares its Lambda CloudWatch log groups so it can set a 90-day retention. On a
+deployment created before those were managed, the groups already exist (Lambda auto-created them),
+so Terraform must **import** them on the first apply instead of creating them. That import is
+opt-in, guarded by `adopt_log_groups` (default `false`), so a greenfield account is not blocked by
+a "Cannot import non-existent remote object" error (XC-IAC-006 / XC-IAC-007):
+
+```bash
+# EXISTING deployment — import the pre-existing log groups once:
+(cd "domains/$d/envs/poc" && terraform apply -var adopt_log_groups=true)
+# GREENFIELD account — the default creates them; nothing extra to do:
+(cd "domains/$d/envs/poc" && terraform apply)
+```
+
+After the one-time import you can keep `adopt_log_groups=true` on an existing stack (the import is
+a no-op once the group is in state) or drop back to the default.
+
 ## Run the console locally (no AWS)
 
 The console can run against a local fixture server — no AWS account, no credentials, no

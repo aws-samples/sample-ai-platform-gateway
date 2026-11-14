@@ -57,17 +57,30 @@ output "archive_bucket" { value = module.domain.archive_bucket }
 # XC-IAC-006: adopt the live auto-created Lambda log groups into state. Import blocks
 # are only valid in the ROOT module, so they target the child module's resources.
 # Plan shows import + retention update, not create (which fails
-# ResourceAlreadyExistsException). One-time bootstrap on an EXISTING stack; remove for
-# a greenfield deploy. See README "Quick start".
+# ResourceAlreadyExistsException). Guarded by adopt_log_groups (XC-IAC-007).
+# XC-IAC-007: adopting the live log groups is OPT-IN. An existing deployment created these
+# groups via Lambda auto-creation before they were managed, so the first apply must IMPORT
+# them (set adopt_log_groups=true); a greenfield account where they do not exist yet applies
+# with the default false and CREATES them. The old unguarded import blocks made `terraform
+# plan` fail with "Cannot import non-existent remote object" on every fresh account. See the
+# README "Existing deployment: first apply" step.
+variable "adopt_log_groups" {
+  type    = bool
+  default = false
+}
+
 import {
-  to = module.domain.aws_cloudwatch_log_group.archiver
-  id = "/aws/lambda/aiplat-poc-aud-archiver"
+  for_each = var.adopt_log_groups ? [1] : []
+  to       = module.domain.aws_cloudwatch_log_group.archiver
+  id       = "/aws/lambda/aiplat-poc-aud-archiver"
 }
 import {
-  to = module.domain.aws_cloudwatch_log_group.writer_logs
-  id = "/aws/lambda/aiplat-poc-aud-writer"
+  for_each = var.adopt_log_groups ? [1] : []
+  to       = module.domain.aws_cloudwatch_log_group.writer_logs
+  id       = "/aws/lambda/aiplat-poc-aud-writer"
 }
 import {
-  to = module.domain.aws_cloudwatch_log_group.api_logs
-  id = "/aws/lambda/aiplat-poc-aud-api"
+  for_each = var.adopt_log_groups ? [1] : []
+  to       = module.domain.aws_cloudwatch_log_group.api_logs
+  id       = "/aws/lambda/aiplat-poc-aud-api"
 }

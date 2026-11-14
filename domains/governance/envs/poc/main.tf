@@ -97,14 +97,25 @@ output "cognito_issuer" { value = module.domain.cognito_issuer }
 # the functions before they were Terraform-managed) into state. Import blocks are
 # only valid in the ROOT module, so they live here and target the child module's
 # resources. The plan then shows import + retention update, never create (a plain
-# create fails with ResourceAlreadyExistsException). One-time bootstrap on an
-# EXISTING stack; remove these blocks for a greenfield deploy (the groups will not
-# exist yet). See README "Quick start".
+# create fails with ResourceAlreadyExistsException). Guarded by adopt_log_groups (XC-IAC-007).
+# XC-IAC-007: adopting the live log groups is OPT-IN. An existing deployment created these
+# groups via Lambda auto-creation before they were managed, so the first apply must IMPORT
+# them (set adopt_log_groups=true); a greenfield account where they do not exist yet applies
+# with the default false and CREATES them. The old unguarded import blocks made `terraform
+# plan` fail with "Cannot import non-existent remote object" on every fresh account. See the
+# README "Existing deployment: first apply" step.
+variable "adopt_log_groups" {
+  type    = bool
+  default = false
+}
+
 import {
-  to = module.domain.aws_cloudwatch_log_group.config_api
-  id = "/aws/lambda/aiplat-poc-gov-config-api"
+  for_each = var.adopt_log_groups ? [1] : []
+  to       = module.domain.aws_cloudwatch_log_group.config_api
+  id       = "/aws/lambda/aiplat-poc-gov-config-api"
 }
 import {
-  to = module.domain.aws_cloudwatch_log_group.pretoken
-  id = "/aws/lambda/aiplat-poc-gov-pretoken"
+  for_each = var.adopt_log_groups ? [1] : []
+  to       = module.domain.aws_cloudwatch_log_group.pretoken
+  id       = "/aws/lambda/aiplat-poc-gov-pretoken"
 }
