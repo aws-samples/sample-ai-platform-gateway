@@ -36,7 +36,8 @@ module "domain" {
   # default — which is how the first attempt at enabling streaming failed: the module
   # stayed BUFFERED while the timeout was raised to 900000, and the provider rejected
   # the pair. The rejection was correct and cost nothing, but the cause was here.
-  response_streaming = var.response_streaming
+  response_streaming             = var.response_streaming
+  router_provisioned_concurrency = var.router_provisioned_concurrency
 
   # Optional AgentCore Gateway transport. Same forwarding rule as above: the region has to
   # travel with the flag, and it has to match the aws.agentcore provider's region or the

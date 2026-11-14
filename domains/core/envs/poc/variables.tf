@@ -100,6 +100,13 @@ variable "response_streaming" {
   default = true
 }
 
+# CORE-NFR-003: keep one router environment always warm so a burst does not pay the
+# per-sandbox scale-out penalty. This poc env opts in to 1; the module default is 0.
+variable "router_provisioned_concurrency" {
+  type    = number
+  default = 1
+}
+
 variable "agentcore_gateway_enabled" {
   type = bool
   # This poc environment DOES run the AgentCore Gateway (the demo uses provider

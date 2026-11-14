@@ -39,7 +39,19 @@ locals {
   # Built by hand because `aws_lambda_function.router.invoke_arn` is the BUFFERED form
   # (2015-03-31/.../invocations). Pointing a STREAM integration at the buffered URI is
   # an unsupported combination and API Gateway answers 500 to every request.
-  router_streaming_uri = "arn:aws:apigateway:${local.region}:lambda:path/2021-11-15/functions/${aws_lambda_function.router.arn}/response-streaming-invocations"
+  # CORE-NFR-003: provisioned concurrency keeps N execution environments initialised, so a
+  # burst does not pay per-sandbox scale-out (the ~2 s the re-check traced to API Gateway /
+  # Lambda cold scale-out, not to the handler). PC can only attach to a published
+  # version/alias, so when it is on the API Gateway integration must invoke the ALIAS, not
+  # $LATEST — otherwise the warm pool is never hit. These locals switch the integration URI
+  # and the Lambda permission qualifier accordingly; when PC is 0 (module default) nothing
+  # changes and the integration stays on $LATEST.
+  router_pc_enabled = var.router_provisioned_concurrency > 0
+  router_alias_name = "live"
+  router_fn_arn_q   = local.router_pc_enabled ? "${aws_lambda_function.router.arn}:${local.router_alias_name}" : aws_lambda_function.router.arn
+
+  router_streaming_uri = "arn:aws:apigateway:${local.region}:lambda:path/2021-11-15/functions/${local.router_fn_arn_q}/response-streaming-invocations"
+  router_buffered_uri  = local.router_pc_enabled ? aws_lambda_alias.router[0].invoke_arn : aws_lambda_function.router.invoke_arn
   usage_queue_name     = "${var.project}-${var.environment}-obs-usage"
   usage_queue_arn      = coalesce(var.usage_queue_arn, "arn:aws:sqs:${local.region}:${local.account_id}:${local.usage_queue_name}")
   usage_queue_url      = coalesce(var.usage_queue_url, "https://sqs.${local.region}.amazonaws.com/${local.account_id}/${local.usage_queue_name}")
@@ -229,6 +241,9 @@ resource "aws_lambda_function" "router" {
   source_code_hash = filebase64sha256("${local.dist}/router.zip")
   timeout          = local.router_timeout_s
   memory_size      = 256
+  # CORE-NFR-003: publish an immutable version only when provisioned concurrency is on
+  # (PC must target a version/alias). Off by default → no versioning churn.
+  publish = local.router_pc_enabled
   environment {
     variables = {
       CONFIG_TABLE   = local.config_table_name
@@ -321,8 +336,10 @@ resource "aws_api_gateway_integration" "router_proxy_any" {
   # STREAM also needs the 2021-11-15 `response-streaming-invocations` URI: pointing a
   # STREAM integration at the ordinary `invocations` URI is an unsupported combination.
   response_transfer_mode = var.response_streaming ? "STREAM" : "BUFFERED"
-  uri                    = var.response_streaming ? local.router_streaming_uri : aws_lambda_function.router.invoke_arn
-  timeout_milliseconds   = var.integration_timeout_ms
+  # CORE-NFR-003: router_streaming_uri / router_buffered_uri already resolve to the alias
+  # qualifier when provisioned concurrency is on, so the warm pool is actually hit.
+  uri                  = var.response_streaming ? local.router_streaming_uri : local.router_buffered_uri
+  timeout_milliseconds = var.integration_timeout_ms
 }
 
 resource "aws_api_gateway_deployment" "router" {
@@ -424,6 +441,9 @@ resource "aws_lambda_permission" "api" {
   function_name = aws_lambda_function.router.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_api_gateway_rest_api.this.execution_arn}/*/*"
+  # CORE-NFR-003: when the integration targets the 'live' alias (provisioned concurrency
+  # on), the invoke permission must be granted ON that qualifier too.
+  qualifier = local.router_pc_enabled ? aws_lambda_alias.router[0].name : null
 }
 
 # --- AWS WAF: the one protection HTTP API did not support and that drove this migration ---
@@ -944,6 +964,33 @@ variable "response_streaming" {
   type        = bool
   default     = true
   description = "Enable API Gateway response streaming on the gateway route. Drives the integration transfer mode, the integration URI and the router's AIPLAT_RESPONSE_MODE together."
+}
+
+# CORE-NFR-003: number of always-warm router execution environments. 0 (module default)
+# = off, so an existing deployment plans zero change and pays nothing. A small positive
+# value removes the burst scale-out penalty (p50 under concurrency drops toward steady
+# state) at the cost of always-on provisioned-concurrency billing — an operator cost
+# decision, which is why it is a knob, not a hardcoded default.
+variable "router_provisioned_concurrency" {
+  type        = number
+  default     = 0
+  description = "Provisioned concurrency for the router Lambda (0 = off). When > 0 the API Gateway integration invokes the published 'live' alias."
+}
+
+# CORE-NFR-003: the published alias the API Gateway integration targets when provisioned
+# concurrency is on. Created only then (count), so $LATEST invocation is unchanged otherwise.
+resource "aws_lambda_alias" "router" {
+  count            = local.router_pc_enabled ? 1 : 0
+  name             = local.router_alias_name
+  function_name    = aws_lambda_function.router.function_name
+  function_version = aws_lambda_function.router.version
+}
+
+resource "aws_lambda_provisioned_concurrency_config" "router" {
+  count                             = local.router_pc_enabled ? 1 : 0
+  function_name                     = aws_lambda_function.router.function_name
+  qualifier                         = aws_lambda_alias.router[0].name
+  provisioned_concurrent_executions = var.router_provisioned_concurrency
 }
 
 # Topic the alarm publishes to. The subscription (email/Slack/PagerDuty) is
