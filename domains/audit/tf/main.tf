@@ -54,11 +54,28 @@ locals {
   # REST API needs the user pool ARN (COGNITO_USER_POOLS authorizer), not the
   # issuer/audience (those were only for the HTTP API's native JWT authorizer).
   cognito_user_pool_arn = coalesce(var.cognito_user_pool_arn, try(nonsensitive(data.aws_ssm_parameter.cognito_user_pool_arn[0].value), null))
+
+  # AUD-IAC-002: the two legitimate audit-bus publishers' role ARNs, read from the SSM
+  # parameters their owning stacks publish (governance/config_api_role_arn,
+  # core/keyadmin_role_arn). The Deny now tracks the ACTUAL role ARN, so a role rename or a
+  # non-default project/environment can no longer silently deny a legitimate publisher.
+  # Deploy order: governance and core (which publish these params, and which audit already
+  # depends on for the gov config table) come up before audit — the same convention the
+  # cognito_user_pool_arn read above relies on.
+  config_api_role_arn = nonsensitive(data.aws_ssm_parameter.config_api_role_arn.value)
+  keyadmin_role_arn   = nonsensitive(data.aws_ssm_parameter.keyadmin_role_arn.value)
 }
 
 data "aws_ssm_parameter" "cognito_user_pool_arn" {
   count = var.cognito_user_pool_arn == null ? 1 : 0
   name  = "${local.ssm_root}/governance/cognito_user_pool_arn"
+}
+
+data "aws_ssm_parameter" "config_api_role_arn" {
+  name = "${local.ssm_root}/governance/config_api_role_arn"
+}
+data "aws_ssm_parameter" "keyadmin_role_arn" {
+  name = "${local.ssm_root}/core/keyadmin_role_arn"
 }
 
 # =============================== Trail =======================================
@@ -318,12 +335,52 @@ resource "aws_cloudwatch_event_bus_policy" "audit" {
       Resource  = aws_cloudwatch_event_bus.audit.arn
       Condition = {
         ArnNotLike = { "aws:PrincipalArn" = [
-          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-${var.environment}-gov-config-api",
-          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project}-${var.environment}-inf-keyadmin",
+          local.config_api_role_arn,
+          local.keyadmin_role_arn,
         ] }
       }
     }]
   })
+}
+
+# AUD-IAC-002: alert when a legitimate publisher's PutEvents is denied. The config-api and
+# keyadmin log `{"event":"audit_emit_failed",…}` when their emit fails (e.g. the Deny above
+# is wrong after a role rename). The structured log still records the event, so a trail entry
+# is DEGRADED, not lost — but silent degradation is exactly what an alarm is for. Two metric
+# filters (one per publisher log group) feed one metric; the alarm fires on any occurrence.
+resource "aws_cloudwatch_log_metric_filter" "audit_emit_failed_gov" {
+  name           = "${local.name}-audit-emit-failed-gov"
+  log_group_name = "/aws/lambda/${var.project}-${var.environment}-gov-config-api"
+  pattern        = "{ $.event = \"audit_emit_failed\" }"
+  metric_transformation {
+    name          = "${local.name}-audit-emit-failed"
+    namespace     = "AIPlat/Audit"
+    value         = "1"
+    default_value = "0"
+  }
+}
+resource "aws_cloudwatch_log_metric_filter" "audit_emit_failed_core" {
+  name           = "${local.name}-audit-emit-failed-core"
+  log_group_name = "/aws/lambda/${var.project}-${var.environment}-inf-keyadmin"
+  pattern        = "{ $.event = \"audit_emit_failed\" }"
+  metric_transformation {
+    name          = "${local.name}-audit-emit-failed"
+    namespace     = "AIPlat/Audit"
+    value         = "1"
+    default_value = "0"
+  }
+}
+resource "aws_cloudwatch_metric_alarm" "audit_emit_failed" {
+  alarm_name          = "${local.name}-audit-emit-failed"
+  alarm_description   = "A legitimate publisher's PutEvents to the audit bus was denied/failed (AUD-IAC-002). Check the bus Deny policy and the config_api/keyadmin role ARNs in SSM."
+  namespace           = "AIPlat/Audit"
+  metric_name         = "${local.name}-audit-emit-failed"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
 }
 
 # Encryption at rest with SSE-SQS (AWS-managed key). This queue carries the audit
