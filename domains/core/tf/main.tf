@@ -896,6 +896,14 @@ resource "aws_ssm_parameter" "keyadmin_url" {
   type  = "String"
   value = aws_api_gateway_stage.keyadmin.invoke_url
 }
+# AUD-IAC-002: publish the keyadmin role ARN so the audit bus Deny references the real ARN
+# from SSM rather than re-deriving the name — a rename/env change would otherwise deny this
+# legitimate publisher and silently drop its trail entries.
+resource "aws_ssm_parameter" "keyadmin_role_arn" {
+  name  = "${local.ssm_root}/core/keyadmin_role_arn"
+  type  = "String"
+  value = aws_iam_role.keyadmin.arn
+}
 
 # --- Platform monitoring in CloudWatch (cheap, aggregated) ---
 # Each domain instruments itself (see steering aiplat-domains.md). The Core
