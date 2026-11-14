@@ -236,6 +236,13 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	if role == "" {
 		return resp(reqOrigin, 401, map[string]string{"error": "unauthorized"})
 	}
+	// GOV-SEC-011: the pre-token trigger stamps scope_denied on a member whose access
+	// record is missing (e.g. a partial create). Refuse it outright — including for an
+	// otherwise broad role like billing, which would slip past the team/app check below and
+	// read the whole deployment. A member with no record is NOT deployment-wide.
+	if claim(req, "scope_denied") == "true" {
+		return resp(reqOrigin, 403, map[string]string{"error": "your access has no scope yet — ask an owner/admin to set your team"})
+	}
 	// A non-broad role (e.g. dev) with no team and no app scope must not fall
 	// through to a deployment-wide read. Without a scope there is nothing it is
 	// authorized to see, so refuse rather than leak the whole deployment's usage.

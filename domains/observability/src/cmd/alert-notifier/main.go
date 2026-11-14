@@ -36,8 +36,17 @@ import (
 	ddbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
+// ddbAPI is the slice of DynamoDB the notifier uses. Narrowing the global to an interface
+// (satisfied by *dynamodb.Client) lets a test inject a fake and exercise handle() offline —
+// which is how the OBS-FUN-003 single-org filter is proven behaviourally.
+type ddbAPI interface {
+	Scan(ctx context.Context, in *dynamodb.ScanInput, optFns ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	Query(ctx context.Context, in *dynamodb.QueryInput, optFns ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	PutItem(ctx context.Context, in *dynamodb.PutItemInput, optFns ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+}
+
 var (
-	ddb       *dynamodb.Client
+	ddb       ddbAPI
 	costTable = os.Getenv("COST_STORE_TABLE")
 	cfgTable  = os.Getenv("CONFIG_TABLE")
 	// OBS-FUN-003: this is a SINGLE-org deployment (the same contract the core reads via

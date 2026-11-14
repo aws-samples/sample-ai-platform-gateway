@@ -59,7 +59,12 @@ variable "console_origin" {
 
 # OBS-FUN-003: this deployment's single org. The notifier and hints-publisher evaluate
 # and publish only for this org (the USAGE partition they read is deployment-wide), the
-# same DEPLOYMENT_ORG contract the core uses. Empty keeps the old discover-all behaviour.
+# same DEPLOYMENT_ORG contract the core uses.
+#
+# OBS-IAC-001: when the var is empty it is read from the SSM parameter governance publishes
+# (exactly as core does), and the plan FAILS if neither is set — because an empty
+# DEPLOYMENT_ORG silently reverts the notifier/hints to the per-org fan-out (OBS-FUN-003).
+# The default "" is the "read from SSM" signal, not a safe value.
 variable "deployment_org" {
   type    = string
   default = ""
@@ -73,11 +78,28 @@ locals {
   # REST API needs the user pool ARN (COGNITO_USER_POOLS authorizer), not the
   # issuer/audience (those were only for the HTTP API's native JWT authorizer).
   cognito_user_pool_arn = coalesce(var.cognito_user_pool_arn, try(nonsensitive(data.aws_ssm_parameter.cognito_user_pool_arn[0].value), null))
+
+  # OBS-IAC-001: resolve the org from the var, else the SSM parameter governance writes.
+  deployment_org = var.deployment_org != "" ? var.deployment_org : try(nonsensitive(data.aws_ssm_parameter.deployment_org[0].value), "")
 }
 
 data "aws_ssm_parameter" "cognito_user_pool_arn" {
   count = var.cognito_user_pool_arn == null ? 1 : 0
   name  = "${local.ssm_root}/governance/cognito_user_pool_arn"
+}
+
+data "aws_ssm_parameter" "deployment_org" {
+  count = var.deployment_org == "" ? 1 : 0
+  name  = "${local.ssm_root}/governance/deployment_org"
+}
+
+# OBS-IAC-001: fail the plan when the org cannot be resolved, rather than deploying the
+# notifier/hints with an empty DEPLOYMENT_ORG (which reintroduces the per-org fan-out).
+check "deployment_org_resolved" {
+  assert {
+    condition     = local.deployment_org != ""
+    error_message = "deployment_org is empty: set -var deployment_org=<org> or publish SSM ${local.ssm_root}/governance/deployment_org (governance does)."
+  }
 }
 
 # --- Cost_Store ---
@@ -521,7 +543,7 @@ resource "aws_lambda_function" "notifier" {
     variables = {
       COST_STORE_TABLE = aws_dynamodb_table.cost_store.name
       CONFIG_TABLE     = "${var.project}-${var.environment}-gov-config"
-      DEPLOYMENT_ORG   = var.deployment_org
+      DEPLOYMENT_ORG   = local.deployment_org
     }
   }
 
@@ -624,7 +646,7 @@ resource "aws_lambda_function" "hints" {
       HINTS_TABLE      = aws_dynamodb_table.routing_hints.name
       CONFIG_TABLE     = "${var.project}-${var.environment}-gov-config"
       WINDOW_DAYS      = "7"
-      DEPLOYMENT_ORG   = var.deployment_org
+      DEPLOYMENT_ORG   = local.deployment_org
     }
   }
 

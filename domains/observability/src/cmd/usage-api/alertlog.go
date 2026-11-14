@@ -48,7 +48,10 @@ func queryAlertLog(ctx context.Context, fromISO string, limit int) ([]map[string
 		}
 		for _, it := range res.Items {
 			row := map[string]interface{}{}
-			for _, k := range []string{"rule", "label", "message", "severity", "metric",
+			// OBS-FUN-003: project `org` too, so the Alerts history can attribute each
+			// firing to the config that produced it (the notifier writes `org` on the
+			// ALERTLOG item). Without it the console showed unattributable rows.
+			for _, k := range []string{"org", "rule", "label", "message", "severity", "metric",
 				"comparator", "unit", "window", "host", "ts"} {
 				if v, ok := it[k].(*ddbtypes.AttributeValueMemberS); ok && v.Value != "" {
 					row[k] = v.Value
