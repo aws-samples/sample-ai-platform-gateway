@@ -96,9 +96,11 @@ value; the client-visible ones are named below so an operator upgrading knows wh
   `saved_usd` is the blended (verified + counterfactual) total, and the Overview/ROI cards now
   pair it with `saved_blended_pct` so a number and its percentage describe the same quantity.
 - **Streaming responses cache a `max_tokens` cut the same as buffered ones.** A length-cut
-  answer is now cacheable on both transports and the cached body carries the real
-  `finish_reason` (`"length"`, not a hardcoded `"stop"`), so the cache-hit rate no longer
-  depends on whether the caller streamed.
+  answer is now cacheable on both transports, and its cached `finish_reason` (`"length"`) is
+  replayed faithfully on BOTH the JSON and the streaming cache hit — the streamed replay no
+  longer reports a hardcoded `"stop"` for a truncated answer (fixed for streams in this run).
+  The buffered path also now reports `"length"` rather than the provider's `"max_tokens"`
+  vocabulary, so `finish_reason` is the same on every transport.
 - **A semantic-cache hit reports the model that actually produced the cached answer**
   (read from the stored body), not the model the current request would have chosen.
 - **`feature` is bounded to 64 characters of `[A-Za-z0-9._-]`; unknown paths are `404`;
@@ -120,9 +122,13 @@ value; the client-visible ones are named below so an operator upgrading knows wh
 - **Alerts and routing hints are evaluated once, for this deployment's org.** The notifier and
   hints-publisher no longer fan every `ORG#` config out over the same deployment-wide usage
   numbers; alert-log rows now carry `org` for attribution.
-- **BYO Bedrock onboarding works from the console.** "Fetch models" for a brand-new role now
-  registers a disabled placeholder route carrying the credential (so the allowlist accepts the
-  ARN) and then lists the account's models, instead of dead-locking on "role not configured".
+- **BYO Bedrock onboarding works from the console, with no config side effect.** "Fetch
+  models" for a brand-new role now calls a REQUEST-SCOPED `POST /admin/bedrock/models` (the
+  ARN in the body, owner/admin only, same generic errors), which lists the account's models
+  WITHOUT writing any routing config. The earlier approach wrote a disabled placeholder
+  routing entry that carried the customer's `role_arn`; that entry has been removed, and the
+  core router now refuses to resolve any route marked `disabled` so a leftover placeholder
+  can never trigger an AssumeRole.
 - **Timestamps render in the viewer's (or the configured) timezone** via `Intl.DateTimeFormat`
   / `CFG.timezone`, instead of displaying UTC with the `Z` stripped off.
 
@@ -154,21 +160,31 @@ value; the client-visible ones are named below so an operator upgrading knows wh
 
 #### Performance
 
-- **Optional router provisioned concurrency.** A burst of new requests paid a per-sandbox
-  scale-out penalty (p50 roughly double steady state). `router_provisioned_concurrency`
-  (default 0 = off) keeps N router environments warm; when set, the API Gateway integration
-  invokes a published `live` alias so the warm pool is actually hit. The bundled poc env
-  sets it to 1.
+- **Router provisioned concurrency is available but OFF by default, including in the poc.**
+  `router_provisioned_concurrency` (default 0) can keep N router environments warm; when > 0
+  the API Gateway integration invokes a published `live` alias so the pool is hit. It was
+  briefly enabled (=1) in the poc, but a measured burst showed it did NOT move p50 (≈2.55 s
+  with and without it): the burst penalty is uniform across all concurrent requests, so it is
+  downstream of handler entry (provider latency under concurrency / per-request DynamoDB reads
+  / API Gateway streaming setup), not per-sandbox scale-out that provisioned concurrency can
+  absorb. The poc is set back to 0 (no always-on billing); diagnosing the ~1.3 s needs an
+  X-Ray/handler-timing burst profile, which is tracked as a deferred task.
 
 #### Upgrade notes
 
-- **Every domain's `terraform apply` now adopts its Lambda log groups via `import {}` blocks**
-  in the `envs/poc` root. On an existing stack the plan shows *import + retention update*, not
-  *create* (a plain create failed with `ResourceAlreadyExistsException`). For a brand-new
-  account where the groups do not exist yet, remove those `import` blocks before the first apply.
+- **Adopting a domain's Lambda log groups into Terraform is opt-in (`adopt_log_groups`,
+  default false).** An EXISTING deployment imports its pre-existing groups once with
+  `terraform apply -var adopt_log_groups=true` (plan shows *import + retention update*, not
+  *create*); a greenfield account applies with the default and the groups are created. The
+  unguarded import blocks of the previous run made `plan` fail on a fresh account — see the
+  README "Existing deployment: first apply" step.
 - **`KEY_HASH_PEPPER` is generated once and held in Terraform state** (a `random_password`).
   Do not regenerate it: changing it invalidates every stored key hash. It is mirrored into
   Secrets Manager (`<name>-key-hash-pepper`) for recovery/rotation.
+- **`BYO_EXTERNAL_ID_SECRET` (new, same pattern as the pepper) derives each BYO customer's
+  cross-account ExternalID as HMAC(secret, org)** instead of the guessable literal
+  `aiplat-<org>`. BYO operators MUST set their role's trust-policy ExternalID to the derived
+  value; where no secret is provisioned the legacy literal is still used.
 - **The governance seed `default_config.json` only seeds behaviour defaults**
   (`auto_cheapest`, `cache_ttl`) at the global scope. Guardrail toggles are set per org from
   the console, so the global scope no longer imposes an un-loosenable guardrail ceiling on orgs.
@@ -176,12 +192,27 @@ value; the client-visible ones are named below so an operator upgrading knows wh
   unresolvable-but-syntactically-valid host no longer blocks saving the Alerts tab; the SSRF
   resolution check runs at delivery time, where it matters.
 - **`.terraform.lock.hcl` files are now committed** (multi-platform: linux_amd64,
-  darwin_amd64, darwin_arm64), so a clean clone resolves the same provider versions. A new CI
-  job builds every domain's `dist/` on a clean runner. The frontend module now requires a
-  us-east-1-aliased provider (`aws.useast1`) for the console WAF — the env wrapper passes it.
-- **The poc enables `router_provisioned_concurrency = 1`**, which incurs always-on
-  provisioned-concurrency billing for one router environment. Set it to 0 to turn that off;
-  the reusable module defaults to 0.
+  darwin_amd64, darwin_arm64), so a clean clone resolves the same provider versions. The new
+  `hashicorp/random` provider (the pepper / external-id secrets) means an existing checkout
+  needs `terraform init -upgrade` once. A CI job builds every domain's `dist/` on a clean
+  runner. The frontend module requires a us-east-1-aliased provider (`aws.useast1`) for the
+  console WAF — the env wrapper passes it.
+- **Observability reads `deployment_org` from SSM** (`/aiplat/<env>/governance/deployment_org`,
+  as core does); the plan FAILS if it cannot be resolved, so an ordinary redeploy can no longer
+  silently revert the notifier/hints to the per-org alert fan-out.
+- **MEMBER# records migrate from e-mail to Cognito `sub`.** An existing deployment upgrading
+  past GOV-SEC-003 MUST run `scripts/migrate-members-to-sub.sh` (dry run by default, `--apply`
+  to perform it) or team-scoped members lose their team claim on next sign-in. Idempotent.
+- **The audit archive event-source mapping starts at `TRIM_HORIZON`.** On the first apply that
+  changes the ESM it re-reads up to the stream's ~24 h of retained records into the cold
+  archive (possible duplicates), the one-time cost of never missing a poison record again.
+
+#### Also corrected in the contract list above
+
+- `unknown_app` (a TEAM/APP write naming an app that does not exist → `400 unknown_app`),
+  `tokens_estimated` (set when the provider sent no usage frame and the count is `len/4`, not a
+  measurement), and the audit CSV download filename (`audit-trail.csv`) are part of the same
+  client-visible surface and were already shipped; listing them here for completeness.
 
 ## [1.6.0] - 2026-10-26
 
