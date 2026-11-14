@@ -1268,11 +1268,16 @@ func validateProviderHost(rawURL string) error {
 	return nil
 }
 
-// validateWebhookURL is the write-time SSRF guard on an alert webhook (OBS-SEC-001):
-// https only, host must not be (or resolve to) a loopback/private/link-local/unspecified
-// address. The observability alert-notifier applies the identical rule at delivery time;
-// a domain does not import another domain, so the shared contract is the rule, not the
-// code. Rejecting at write time stops a bad URL from ever being stored.
+// validateWebhookURL is the WRITE-time guard on an alert webhook (OBS-SEC-001): https
+// only, no localhost, and no LITERAL loopback/private/link-local/unspecified IP.
+//
+// OBS-NFR-005: it deliberately does NOT resolve DNS. Resolving at write time made a save
+// fail with a 400 the moment a host stopped resolving (e.g. the demo fixture
+// hooks.example.com), and made the unit tests depend on outbound DNS in CI. The SSRF that
+// DNS resolution defends against matters at DELIVERY time, not at save time — the
+// alert-notifier re-resolves right before each POST (and thereby also defeats a rebind
+// between save and delivery). So the write side checks only what it can know statically;
+// the delivery side owns the resolving guard.
 func validateWebhookURL(rawURL string) error {
 	u, err := neturl.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Host == "" {
@@ -1285,19 +1290,11 @@ func validateWebhookURL(rawURL string) error {
 	if strings.EqualFold(host, "localhost") {
 		return errors.New("webhook_url host is not allowed")
 	}
-	var ips []net.IP
+	// Only reject a LITERAL non-routable IP. A hostname is left for the delivery-time
+	// resolver to vet, so an unresolvable-but-syntactically-valid host does not block a save.
 	if ip := net.ParseIP(host); ip != nil {
-		ips = []net.IP{ip}
-	} else {
-		addrs, lerr := net.LookupIP(host)
-		if lerr != nil {
-			return errors.New("webhook_url host does not resolve")
-		}
-		ips = addrs
-	}
-	for _, ip := range ips {
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return errors.New("webhook_url resolves to a private or loopback address")
+			return errors.New("webhook_url is a private or loopback address")
 		}
 	}
 	return nil
