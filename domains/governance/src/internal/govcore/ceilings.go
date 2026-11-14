@@ -80,6 +80,20 @@ func gBool(m map[string]interface{}, path ...string) (bool, bool) {
 	return false, false
 }
 
+// govEffectiveBudget is a config's effective budget ceiling: the positive limit_usd, else
+// monthly_usd (the old plan-seed key) — the same precedence as the Core's Budget.Limit().
+// CORE-SEC-009: checking only limit_usd let a child widen by declaring limit_usd while the
+// parent capped via monthly_usd.
+func govEffectiveBudget(m map[string]interface{}) (float64, bool) {
+	if v, ok := gNum(m, "budget", "limit_usd"); ok && v > 0 {
+		return v, true
+	}
+	if v, ok := gNum(m, "budget", "monthly_usd"); ok && v > 0 {
+		return v, true
+	}
+	return 0, false
+}
+
 // widensNum reports a positive child value above a positive parent ceiling. A child
 // value of 0/absent inherits the parent and is never a violation.
 func widensNum(parent map[string]interface{}, child map[string]interface{}, path ...string) bool {
@@ -96,8 +110,12 @@ func widensNum(parent map[string]interface{}, child map[string]interface{}, path
 func CeilingViolations(parent, child map[string]interface{}, belowOrg bool) []string {
 	var v []string
 
-	if widensNum(parent, child, "budget", "limit_usd") {
-		v = append(v, "budget.limit_usd")
+	// CORE-SEC-009: compare EFFECTIVE budget limits (limit_usd else monthly_usd) so a
+	// child cannot widen via whichever budget key the parent did not use.
+	if cv, cok := govEffectiveBudget(child); cok {
+		if pv, pok := govEffectiveBudget(parent); pok && cv > pv {
+			v = append(v, "budget.limit_usd")
+		}
 	}
 	if ca, ok := gStr(child, "budget", "action"); ok {
 		if pa, ok := gStr(parent, "budget", "action"); ok && govBudgetActionRank[pa] > govBudgetActionRank[ca] {
@@ -126,7 +144,14 @@ func CeilingViolations(parent, child map[string]interface{}, belowOrg bool) []st
 		}
 	}
 	if cs, ok := gStr(child, "cache_scope"); ok {
-		if ps, ok := gStr(parent, "cache_scope"); ok && govCacheScopeRank[ps] > govCacheScopeRank[cs] {
+		// CORE-SEC-009: an UNDECLARED parent scope defaults to "team" (the documented
+		// default), so a child cannot opt into the looser "deployment" scope just because
+		// no ancestor declared one.
+		ps, pok := gStr(parent, "cache_scope")
+		if !pok {
+			ps = "team"
+		}
+		if govCacheScopeRank[ps] > govCacheScopeRank[cs] {
 			v = append(v, "cache_scope")
 		}
 	}
