@@ -57,6 +57,14 @@ variable "console_origin" {
   default     = ""
 }
 
+# OBS-FUN-003: this deployment's single org. The notifier and hints-publisher evaluate
+# and publish only for this org (the USAGE partition they read is deployment-wide), the
+# same DEPLOYMENT_ORG contract the core uses. Empty keeps the old discover-all behaviour.
+variable "deployment_org" {
+  type    = string
+  default = ""
+}
+
 locals {
   name     = "${var.project}-${var.environment}-obs"
   dist     = var.dist_path
@@ -513,6 +521,7 @@ resource "aws_lambda_function" "notifier" {
     variables = {
       COST_STORE_TABLE = aws_dynamodb_table.cost_store.name
       CONFIG_TABLE     = "${var.project}-${var.environment}-gov-config"
+      DEPLOYMENT_ORG   = var.deployment_org
     }
   }
 
@@ -615,6 +624,7 @@ resource "aws_lambda_function" "hints" {
       HINTS_TABLE      = aws_dynamodb_table.routing_hints.name
       CONFIG_TABLE     = "${var.project}-${var.environment}-gov-config"
       WINDOW_DAYS      = "7"
+      DEPLOYMENT_ORG   = var.deployment_org
     }
   }
 

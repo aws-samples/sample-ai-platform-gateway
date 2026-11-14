@@ -40,6 +40,12 @@ var (
 	ddb       *dynamodb.Client
 	costTable = os.Getenv("COST_STORE_TABLE")
 	cfgTable  = os.Getenv("CONFIG_TABLE")
+	// OBS-FUN-003: this is a SINGLE-org deployment (the same contract the core reads via
+	// DEPLOYMENT_ORG). The USAGE partition the notifier reads is deployment-wide, so
+	// evaluating every ORG# config item fanned the SAME aggregate numbers out once per org
+	// — duplicate webhook deliveries and per-org alerts that actually describe the whole
+	// deployment. Evaluate only this deployment's org.
+	deploymentOrg = os.Getenv("DEPLOYMENT_ORG")
 	// OBS-SEC-001: refuse redirects. Without CheckRedirect a validated https host
 	// could 302 to http://169.254.169.254/… and the client would follow it, defeating
 	// the SSRF guard. ErrUseLastResponse stops at the first response.
@@ -49,13 +55,19 @@ var (
 	}
 )
 
+// lookupIP is the resolver validateWebhookURL uses. OBS-NFR-005: it is a seam so a test
+// can stub DNS and run offline (the real one is net.LookupIP). This is the DELIVERY-time
+// guard, where SSRF actually matters — the write side (governance config-api) no longer
+// resolves DNS, so a host that merely stopped resolving cannot block a config save.
+var lookupIP = net.LookupIP
+
 // validateWebhookURL is the SSRF guard on a customer-supplied alert webhook
 // (OBS-SEC-001): https only, and the host must not resolve to a loopback, private,
-// link-local or unspecified address (which would let a config write POST to
-// 169.254.169.254 or an internal service). The same rule runs at write time in the
-// governance config-api; this is the delivery-time check, since a config may predate
-// validation. Kept deliberately identical in both places (a domain does not import
-// another domain) — the shared contract is the rule, not the code.
+// link-local or unspecified address (which would let a delivery POST to
+// 169.254.169.254 or an internal service). This is the DELIVERY-time check — the
+// governance config-api validates scheme + literal IP at WRITE time without DNS
+// (OBS-NFR-005), and this re-resolves right before the request leaves, which also
+// defeats DNS-rebinding between the save and the delivery.
 func validateWebhookURL(raw string) error {
 	u, err := neturl.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -68,7 +80,7 @@ func validateWebhookURL(raw string) error {
 	if host == "" {
 		return fmt.Errorf("webhook has no host")
 	}
-	ips, err := net.LookupIP(host)
+	ips, err := lookupIP(host)
 	if err != nil {
 		return fmt.Errorf("webhook host does not resolve")
 	}
@@ -378,8 +390,11 @@ func writeAlertLog(ctx context.Context, org string, payload map[string]interface
 	rule, _ := payload["rule"].(string)
 
 	item := map[string]ddbtypes.AttributeValue{
-		"pk":         s(telemetry.AlertLogPartition),
-		"sk":         s("TS#" + now.Format(time.RFC3339Nano) + "#" + rule),
+		"pk": s(telemetry.AlertLogPartition),
+		"sk": s("TS#" + now.Format(time.RFC3339Nano) + "#" + rule),
+		// OBS-FUN-003: carry the org (and rule) so the Alerts history can attribute a row
+		// to the config that produced it, instead of an unattributable deployment-wide row.
+		"org":        s(org),
 		"rule":       s(rule),
 		"ts":         s(now.Format(time.RFC3339)),
 		"delivered":  &ddbtypes.AttributeValueMemberBOOL{Value: delivered},
@@ -515,6 +530,12 @@ func orgConfigs(ctx context.Context) map[string]map[string]json.RawMessage {
 func handle(ctx context.Context) (map[string]interface{}, error) {
 	evaluated, fired := 0, 0
 	for org, cfg := range orgConfigs(ctx) {
+		// OBS-FUN-003: evaluate only this deployment's org. Other ORG# items (left over
+		// from the multi-tenant control plane) would otherwise each fire on the same
+		// deployment-wide USAGE numbers.
+		if deploymentOrg != "" && org != deploymentOrg {
+			continue
+		}
 		alertsRaw, ok := cfg["alerts"]
 		if !ok {
 			continue

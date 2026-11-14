@@ -40,6 +40,8 @@ var (
 	costTable  = os.Getenv("COST_STORE_TABLE")
 	hintsTable = os.Getenv("HINTS_TABLE")
 	cfgTable   = os.Getenv("CONFIG_TABLE")
+	// OBS-FUN-003: single-org deployment; publish hints only for this org.
+	deploymentOrg = os.Getenv("DEPLOYMENT_ORG")
 )
 
 func windowDays() int {
@@ -272,9 +274,19 @@ func handle(ctx context.Context) (map[string]interface{}, error) {
 	// falls back to the heuristic instead of deciding on stale data.
 	ttl := now.Add(3 * time.Hour)
 
-	list, err := orgs(ctx)
-	if err != nil {
-		return nil, err
+	// OBS-FUN-003: a single-org deployment. The cost-store window the publisher reads is
+	// deployment-wide, so iterating every ORG# registry item republished the SAME medians
+	// under every org's partition (ORG#XYZ_ORG, ORG#contoso, ...). Publish only for this
+	// deployment's org (the same DEPLOYMENT_ORG contract the core and notifier use); fall
+	// back to the discovered registry only when the env is unset.
+	var list []string
+	if deploymentOrg != "" {
+		list = []string{deploymentOrg}
+	} else {
+		var err error
+		if list, err = orgs(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	published, skipped := 0, 0
