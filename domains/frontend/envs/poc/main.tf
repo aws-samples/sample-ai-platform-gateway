@@ -19,6 +19,17 @@ provider "aws" {
   }
 }
 
+# FE-IAC-001: a CLOUDFRONT-scope WAFv2 web ACL MUST be created in us-east-1 (an AWS
+# requirement — CloudFront is a global service fronted from that region). The distribution
+# itself is global under the default provider; only its WAF lives here.
+provider "aws" {
+  alias  = "useast1"
+  region = "us-east-1"
+  default_tags {
+    tags = { Project = var.project, Environment = var.environment, ManagedBy = "terraform", Domain = "frontend", "auto-delete" = "no" }
+  }
+}
+
 variable "region" {
   type    = string
   default = "us-west-2"
@@ -68,15 +79,27 @@ variable "console_enabled" {
   default = true
 }
 
+# FE-IAC-001: rate-limiting WAF in front of the console (an admin surface). Default on;
+# set false only if a WAF is attached by some outer front door.
+variable "console_waf_enabled" {
+  type    = bool
+  default = true
+}
+
 variable "additional_oac_distribution_arns" {
   type    = list(string)
   default = []
 }
 
 module "domain" {
-  source                           = "../../tf"
+  source = "../../tf"
+  providers = {
+    aws         = aws
+    aws.useast1 = aws.useast1
+  }
   additional_oac_distribution_arns = var.additional_oac_distribution_arns
   console_enabled                  = var.console_enabled
+  console_waf_enabled              = var.console_waf_enabled
   project                          = var.project
   environment                      = var.environment
   region                           = var.region

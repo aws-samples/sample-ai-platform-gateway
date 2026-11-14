@@ -8,7 +8,13 @@
 terraform {
   required_version = ">= 1.9.0, < 2.0.0"
   required_providers {
-    aws = { source = "hashicorp/aws", version = ">= 6.0.0, < 7.0.0" }
+    # FE-IAC-001: the caller must pass a us-east-1-aliased provider (aws.useast1) for the
+    # CLOUDFRONT-scope WAF, which AWS only allows in that region.
+    aws = {
+      source                = "hashicorp/aws"
+      version               = ">= 6.0.0, < 7.0.0"
+      configuration_aliases = [aws.useast1]
+    }
   }
 }
 
@@ -18,6 +24,16 @@ variable "console_enabled" {
   type        = bool
   default     = true
   description = "Whether the CloudFront distribution serves the console. false keeps the infrastructure but stops answering requests."
+}
+
+# FE-IAC-001: attach a CLOUDFRONT-scope WAFv2 web ACL (rate rule + AWS managed common
+# rules) to the console distribution. The console is an admin surface and had no rate
+# limiting. Default on; a deployment that fronts the console with its own WAF can turn it
+# off. The web ACL is created in us-east-1 (aws.useast1) as CloudFront requires.
+variable "console_waf_enabled" {
+  type        = bool
+  default     = true
+  description = "Create and attach a CLOUDFRONT-scope WAFv2 web ACL (rate limiting) to the console distribution."
 }
 
 variable "additional_oac_distribution_arns" {
@@ -322,7 +338,71 @@ resource "aws_s3_bucket_acl" "logs" {
   }
 }
 
+# FE-IAC-001: CLOUDFRONT-scope WAFv2 for the console. Created in us-east-1 (aws.useast1),
+# as CloudFront requires. Two rules: a per-IP rate limit (a blunt brute-force/DoS brake on
+# an admin surface that otherwise had none) and the AWS managed common rule set (count-only
+# so it never blocks a legitimate console action — the managed rules surface in metrics for
+# tuning without risking a false positive that locks an operator out). The real
+# authorization stays the Cognito authorizer on each API; this is defence in depth.
+resource "aws_wafv2_web_acl" "console" {
+  count    = var.console_waf_enabled ? 1 : 0
+  provider = aws.useast1
+  name     = "${local.name}-console"
+  scope    = "CLOUDFRONT"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "rate-limit-per-ip"
+    priority = 1
+    action {
+      block {}
+    }
+    statement {
+      rate_based_statement {
+        limit              = 2000 # requests per 5-minute window per source IP
+        aggregate_key_type = "IP"
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-console-rate"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "aws-common"
+    priority = 2
+    override_action {
+      count {} # surface in metrics, do not block — avoids locking an operator out
+    }
+    statement {
+      managed_rule_group_statement {
+        vendor_name = "AWS"
+        name        = "AWSManagedRulesCommonRuleSet"
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-console-common"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "${local.name}-console-waf"
+    sampled_requests_enabled   = true
+  }
+}
+
 resource "aws_cloudfront_distribution" "site" {
+  # FE-IAC-001: rate-limit the admin console at the edge.
+  web_acl_id = var.console_waf_enabled ? aws_wafv2_web_acl.console[0].arn : null
+
   # Serving the console can be turned off without destroying the distribution or
   # the bucket, which is what you want when the console is reachable through some
   # other front door and this one should not answer at all. A hardcoded `true`

@@ -521,10 +521,12 @@ controls the Terraform sets up, so you can check them against your own requireme
 - CORS is deny-by-default: an origin has to be in the allowlist to get a response header.
 - The console is private S3 behind CloudFront with OAC, a strict CSP (no `'unsafe-inline'` script
   source) and an HSTS response-header policy, and its Tailwind build is self-hosted (with a
-  Subresource-Integrity hash enforced at deploy time) rather than pulled from a CDN. The public
-  **demo** runs on the CloudFront default certificate (TLS floor TLSv1) and has **no WAF**; a
-  production deployment should add a CLOUDFRONT-scope WAF (rate rule) and a custom domain with a
-  TLS1.2 certificate.
+  Subresource-Integrity hash enforced at deploy time) rather than pulled from a CDN. A
+  CLOUDFRONT-scope WAFv2 web ACL sits in front of the distribution (per-IP rate limit +
+  AWS managed common rule set in count mode); it is on by default (`console_waf_enabled`). The
+  public **demo** still runs on the CloudFront default certificate (TLS floor TLSv1): raising the
+  floor to TLS 1.2 requires a custom domain and an ACM certificate (`domain_name` +
+  `acm_certificate_arn`), which the demo does not provision.
 - All four SQS queues and the SNS topic are encrypted at rest, and all eight DynamoDB tables have
   point-in-time recovery enabled.
 - Access logging is on for CloudFront and every API Gateway stage; control-plane mutations land in
