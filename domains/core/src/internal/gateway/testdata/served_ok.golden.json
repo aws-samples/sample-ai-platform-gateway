@@ -74,7 +74,7 @@
       "saved_usd": 0,
       "saved_verified_usd": 0,
       "savings_class": "",
-      "savings_floored": true,
+      "savings_floored": false,
       "savings_reason": "",
       "schema": "usage-record/1",
       "sli_eligible": true,

@@ -1,171 +1,514 @@
 {
-  "note": "Core and Governance now share the SAME scope chain (ORG#<org>#TEAM#...#APP#...). The Core's org (DEPLOYMENT_ORG) is a fixed deployment-level constant, not a per-request parameter, but it is supplied to scopeKeys() so both domains read/write identical DynamoDB keys. This fixture used to document an intentional divergence (chain_core had no org level) — that divergence was a bug: config written by Governance under ORG#... never reached the Core's runtime lookup, which was scoped to team:.../app:... instead. Fixed by threading org through both sides.",
+  "note": "Core and Governance now share the SAME scope chain (ORG#<org>#TEAM#...#APP#...). The Core's org (DEPLOYMENT_ORG) is a fixed deployment-level constant, not a per-request parameter, but it is supplied to scopeKeys() so both domains read/write identical DynamoDB keys. This fixture used to document an intentional divergence (chain_core had no org level) \u2014 that divergence was a bug: config written by Governance under ORG#... never reached the Core's runtime lookup, which was scoped to team:.../app:... instead. Fixed by threading org through both sides.",
   "cases": [
     {
       "name": "global only",
-      "org": "", "team": "", "app": "",
+      "org": "",
+      "team": "",
+      "app": "",
       "cross_domain_equal": true,
       "scope_key": "global",
-      "chain": ["global"],
-      "chain_governance": ["global"],
+      "chain": [
+        "global"
+      ],
+      "chain_governance": [
+        "global"
+      ],
       "scope_key_governance": "global",
-      "chain_core": ["global"],
+      "chain_core": [
+        "global"
+      ],
       "scope_key_core": "global"
     },
     {
       "name": "org isolated",
-      "org": "acme", "team": "", "app": "",
+      "org": "acme",
+      "team": "",
+      "app": "",
       "cross_domain_equal": true,
-      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#default"],
+      "chain_governance": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#default"
+      ],
       "scope_key_governance": "ORG#acme",
-      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#default"],
+      "chain_core": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#default"
+      ],
       "scope_key_core": "global"
     },
     {
       "name": "org + team",
-      "org": "acme", "team": "eng", "app": "",
+      "org": "acme",
+      "team": "eng",
+      "app": "",
       "cross_domain_equal": true,
-      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#eng"],
+      "chain_governance": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#eng"
+      ],
       "scope_key_governance": "ORG#acme#TEAM#eng",
-      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#eng"],
+      "chain_core": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#eng"
+      ],
       "scope_key_core": "global"
     },
     {
       "name": "org + team + app",
-      "org": "acme", "team": "eng", "app": "web",
+      "org": "acme",
+      "team": "eng",
+      "app": "web",
       "cross_domain_equal": true,
-      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#eng", "ORG#acme#TEAM#eng#APP#web"],
+      "chain_governance": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#eng",
+        "ORG#acme#TEAM#eng#APP#web"
+      ],
       "scope_key_governance": "ORG#acme#TEAM#eng#APP#web",
-      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#eng", "ORG#acme#TEAM#eng#APP#web"],
+      "chain_core": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#eng",
+        "ORG#acme#TEAM#eng#APP#web"
+      ],
       "scope_key_core": "global"
     },
     {
       "name": "org + app, no team (defaults to team default)",
-      "org": "acme", "team": "", "app": "web",
+      "org": "acme",
+      "team": "",
+      "app": "web",
       "cross_domain_equal": true,
-      "chain_governance": ["global", "ORG#acme", "ORG#acme#TEAM#default", "ORG#acme#TEAM#default#APP#web"],
+      "chain_governance": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#default",
+        "ORG#acme#TEAM#default#APP#web"
+      ],
       "scope_key_governance": "ORG#acme#TEAM#default#APP#web",
-      "chain_core": ["global", "ORG#acme", "ORG#acme#TEAM#default", "ORG#acme#TEAM#default#APP#web"],
+      "chain_core": [
+        "global",
+        "ORG#acme",
+        "ORG#acme#TEAM#default",
+        "ORG#acme#TEAM#default#APP#web"
+      ],
       "scope_key_core": "global"
     }
   ],
-
-  "allowed_models_note": "allowed_models is the ONE config key that does NOT follow the replace rule the rest of the merge uses: a parent scope must be a CEILING, not a default. Before this, a child's list replaced its parent's, so an app could be served models its team denied. Both domains resolve it by intersection and both are verified against these cases with no shared code (D3): the Core folds them with ddbconfig.foldAllowed, Governance with govcore.IntersectAllowed. `levels` is the chain from least to most specific; a level with no `allowed_models` key declares nothing. The nil/empty distinction is load-bearing — `expect_declared:false` means the key is ABSENT from the effective config (no restriction), while `expect_declared:true` with `expect:[]` means DECLARED EMPTY, which denies everything. Reading a declared-empty list as 'allow everything' is what turned two restrictions into full catalog access.",
+  "allowed_models_note": "allowed_models is the ONE config key that does NOT follow the replace rule the rest of the merge uses: a parent scope must be a CEILING, not a default. Before this, a child's list replaced its parent's, so an app could be served models its team denied. Both domains resolve it by intersection and both are verified against these cases with no shared code (D3): the Core folds them with ddbconfig.foldAllowed, Governance with govcore.IntersectAllowed. `levels` is the chain from least to most specific; a level with no `allowed_models` key declares nothing. The nil/empty distinction is load-bearing \u2014 `expect_declared:false` means the key is ABSENT from the effective config (no restriction), while `expect_declared:true` with `expect:[]` means DECLARED EMPTY, which denies everything. Reading a declared-empty list as 'allow everything' is what turned two restrictions into full catalog access.",
   "allowed_models_cases": [
     {
       "name": "nobody declares: no restriction",
-      "levels": [{}, {}, {}, {}],
+      "levels": [
+        {},
+        {},
+        {},
+        {}
+      ],
       "expect_declared": false
     },
     {
       "name": "only the org declares: that list is the ceiling all the way down",
-      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {}, {}],
+      "levels": [
+        {},
+        {
+          "allowed_models": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        {},
+        {}
+      ],
       "expect_declared": true,
-      "expect": ["a", "b", "c"]
+      "expect": [
+        "a",
+        "b",
+        "c"
+      ]
     },
     {
       "name": "a child narrows its parent",
-      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {"allowed_models": ["a", "b"]}, {"allowed_models": ["a"]}],
+      "levels": [
+        {},
+        {
+          "allowed_models": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        {
+          "allowed_models": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "allowed_models": [
+            "a"
+          ]
+        }
+      ],
       "expect_declared": true,
-      "expect": ["a"]
+      "expect": [
+        "a"
+      ]
     },
     {
       "name": "a child CANNOT widen its parent: the extra models are dropped",
-      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {"allowed_models": ["a"]}, {"allowed_models": ["a", "b", "c"]}],
+      "levels": [
+        {},
+        {
+          "allowed_models": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        {
+          "allowed_models": [
+            "a"
+          ]
+        },
+        {
+          "allowed_models": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ],
       "expect_declared": true,
-      "expect": ["a"]
+      "expect": [
+        "a"
+      ]
     },
     {
       "name": "an app declaring ONLY models its team denies is served nothing, not everything",
-      "levels": [{}, {}, {"allowed_models": ["a"]}, {"allowed_models": ["b"]}],
+      "levels": [
+        {},
+        {},
+        {
+          "allowed_models": [
+            "a"
+          ]
+        },
+        {
+          "allowed_models": [
+            "b"
+          ]
+        }
+      ],
       "expect_declared": true,
       "expect": []
     },
     {
       "name": "a declared empty list anywhere denies everything below it",
-      "levels": [{}, {"allowed_models": ["a", "b"]}, {"allowed_models": []}, {}],
+      "levels": [
+        {},
+        {
+          "allowed_models": [
+            "a",
+            "b"
+          ]
+        },
+        {
+          "allowed_models": []
+        },
+        {}
+      ],
       "expect_declared": true,
       "expect": []
     },
     {
       "name": "the child's order is preserved, not the parent's",
-      "levels": [{}, {"allowed_models": ["a", "b", "c"]}, {}, {"allowed_models": ["c", "a"]}],
+      "levels": [
+        {},
+        {
+          "allowed_models": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        {},
+        {
+          "allowed_models": [
+            "c",
+            "a"
+          ]
+        }
+      ],
       "expect_declared": true,
-      "expect": ["c", "a"]
+      "expect": [
+        "c",
+        "a"
+      ]
     },
     {
       "name": "a level below an undeclared one still narrows what came above it",
-      "levels": [{"allowed_models": ["a", "b", "c"]}, {}, {}, {"allowed_models": ["b"]}],
+      "levels": [
+        {
+          "allowed_models": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        {},
+        {},
+        {
+          "allowed_models": [
+            "b"
+          ]
+        }
+      ],
       "expect_declared": true,
-      "expect": ["b"]
+      "expect": [
+        "b"
+      ]
     }
   ],
-
   "ceilings_note": "Beyond allowed_models, a parent scope is a CEILING for every policy a child could otherwise WIDEN (CORE-SEC-001 / GOV-SEC-001). A child (TEAM#/APP#) may restrict, never loosen. Core enforces this on READ by clamping the merged config (ddbconfig.foldCeilings); Governance enforces it on WRITE by rejecting a widening PUT with 400 scope_widening (govcore.CeilingViolations). Both read these same cases: `widens` lists the keys a correct write-side check must flag (empty = the write is a legal narrowing); `expect` is the clamped effective config the read-side fold must produce from parent+child. Directions: guardrail flags fold by OR (a child can turn a guard ON, never OFF); budget.limit_usd / rate_limits.* / max_thinking_tokens / request_timeout_ms take the smaller POSITIVE value (a child 0/absent inherits the parent); budget.action and cache_scope take the stricter (block>degrade>alert; app>team>deployment); status 'suspended' is sticky; routing/pricing are ORG-only and a sub-org override is dropped on read and rejected on write.",
   "ceiling_cases": [
     {
       "name": "child widens budget and rate limits: clamped to parent on read, rejected on write",
       "below_org": true,
-      "parent": {"budget": {"action": "block", "limit_usd": 500}, "rate_limits": {"requests_per_minute": 600, "tokens_per_minute": 50000}},
-      "child": {"budget": {"action": "alert", "limit_usd": 999999}, "rate_limits": {"requests_per_minute": 100000}},
-      "widens": ["budget.limit_usd", "budget.action", "rate_limits.requests_per_minute"],
-      "expect": {"budget": {"action": "block", "limit_usd": 500}, "rate_limits": {"requests_per_minute": 600, "tokens_per_minute": 50000}}
+      "parent": {
+        "budget": {
+          "action": "block",
+          "limit_usd": 500
+        },
+        "rate_limits": {
+          "requests_per_minute": 600,
+          "tokens_per_minute": 50000
+        }
+      },
+      "child": {
+        "budget": {
+          "action": "alert",
+          "limit_usd": 999999
+        },
+        "rate_limits": {
+          "requests_per_minute": 100000
+        }
+      },
+      "widens": [
+        "budget.limit_usd",
+        "budget.action",
+        "rate_limits.requests_per_minute"
+      ],
+      "expect": {
+        "budget": {
+          "action": "block",
+          "limit_usd": 500
+        },
+        "rate_limits": {
+          "requests_per_minute": 600,
+          "tokens_per_minute": 50000
+        }
+      }
     },
     {
       "name": "child narrows budget and rate limits: kept, no violation",
       "below_org": true,
-      "parent": {"budget": {"action": "alert", "limit_usd": 500}, "rate_limits": {"requests_per_minute": 600}},
-      "child": {"budget": {"action": "block", "limit_usd": 100}, "rate_limits": {"requests_per_minute": 60}},
+      "parent": {
+        "budget": {
+          "action": "alert",
+          "limit_usd": 500
+        },
+        "rate_limits": {
+          "requests_per_minute": 600
+        }
+      },
+      "child": {
+        "budget": {
+          "action": "block",
+          "limit_usd": 100
+        },
+        "rate_limits": {
+          "requests_per_minute": 60
+        }
+      },
       "widens": [],
-      "expect": {"budget": {"action": "block", "limit_usd": 100}, "rate_limits": {"requests_per_minute": 60}}
+      "expect": {
+        "budget": {
+          "action": "block",
+          "limit_usd": 100
+        },
+        "rate_limits": {
+          "requests_per_minute": 60
+        }
+      }
     },
     {
       "name": "child turns a parent guardrail OFF: stays ON on read, rejected on write",
       "below_org": true,
-      "parent": {"guardrails": {"block_secrets": true, "block_injection": true, "mask_pii": true}},
-      "child": {"guardrails": {"block_secrets": false, "block_injection": false}},
-      "widens": ["guardrails.block_secrets", "guardrails.block_injection"],
-      "expect": {"guardrails": {"block_secrets": true, "block_injection": true, "mask_pii": true}}
+      "parent": {
+        "guardrails": {
+          "block_secrets": true,
+          "block_injection": true,
+          "mask_pii": true
+        }
+      },
+      "child": {
+        "guardrails": {
+          "block_secrets": false,
+          "block_injection": false
+        }
+      },
+      "widens": [
+        "guardrails.block_secrets",
+        "guardrails.block_injection"
+      ],
+      "expect": {
+        "guardrails": {
+          "block_secrets": true,
+          "block_injection": true,
+          "mask_pii": true
+        }
+      }
     },
     {
       "name": "child turns a guardrail the parent left OFF ON: allowed (narrowing)",
       "below_org": true,
-      "parent": {"guardrails": {"block_secrets": true, "no_store": false}},
-      "child": {"guardrails": {"no_store": true}},
+      "parent": {
+        "guardrails": {
+          "block_secrets": true,
+          "no_store": false
+        }
+      },
+      "child": {
+        "guardrails": {
+          "no_store": true
+        }
+      },
       "widens": [],
-      "expect": {"guardrails": {"block_secrets": true, "no_store": true}}
+      "expect": {
+        "guardrails": {
+          "block_secrets": true,
+          "no_store": true
+        }
+      }
     },
     {
       "name": "child loosens cache_scope to deployment: stays team on read, rejected on write",
       "below_org": true,
-      "parent": {"cache_scope": "team"},
-      "child": {"cache_scope": "deployment"},
-      "widens": ["cache_scope"],
-      "expect": {"cache_scope": "team"}
+      "parent": {
+        "cache_scope": "team"
+      },
+      "child": {
+        "cache_scope": "deployment"
+      },
+      "widens": [
+        "cache_scope"
+      ],
+      "expect": {
+        "cache_scope": "team"
+      }
     },
     {
       "name": "child tightens cache_scope to app: kept",
       "below_org": true,
-      "parent": {"cache_scope": "team"},
-      "child": {"cache_scope": "app"},
+      "parent": {
+        "cache_scope": "team"
+      },
+      "child": {
+        "cache_scope": "app"
+      },
       "widens": [],
-      "expect": {"cache_scope": "app"}
+      "expect": {
+        "cache_scope": "app"
+      }
     },
     {
       "name": "child tries to un-suspend: suspension is sticky, rejected on write",
       "below_org": true,
-      "parent": {"status": "suspended"},
-      "child": {"status": "active"},
-      "widens": ["status"],
-      "expect": {"status": "suspended"}
+      "parent": {
+        "status": "suspended"
+      },
+      "child": {
+        "status": "active"
+      },
+      "widens": [
+        "status"
+      ],
+      "expect": {
+        "status": "suspended"
+      }
     },
     {
       "name": "child overrides routing below ORG: dropped on read, rejected on write",
       "below_org": true,
-      "parent": {"routing": {"claude-haiku": {"provider_model_id": "real"}}},
-      "child": {"routing": {"claude-haiku": {"provider_model_id": "attacker"}}},
-      "widens": ["routing"],
-      "expect": {"routing": {"claude-haiku": {"provider_model_id": "real"}}}
+      "parent": {
+        "routing": {
+          "claude-haiku": {
+            "provider_model_id": "real"
+          }
+        }
+      },
+      "child": {
+        "routing": {
+          "claude-haiku": {
+            "provider_model_id": "attacker"
+          }
+        }
+      },
+      "widens": [
+        "routing"
+      ],
+      "expect": {
+        "routing": {
+          "claude-haiku": {
+            "provider_model_id": "real"
+          }
+        }
+      }
+    },
+    {
+      "name": "CORE-SEC-009 child widens budget via limit_usd while parent capped via monthly_usd: clamped to parent on read, rejected on write",
+      "below_org": true,
+      "parent": {
+        "budget": {
+          "monthly_usd": 10
+        }
+      },
+      "child": {
+        "budget": {
+          "limit_usd": 100000
+        }
+      },
+      "widens": [
+        "budget.limit_usd"
+      ],
+      "expect": {
+        "budget": {
+          "monthly_usd": 10,
+          "limit_usd": 10
+        }
+      }
+    },
+    {
+      "name": "CORE-SEC-009 child opts into deployment cache_scope when parent declared none: defaults to team on read, rejected on write",
+      "below_org": true,
+      "parent": {},
+      "child": {
+        "cache_scope": "deployment"
+      },
+      "widens": [
+        "cache_scope"
+      ],
+      "expect": {
+        "cache_scope": "team"
+      }
     }
   ]
 }

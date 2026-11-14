@@ -50,7 +50,7 @@ func TestClassifyProviderErr_TypedStatus(t *testing.T) {
 		want   string
 	}{
 		{400, `{"type":"error","error":{"type":"invalid_request_error"}}`, reasonInvalidRequest},
-		{404, "model not found", reasonInvalidRequest},
+		{404, "model not found", reasonProviderConfig}, // CORE-BND-006: a 404 is a route mistake, not a caller one
 		{422, "unprocessable", reasonInvalidRequest},
 		{401, "unauthorized", "provider_auth"},
 		{403, "forbidden", "provider_auth"},
@@ -68,6 +68,34 @@ func TestClassifyProviderErr_TypedStatus(t *testing.T) {
 	// no_eligible_model is a config refusal, never an SLI-eligible dependency failure.
 	if cat, sli := reasonMeta("no_eligible_model"); cat != catConfig || sli {
 		t.Errorf("reasonMeta(no_eligible_model) = (%q,%v), want (config,false)", cat, sli)
+	}
+}
+
+// CORE-BND-006: a provider rejection that the MODEL ID cannot be resolved (an operator
+// route mistake) is classified as provider_config (config, non-SLI, route-oriented
+// message), NOT the caller-blaming invalid_request. A genuine parameter rejection with
+// the same ValidationException shape still classifies as invalid_request.
+func TestClassifyProviderErr_RouteMisconfig(t *testing.T) {
+	routeErrs := []error{
+		errors.New("operation error Bedrock Runtime: Converse, StatusCode: 400, ValidationException: Could not resolve the foundation model from the provided model identifier."),
+		errors.New("ValidationException: The provided model identifier is invalid."),
+		errors.New("the requested model is no longer supported"),
+		&ports.ProviderError{Status: 404, Label: "openai_compatible", Body: "model not found"},
+		&ports.ProviderError{Status: 400, Label: "bedrock", Body: "ValidationException: could not resolve the foundation model"},
+	}
+	for _, e := range routeErrs {
+		if got := classifyProviderErr(e); got != reasonProviderConfig {
+			t.Errorf("classifyProviderErr(%v) = %q, want %q", e, got, reasonProviderConfig)
+		}
+	}
+	// A real parameter rejection (R_FUN001_haiku_temp_top_p shape) must stay invalid_request.
+	paramErr := &ports.ProviderError{Status: 400, Label: "bedrock", Body: "ValidationException: temperature and top_p cannot both be specified"}
+	if got := classifyProviderErr(paramErr); got != reasonInvalidRequest {
+		t.Errorf("param rejection = %q, want %q", got, reasonInvalidRequest)
+	}
+	// provider_config is config/non-SLI.
+	if cat, sli := reasonMeta(reasonProviderConfig); cat != catConfig || sli {
+		t.Errorf("reasonMeta(provider_config) = (%q,%v), want (config,false)", cat, sli)
 	}
 }
 

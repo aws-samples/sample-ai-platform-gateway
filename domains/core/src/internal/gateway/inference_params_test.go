@@ -31,6 +31,7 @@ import (
 // adapter actually put on the wire.
 func capture(t *testing.T, r Route, canned string, inf invocation) map[string]interface{} {
 	t.Helper()
+	relaxRouteGuard(t) // loopback httptest base_url: opt this test out of the guard explicitly
 	var raw []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		raw, _ = io.ReadAll(req.Body)

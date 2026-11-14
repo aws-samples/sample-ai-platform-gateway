@@ -58,3 +58,17 @@ module "domain" {
   # Same forwarding rule.
   agentcore_reconciler_enabled = var.agentcore_reconciler_enabled
 }
+
+# XC-IAC-006: adopt the live auto-created Lambda log groups into state. Import blocks
+# are only valid in the ROOT module, so they target the child module's resources.
+# Plan shows import + retention update, not create (which fails
+# ResourceAlreadyExistsException). One-time bootstrap on an EXISTING stack; remove for
+# a greenfield deploy. See README "Quick start".
+import {
+  to = module.domain.aws_cloudwatch_log_group.router_logs
+  id = "/aws/lambda/aiplat-poc-inf-router"
+}
+import {
+  to = module.domain.aws_cloudwatch_log_group.keyadmin_logs
+  id = "/aws/lambda/aiplat-poc-inf-keyadmin"
+}

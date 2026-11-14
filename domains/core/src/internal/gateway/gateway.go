@@ -353,6 +353,15 @@ var (
 	// capping a legitimately long stream body.
 	httpc = &http.Client{
 		Transport: &http.Transport{
+			// CORE-NFR-006: bound TCP connection establishment. With a nil DialContext the
+			// transport uses a zero net.Dialer, so a provider whose IP black-holes SYNs is
+			// bounded only by the OS connect timeout (tens of seconds) and ultimately the
+			// Lambda deadline — the request chain cannot advance to a fallback until then.
+			// A 10 s dial timeout fails fast so the next attempt in the chain can run.
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 30 * time.Second,
 			IdleConnTimeout:       90 * time.Second,
@@ -2674,11 +2683,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				// A cached answer is always a clean text completion (tool-call and partial
 				// answers are never cached — see the streaming/buffered Put guards), so
 				// finish_reason is "stop" and there are no tool calls to replay.
-				pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text, "stop", nil)
+				// CORE-FUN-003: the SSE frames carry the SERVED model (from the stored body),
+				// matching the aiplat block and the non-streaming reply.
+				pseudoStream(&sb, "chatcmpl-"+ck[:12], servedModel, cachedReasoning, text, "stop", nil)
 				// Same aiplat block the non-streaming cache hit returns, so a streaming
 				// caller still sees cache_hit and the saved amount. Tokens are 0 on a
 				// cache hit by definition — nothing was sent to a provider.
-				sseFinal(&sb, "chatcmpl-"+ck[:12], chosen, 0, 0, cached["aiplat"].(map[string]interface{}))
+				sseFinal(&sb, "chatcmpl-"+ck[:12], servedModel, 0, 0, cached["aiplat"].(map[string]interface{}))
 				return sresp(200, sseHeaders(reqOrigin), sb.String())
 			}
 			return jbody(reqOrigin, 200, cached)
@@ -2718,9 +2729,23 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 						lat := int(time.Since(start).Milliseconds())
 						var cached map[string]interface{}
 						json.Unmarshal([]byte(respJSON), &cached)
-						cached["aiplat"] = map[string]interface{}{"team": team, "app_tag": app, "feature": feature, "model": chosen, "provider": route.Provider, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": routing.ReasonSemanticCache, "savings_class": routing.ClassOf(routing.ReasonSemanticCache), "cache_hit": true, "semantic_score": mt.Score, "latency_ms": lat, "auto_cheapest": c.AutoCheapest, "requested_model": requested}
-						cacheRec := map[string]interface{}{"request_id": req.RequestID, "cache_key": ck, "team": team, "app_tag": app, "feature": feature, "provider": route.Provider, "upstream": upstreamOf(route), "model": chosen, "tokens_in": 0, "tokens_out": 0, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": routing.ReasonSemanticCache, "latency_ms": lat, "cache_hit": true, "status": "success", "category": "ok", "sli_eligible": true, "ts": time.Now().UTC().Format(time.RFC3339)}
-						semSwap, semServedID := servedSwap(c, requested, chosen)
+						// CORE-FUN-003: report the model that actually PRODUCED the cached
+						// answer (read from the stored body), not `chosen` — the match is a
+						// different prompt's entry, which may have been served by a different
+						// alias. The exact-hit path above does the same; the semantic branch
+						// used to label every hit with the current request's `chosen`.
+						semServedModel := chosen
+						if sm, ok := cached["model"].(string); ok && sm != "" {
+							semServedModel = sm
+						}
+						semServedRoute, semHasServed := c.Routing[semServedModel]
+						semServedProvider, semServedUpstream := route.Provider, upstreamOf(route)
+						if semHasServed {
+							semServedProvider, semServedUpstream = semServedRoute.Provider, upstreamOf(semServedRoute)
+						}
+						cached["aiplat"] = map[string]interface{}{"team": team, "app_tag": app, "feature": feature, "model": semServedModel, "provider": semServedProvider, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": routing.ReasonSemanticCache, "savings_class": routing.ClassOf(routing.ReasonSemanticCache), "cache_hit": true, "semantic_score": mt.Score, "latency_ms": lat, "auto_cheapest": c.AutoCheapest, "requested_model": requested}
+						cacheRec := map[string]interface{}{"request_id": req.RequestID, "cache_key": ck, "team": team, "app_tag": app, "feature": feature, "provider": semServedProvider, "upstream": semServedUpstream, "model": semServedModel, "tokens_in": 0, "tokens_out": 0, "estimated_cost_usd": 0, "saved_usd": savedCache, "savings_reason": routing.ReasonSemanticCache, "latency_ms": lat, "cache_hit": true, "status": "success", "category": "ok", "sli_eligible": true, "ts": time.Now().UTC().Format(time.RFC3339)}
+						semSwap, semServedID := servedSwap(c, requested, semServedModel)
 						decorateSwap(cacheRec, semSwap, semServedID)
 						decorateSwap(cached["aiplat"].(map[string]interface{}), semSwap, semServedID)
 						decorateCanary(cacheRec, canaryRoute)
@@ -2733,15 +2758,15 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 						cacheRec["requested_model"] = requested
 						cacheRec["requested_cost_usd"] = dec.RequestedCostUSD
 						cacheRec["pricing_status"] = dec.PricingStatus
-						cacheRec["price_source"] = priceSourceOf(c, chosen, now)
+						cacheRec["price_source"] = priceSourceOf(c, semServedModel, now)
 						emitRecord(ctx, cacheRec)
 						if body.Stream {
 							cachedReasoning, text := cachedMessageParts(cached)
 							var sb bytes.Buffer
-							pseudoStream(&sb, "chatcmpl-"+ck[:12], chosen, cachedReasoning, text, "stop", nil)
+							pseudoStream(&sb, "chatcmpl-"+ck[:12], semServedModel, cachedReasoning, text, "stop", nil)
 							// Carries semantic_score as well, so a streaming caller can
 							// see the answer was an APPROXIMATE match and how close.
-							sseFinal(&sb, "chatcmpl-"+ck[:12], chosen, 0, 0, cached["aiplat"].(map[string]interface{}))
+							sseFinal(&sb, "chatcmpl-"+ck[:12], semServedModel, 0, 0, cached["aiplat"].(map[string]interface{}))
 							return sresp(200, sseHeaders(reqOrigin), sb.String())
 						}
 						return jbody(reqOrigin, 200, cached)
@@ -2787,6 +2812,18 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		okStream := false
 		for _, s := range chain {
 			usedName, usedProvider, usedUpstream = s.name, s.r.Provider, upstreamOf(s.r)
+			// CORE-SEC-005: guard the config-supplied route on the STREAMING path too. The
+			// buffered path validates inside providerFor, but the streaming dispatch below
+			// calls openStreamOpenAICompat / openProviderStreamFn directly, bypassing
+			// providerFor — so without this guard an openai_compatible streaming route with
+			// a loopback/non-https base_url or a non-allowlisted role_arn (the SSRF and
+			// confused-deputy vectors validateRoute exists to stop) would never be checked
+			// on a stream. A failure advances the chain, exactly like a provider open error.
+			if e := validateRouteFn(s.r); e != nil {
+				logProviderAttempt(s.r.Provider, s.name, e)
+				perr = e
+				continue
+			}
 			if s.r.Provider == "openai_compatible" {
 				r, e := openStreamOpenAICompat(ctx, s.r.BaseURL, s.r.ProviderModelID, inf.input(body.Messages, body.Tools), getSecret(ctx, s.r.APIKeySecret))
 				if e == nil {
@@ -2845,6 +2882,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			emitFailure(ctx, req.RequestID, ident, feature, usedProvider, usedName, failStatusFor(reason), reason, fmt.Sprint(perr), int(time.Since(start).Milliseconds()))
 			if reason == reasonInvalidRequest {
 				return jerr(reqOrigin, 400, "invalid request: the model rejected the request (check parameters and input size)")
+			}
+			if reason == reasonProviderConfig {
+				// CORE-BND-006: route misconfiguration, not a caller mistake.
+				return jerr(reqOrigin, 502, "the configured model route is invalid or no longer available (check the route's model id)")
 			}
 			return jerr(reqOrigin, 502, "all upstream providers failed")
 		}
@@ -2930,11 +2971,20 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			addRateTokens(ctx, c.limitsScope, c.Limits, tin+tout)
 			addCreditSpend(ctx, usedProvider, c, dec, cost)
 			// Never cache a streamed answer that is a tool call, a truncated/estimated body,
-			// a non-clean stop, or a cut stream: the buffered path already refuses tool
-			// answers, and caching a partial/empty answer would replay it to later callers
-			// (and book it as a verified cache saving) — CORE-FUN-004 / CORE-NFR-001.
-			cleanStop := streamRes.stopReason == "" || streamRes.stopReason == "end_turn" || streamRes.stopReason == "stop"
-			cacheable := cacheStore.Enabled() && !noStore && effectiveCacheTTL(c) > 0 && streamComplete && !tokensEstimated && len(streamRes.toolCalls) == 0 && cleanStop
+			// or a cut stream: the buffered path already refuses tool answers, and caching a
+			// partial/empty answer would replay it to later callers (and book it as a
+			// verified cache saving) — CORE-FUN-004 / CORE-NFR-001.
+			//
+			// CORE-FUN-006: a max_tokens/length cut IS cacheable, on both transports. The cut
+			// is deterministic for the same request (the cache key includes max_tokens), and
+			// the buffered path already caches it — refusing it only on streams made the
+			// cache-hit rate depend on the transport. The real finish_reason is persisted
+			// below (not a hardcoded "stop") so a replay reports the truncation honestly. A
+			// genuinely cut stream (streamComplete=false) is still refused.
+			cacheableStop := streamRes.stopReason == "" || streamRes.stopReason == "end_turn" ||
+				streamRes.stopReason == "stop" || streamRes.stopReason == "max_tokens" ||
+				streamRes.stopReason == "length"
+			cacheable := cacheStore.Enabled() && !noStore && effectiveCacheTTL(c) > 0 && streamComplete && !tokensEstimated && len(streamRes.toolCalls) == 0 && cacheableStop
 			if cacheable {
 				// The stored message carries the reasoning too. Without it a streamed thinking
 				// answer was cached as if it had never reasoned, so the replay — which is what
@@ -2944,8 +2994,12 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				if streamRes.reasoning != "" {
 					cachedMsg["reasoning_content"] = streamRes.reasoning
 				}
+				// CORE-FUN-006: persist the REAL finish_reason (stop vs length) instead of a
+				// hardcoded "stop", so a replay of a max_tokens-cut answer reports "length".
+				// toolCalls are already excluded above and the stream is complete, so the
+				// only values here are "stop" or "length".
 				full := map[string]interface{}{"id": id, "object": "chat.completion", "model": usedName,
-					"choices": []map[string]interface{}{{"index": 0, "message": cachedMsg, "finish_reason": "stop"}},
+					"choices": []map[string]interface{}{{"index": 0, "message": cachedMsg, "finish_reason": finishReasonFor(streamRes.stopReason, len(streamRes.toolCalls), false)}},
 					"usage":   map[string]int{"prompt_tokens": tin, "completion_tokens": tout, "total_tokens": tin + tout}}
 				jb, _ := json.Marshal(full)
 				storeTTL := effectiveCacheTTL(c)
@@ -3125,6 +3179,11 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	emitFailure(ctx, req.RequestID, ident, feature, "", chosen, failStatusFor(reason), reason, fmt.Sprint(lastErr), int(time.Since(start).Milliseconds()))
 	if reason == reasonInvalidRequest {
 		return jerr(reqOrigin, 400, "invalid request: the model rejected the request (check parameters and input size)")
+	}
+	if reason == reasonProviderConfig {
+		// CORE-BND-006: a misconfigured route (unknown/retired model id) is not the
+		// caller's fault — point at the route, not at their parameters.
+		return jerr(reqOrigin, 502, "the configured model route is invalid or no longer available (check the route's model id)")
 	}
 	return jerr(reqOrigin, 502, "all upstream providers failed")
 }

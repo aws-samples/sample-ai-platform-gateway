@@ -80,9 +80,15 @@ func DecorateEscalation(rec map[string]interface{}, escalated bool, reason, outc
 	if outcome != "" {
 		rec["escalation_outcome"] = outcome
 	}
-	if netSaved < 0 {
+	// CORE-FIN-004: savings_floored means "a NEGATIVE net saving was clamped to zero",
+	// not "the net saving happened to be zero". Deriving the flag from the clamped value
+	// (netSaved == 0) marked every ordinary no-swap request as floored, so any dashboard
+	// counting floored rows counted all traffic. Capture whether the PRE-clamp value was
+	// negative, then clamp.
+	floored := netSaved < 0
+	if floored {
 		netSaved = 0
 	}
 	rec["saved_net_usd"] = netSaved
-	rec["savings_floored"] = netSaved == 0
+	rec["savings_floored"] = floored
 }

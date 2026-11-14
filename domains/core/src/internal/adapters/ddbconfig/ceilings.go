@@ -114,7 +114,16 @@ func boolAt(m map[string]interface{}, path ...string) bool {
 // snapshotCeilings reads the ceiling-relevant values out of the running (parent) config.
 func snapshotCeilings(base map[string]interface{}) ceilingSnapshot {
 	s := ceilingSnapshot{guards: map[string]bool{}}
-	s.budgetLimit, s.budgetLimitSet = numAt(base, "budget", "limit_usd")
+	// CORE-SEC-009: the parent's effective budget ceiling is its Budget.Limit() — the
+	// positive limit_usd, else monthly_usd (the old plan-seed key). Snapshotting only
+	// limit_usd let a child escape by declaring limit_usd while the parent capped via
+	// monthly_usd, because Budget.Limit() prefers the child's limit_usd and the fold never
+	// saw the parent's monthly_usd ceiling.
+	if lim, ok := numAt(base, "budget", "limit_usd"); ok && lim > 0 {
+		s.budgetLimit, s.budgetLimitSet = lim, true
+	} else if mon, ok := numAt(base, "budget", "monthly_usd"); ok && mon > 0 {
+		s.budgetLimit, s.budgetLimitSet = mon, true
+	}
 	s.budgetAction = strAt(base, "budget", "action")
 	s.rpm, s.rpmSet = numAt(base, "rate_limits", "requests_per_minute")
 	s.tpm, s.tpmSet = numAt(base, "rate_limits", "tokens_per_minute")
@@ -157,10 +166,19 @@ func stripOrgOnly(level map[string]interface{}, belowOrg bool) {
 // foldCeilings clamps the merged config (which deepMerge has already overlaid with the
 // child level) back to be no looser than the parent snapshot. It mutates base in place.
 func foldCeilings(base map[string]interface{}, p ceilingSnapshot) {
-	// budget.limit_usd — smaller positive wins.
+	// budget — smaller positive effective limit wins. CORE-SEC-009: compare the CHILD's
+	// effective limit (limit_usd if positive, else monthly_usd — the same precedence as
+	// Budget.Limit()) so a child cannot widen via whichever budget key the parent did not
+	// use. The clamped value is written to limit_usd, which Limit() prefers.
 	if bm, ok := base["budget"].(map[string]interface{}); ok {
-		if child, ok := bm["limit_usd"].(float64); ok {
-			bm["limit_usd"] = narrowerPositive(p.budgetLimit, p.budgetLimitSet, child)
+		childLimit, childSet := 0.0, false
+		if v, ok := bm["limit_usd"].(float64); ok && v > 0 {
+			childLimit, childSet = v, true
+		} else if v, ok := bm["monthly_usd"].(float64); ok && v > 0 {
+			childLimit, childSet = v, true
+		}
+		if childSet {
+			bm["limit_usd"] = narrowerPositive(p.budgetLimit, p.budgetLimitSet, childLimit)
 		} else if p.budgetLimitSet {
 			bm["limit_usd"] = p.budgetLimit
 		}
@@ -212,10 +230,19 @@ func foldCeilings(base map[string]interface{}, p ceilingSnapshot) {
 		}
 		base["guardrails"] = gm
 	}
-	// cache_scope — the stricter wins.
-	if child, ok := base["cache_scope"].(string); ok && p.cacheScope != "" {
-		if cacheScopeRank[p.cacheScope] > cacheScopeRank[child] {
-			base["cache_scope"] = p.cacheScope
+	// cache_scope — the stricter wins. CORE-SEC-009: an UNDECLARED parent scope is treated
+	// as the documented default "team". Without this, a child could set cache_scope to the
+	// looser "deployment" whenever no ancestor declared a scope — letting a TEAM# item read
+	// answers cached by other teams. The default only bounds a child that DECLARES a scope;
+	// if the child declares none, behaviour is unchanged (inherit the parent's explicit
+	// scope, if any).
+	parentScope := p.cacheScope
+	if parentScope == "" {
+		parentScope = "team"
+	}
+	if child, ok := base["cache_scope"].(string); ok && child != "" {
+		if cacheScopeRank[parentScope] > cacheScopeRank[child] {
+			base["cache_scope"] = parentScope
 		}
 	} else if p.cacheScope != "" {
 		if _, has := base["cache_scope"]; !has {

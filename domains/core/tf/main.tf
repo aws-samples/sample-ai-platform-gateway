@@ -193,6 +193,31 @@ resource "aws_iam_role_policy" "router" {
   })
 }
 
+# CORE-SEC-008: the API-key hash pepper. ddbkeys (router, read) and keyadmin (write)
+# HMAC the API key under this pepper; without it provisioned they both fell back to
+# unsalted SHA-256, so a leak of the api_keys table left the hashes brute-forceable.
+#
+# Generated ONCE and held in state (random_password persists) so it is STABLE across
+# deploys — regenerating it would invalidate every issued key (their stored hashes would
+# no longer match). The SAME value is injected into both Lambdas below; they must agree or
+# no key would ever verify. Mirrored into Secrets Manager so the value is recoverable and
+# rotatable out of band, not only reachable through Terraform state.
+resource "random_password" "key_hash_pepper" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "key_hash_pepper" {
+  name                    = "${local.name}-key-hash-pepper"
+  description             = "HMAC pepper for API-key hashing (CORE-SEC-008). Same value injected into router + keyadmin."
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "key_hash_pepper" {
+  secret_id     = aws_secretsmanager_secret.key_hash_pepper.id
+  secret_string = random_password.key_hash_pepper.result
+}
+
 # --- Go Lambda (arm64) ---
 resource "aws_lambda_function" "router" {
   function_name    = "${local.name}-router"
@@ -235,6 +260,9 @@ resource "aws_lambda_function" "router" {
       # in the plan, and a null value in a Lambda environment is rejected at apply time.
       # Naming the default mode also makes the deployed configuration self-describing.
       AIPLAT_RESPONSE_MODE = var.response_streaming ? "streaming" : "buffered"
+      # CORE-SEC-008: the key-hash pepper (same value as keyadmin) so the router verifies
+      # the peppered HMAC written by keyadmin.
+      KEY_HASH_PEPPER = random_password.key_hash_pepper.result
     }
   }
 
@@ -597,6 +625,9 @@ resource "aws_lambda_function" "keyadmin" {
       # browser origins (no header emitted). This is an ADMIN API, so it should
       # only ever list the console origin.
       CONSOLE_ORIGIN = var.console_origin
+      # CORE-SEC-008: the key-hash pepper (same value as the router) so newly issued
+      # keys are stored as a peppered HMAC, not unsalted SHA-256.
+      KEY_HASH_PEPPER = random_password.key_hash_pepper.result
     }
   }
 

@@ -4,17 +4,32 @@
 package gateway
 
 import (
-	"os"
+	"context"
 	"testing"
 )
 
-// TestMain relaxes the route guard for the whole gateway test package: the wire and
-// stream tests point base_url at a local http httptest server (loopback, non-https),
-// which the production guard rightly rejects. The guard's own logic is covered directly
-// by TestValidateRoute below, which calls validateRoute (not the seam).
-func TestMain(m *testing.M) {
+// relaxRouteGuard disables the data-plane route guard for ONE test (restored on cleanup).
+// CORE-SEC-005: the guard is NO LONGER disabled package-wide in a TestMain — a global
+// nil-guard meant no handler/e2e test ever ran the real guard, so a regression that
+// stopped calling it would not fail any test. Only the wire/stream tests that deliberately
+// point base_url at a loopback httptest server opt out, locally and explicitly, so every
+// other test (including the e2e streaming paths) exercises the real validateRoute.
+func relaxRouteGuard(t *testing.T) {
+	t.Helper()
+	prev := validateRouteFn
 	validateRouteFn = func(Route) error { return nil }
-	os.Exit(m.Run())
+	t.Cleanup(func() { validateRouteFn = prev })
+}
+
+// TestProviderFor_GuardsRouteByDefault is the handler-adjacent proof the guard actually
+// runs: with the DEFAULT seam (no relaxation) providerFor must reject a loopback base_url.
+// It fails if a refactor ever drops the validateRouteFn call from providerFor, or if the
+// guard is globally disabled again.
+func TestProviderFor_GuardsRouteByDefault(t *testing.T) {
+	_, err := providerFor(context.Background(), Route{Provider: "openai_compatible", BaseURL: "https://127.0.0.1/v1"})
+	if err == nil {
+		t.Fatal("CORE-SEC-005: providerFor must reject a loopback base_url under the real guard")
+	}
 }
 
 // CORE-SEC-005: the data-plane route guard rejects a non-https or non-routable base_url,

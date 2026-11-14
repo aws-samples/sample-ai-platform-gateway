@@ -89,6 +89,7 @@ func wireTools() []toolDef {
 // and returns the raw body the provider received.
 func captureBody(t *testing.T, r Route, cannedResp string) []byte {
 	t.Helper()
+	relaxRouteGuard(t) // loopback httptest base_url: opt this test out of the guard explicitly
 	var captured []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		captured, _ = io.ReadAll(req.Body)

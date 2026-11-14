@@ -8,5 +8,10 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.0.0, < 7.0.0"
     }
+    # CORE-SEC-008: random_password generates the stable key-hash pepper in the module.
+    random = {
+      source  = "hashicorp/random"
+      version = ">= 3.0.0, < 4.0.0"
+    }
   }
 }

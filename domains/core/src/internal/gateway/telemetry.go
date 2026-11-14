@@ -79,6 +79,40 @@ const (
 // leaking the raw upstream error.
 const reasonInvalidRequest = "invalid_request"
 
+// reasonProviderConfig: the provider rejected the request because the ROUTE is
+// misconfigured — an unknown/retired provider_model_id, a 404, or a ValidationException
+// that the model identifier could not be resolved. CORE-BND-006: this is the OPERATOR's
+// config mistake, not the caller's parameters, so it must be category config, OUT of the
+// SLI, and the client message must point at the route, not tell the caller to check their
+// input. Distinct from reasonInvalidRequest (a genuine bad-parameter rejection) and from
+// provider_down (a healthy provider is not the same as a wrong model id).
+const reasonProviderConfig = "provider_config"
+
+// providerRouteError reports whether a provider rejection means the configured model
+// ROUTE is wrong (unknown/retired model id), as opposed to a bad caller request. A 404 is
+// always a route error; otherwise it matches the provider wordings for an unresolvable
+// model identifier (Bedrock's "could not resolve the foundation model", "model identifier
+// is invalid", end-of-life notices, and model/identifier "not found/exist/supported").
+func providerRouteError(status int, body string) bool {
+	if status == 404 {
+		return true
+	}
+	b := strings.ToLower(body)
+	switch {
+	case strings.Contains(b, "could not resolve the foundation model"),
+		strings.Contains(b, "model identifier is invalid"),
+		strings.Contains(b, "provided model identifier is invalid"),
+		strings.Contains(b, "end of life"), strings.Contains(b, "end-of-life"),
+		strings.Contains(b, "no longer supported"):
+		return true
+	case (strings.Contains(b, "model") || strings.Contains(b, "identifier")) &&
+		(strings.Contains(b, "not found") || strings.Contains(b, "does not exist") ||
+			strings.Contains(b, "not exist") || strings.Contains(b, "not supported")):
+		return true
+	}
+	return false
+}
+
 // logJSON emits a structured line on stdout → CloudWatch Logs. It is the basis for
 // metric filters (cheap aggregates) and for tracing what the Core is doing.
 // It NEVER logs prompt/response content — metadata only.
@@ -128,6 +162,11 @@ func reasonMeta(reason string) (category string, sliEligible bool) {
 	// too long. It is the CALLER's 4xx, not a provider outage — config category, OUT of
 	// the SLI, so a client looping on bad parameters cannot burn our error budget.
 	case reasonInvalidRequest:
+		return catConfig, false
+	// provider_config: the ROUTE names a model the provider cannot resolve (operator
+	// mistake). Config category, OUT of the SLI — a wrong model id is not a platform
+	// reliability failure, and a client looping on it must not burn our error budget.
+	case reasonProviderConfig:
 		return catConfig, false
 	case "model_not_allowed":
 		return catConfig, false
@@ -185,10 +224,15 @@ func classifyProviderErr(err error) string {
 			strings.Contains(b, "credit balance") || strings.Contains(b, "billing") ||
 			strings.Contains(b, "quota"):
 			return "provider_quota_exceeded"
+		case providerRouteError(pe.Status, pe.Body):
+			// CORE-BND-006: an unknown/retired model id or a 404 is the OPERATOR's route
+			// mistake, not the caller's parameters. Checked before the generic 4xx so it
+			// does not get the caller-blaming invalid_request treatment.
+			return reasonProviderConfig
 		case pe.Status >= 400 && pe.Status < 500:
 			// Any other provider 4xx is the CALLER's fault (bad parameters, malformed
-			// body, input too long, unknown model id). It must stop the chain and
-			// return 400 — never a 502 nor an SLI hit.
+			// body, input too long). It must stop the chain and return 400 — never a 502
+			// nor an SLI hit.
 			return reasonInvalidRequest
 		case pe.Status >= 500:
 			return "provider_down"
@@ -213,6 +257,11 @@ func classifyProviderErr(err error) string {
 	// is reasonInvalidRequest's job in reasonMeta). Checked AFTER auth(401/403) and
 	// rate(429) so those keep their own class; the tokens below are specific to a
 	// validation rejection and do not appear in a 5xx.
+	// CORE-BND-006: a ValidationException (or 404 prose) that the model id cannot be
+	// resolved is the operator's ROUTE mistake, not the caller's — checked BEFORE the
+	// generic validationexception→invalid_request case so it is not mislabelled.
+	case providerRouteError(0, e) || strings.Contains(e, "404"):
+		return reasonProviderConfig
 	case strings.Contains(e, "validationexception") || strings.Contains(e, "malformed input") ||
 		strings.Contains(e, "http 400") || strings.Contains(e, "statuscode: 400") ||
 		strings.Contains(e, "too long") || strings.Contains(e, "extraneous") ||
