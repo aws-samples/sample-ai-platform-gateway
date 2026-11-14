@@ -23,6 +23,11 @@ CONSOLE="$ROOT/domains/frontend/site/app/console.html"
 # Every check below states which one it reads. Getting that wrong is not a loud failure:
 # pointing a dictionary check at the markup silently finds zero keys and reports "ok".
 CONSOLE_JS="$ROOT/domains/frontend/site/app/assets/console.js"
+# FE-SEC-003: every external asset script, not just console.js. FE-SEC-002 moved the
+# Tailwind theme config and the pre-paint resolver into assets/theme-config.js and
+# assets/theme-boot.js; a syntax error in either takes down the console's palette at
+# runtime, but only console.js was syntax-checked, so CI stayed green on a broken theme.
+ASSETS_DIR="$ROOT/domains/frontend/site/app/assets"
 QUIET="${1:-}"
 FAIL=0
 
@@ -71,14 +76,18 @@ hdr "1b. JS syntax (external files; no inline blocks after FE-SEC-002)"
 if command -v node >/dev/null 2>&1; then
   TMPD="$(mktemp -d)"
   PARSED=0
-  # The external application file.
-  if OUT="$(node --check "$CONSOLE_JS" 2>&1)"; then
-    PARSED=$((PARSED + 1))
-  else
-    say "FAIL — syntax error in $(basename "$CONSOLE_JS"):"
-    printf '%s\n' "$OUT" | head -6 | sed 's/^/    /'
-    FAIL=1
-  fi
+  # FE-SEC-003: every external asset script (console.js, theme-config.js, theme-boot.js,
+  # and any future one) — a syntax error in any of them breaks the console at runtime.
+  for jsf in "$ASSETS_DIR"/*.js; do
+    [ -e "$jsf" ] || continue
+    if OUT="$(node --check "$jsf" 2>&1)"; then
+      PARSED=$((PARSED + 1))
+    else
+      say "FAIL — syntax error in $(basename "$jsf"):"
+      printf '%s\n' "$OUT" | head -6 | sed 's/^/    /'
+      FAIL=1
+    fi
+  done
   # The inline blocks that remain in the markup.
   # Pair up the <script> ... </script> line numbers, skipping tags with src=.
   INLINE=0
@@ -101,11 +110,12 @@ EOF
   # Guard against the extraction silently inspecting nothing (how this check once reported
   # success over zero files). After FE-SEC-002 there are no inline blocks, so the floor is
   # console.js itself (PARSED >= 1); any inline block that reappears is an extra.
-  if [ "$PARSED" -lt 1 ]; then
-    say "FAIL — console.js did not parse; extraction is broken"
+  ASSET_COUNT=$(ls -1 "$ASSETS_DIR"/*.js 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$PARSED" -lt "$ASSET_COUNT" ] || [ "$ASSET_COUNT" -lt 1 ]; then
+    say "FAIL — expected $ASSET_COUNT asset script(s) to parse, got $PARSED; extraction is broken"
     FAIL=1
   elif [ "$FAIL" -eq 0 ]; then
-    say "ok — console.js + $INLINE inline block(s) parse"
+    say "ok — $ASSET_COUNT asset script(s) + $INLINE inline block(s) parse"
   fi
   rm -rf "$TMPD"
 else

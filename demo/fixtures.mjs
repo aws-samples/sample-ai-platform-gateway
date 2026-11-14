@@ -279,7 +279,11 @@ function buildUsage() {
       tokens_out: totals.tokensOut,
       avg_latency_ms: Math.round(totals.latencySum / totals.requests),
       saved_usd: savedTotal,
-      saved_pct: r2((savedTotal / gross) * 100),
+      // FE-UX-006: match the live API shape — saved_pct is the VERIFIED-only ratio
+      // (== saved_verified_pct), and saved_blended_pct is the blended one that pairs with
+      // the blended saved_usd dollar total the Overview/ROI cards show.
+      saved_pct: r2((savedVerified / gross) * 100),
+      saved_blended_pct: r2((savedTotal / gross) * 100),
       saved_verified_usd: savedVerified,
       saved_verified_pct: r2((savedVerified / gross) * 100),
       saved_counterfactual_usd: savedCounter,

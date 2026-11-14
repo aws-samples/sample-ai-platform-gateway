@@ -29,6 +29,12 @@ check(Array.isArray(fx.USAGE.by_upstream) && fx.USAGE.by_upstream.length > 0, 'U
 check(typeof fx.USAGE.bucket === 'string', 'USAGE has bucket');
 check(typeof fx.USAGE.from === 'string' && typeof fx.USAGE.to === 'string', 'USAGE has from/to');
 
+// FE-UX-006: the Overview/ROI cards pair the blended saved_usd with saved_blended_pct,
+// so the demo totals must carry it (and saved_pct must be the verified-only ratio, to
+// match the live API).
+check(typeof fx.USAGE.totals.saved_blended_pct === 'number', 'USAGE.totals has saved_blended_pct');
+check(fx.USAGE.totals.saved_pct === fx.USAGE.totals.saved_verified_pct, 'USAGE.totals.saved_pct is the verified-only ratio');
+
 const PROVIDER_FIELDS = [
   'credit_usd', 'cash_usd', 'saved_verified_usd', 'saved_counterfactual_usd',
   'cost_list_price_usd', 'cost_contract_price_usd',

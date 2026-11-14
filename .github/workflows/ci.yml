@@ -84,8 +84,9 @@ jobs:
   # gate nobody can enable — which is exactly how the findings survived. It passes clean
   # now, so it becomes enforcing here and any new gap fails the build instead of shipping.
   #
-  # node is what runs `node --check` on console.js and on the inline blocks that remain
-  # in console.html; without it the syntax check silently skips.
+  # node is what runs `node --check` on EVERY site/app/assets/*.js (console.js,
+  # theme-config.js, theme-boot.js — FE-SEC-003) and on the inline blocks that remain in
+  # console.html; without it the syntax check silently skips.
   console:
     name: Console syntax & i18n
     runs-on: ubuntu-latest

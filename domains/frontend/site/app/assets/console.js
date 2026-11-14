@@ -788,6 +788,7 @@ const I18N={
     'adds':'adiciona',
     'The matrix is truncated: this org has more scopes than one request can read.':'A matriz está truncada: esta org tem mais escopos do que uma requisição consegue ler.',
     'enter the Role ARN':'informe o Role ARN',
+    'registering this account first…':'registrando esta conta primeiro…',
     'enter the Role ARN of your account':'informe o Role ARN da sua conta',
     'Role ARN must contain "AIPlatGatewayAccess"':'Role ARN deve conter "AIPlatGatewayAccess"',
     'select a model':'selecione um modelo',
@@ -832,6 +833,8 @@ const I18N={
     'invalid role (owner|admin|billing|dev)':'papel inválido (owner|admin|billing|dev)',
     'email is required':'email obrigatório',
     'that member does not belong to your organization':'esse membro não pertence à sua organização',
+    'could not resolve the member identity id; retry':'não foi possível resolver o id de identidade do membro; tente novamente',
+    'member created but could not resolve its identity id; retry':'membro criado, mas não foi possível resolver seu id de identidade; tente novamente',
     'cannot demote the only owner — promote another owner first':'não é possível rebaixar o único owner — promova outro owner antes',
     'cannot remove the only owner — transfer ownership first':'não é possível remover o único owner — transfira a propriedade antes',
     'cannot disable the only owner — promote another owner first':'não é possível desabilitar o único owner — promova outro owner antes',
@@ -1665,6 +1668,7 @@ const I18N={
     'adds':'añade',
     'The matrix is truncated: this org has more scopes than one request can read.':'La matriz está truncada: esta organización tiene más ámbitos de los que una solicitud puede leer.',
     'enter the Role ARN':'informa el Role ARN',
+    'registering this account first…':'registrando esta cuenta primero…',
     'enter the Role ARN of your account':'informa el Role ARN de tu cuenta',
     'Role ARN must contain "AIPlatGatewayAccess"':'el Role ARN debe contener "AIPlatGatewayAccess"',
     'select a model':'selecciona un modelo',
@@ -1709,6 +1713,8 @@ const I18N={
     'invalid role (owner|admin|billing|dev)':'rol inválido (owner|admin|billing|dev)',
     'email is required':'email es obligatorio',
     'that member does not belong to your organization':'ese miembro no pertenece a tu organización',
+    'could not resolve the member identity id; retry':'no se pudo resolver el id de identidad del miembro; reintenta',
+    'member created but could not resolve its identity id; retry':'miembro creado, pero no se pudo resolver su id de identidad; reintenta',
     'cannot demote the only owner — promote another owner first':'no se puede degradar al único owner — promueve otro owner antes',
     'cannot remove the only owner — transfer ownership first':'no se puede eliminar al único owner — transfiere la propiedad antes',
     'cannot disable the only owner — promote another owner first':'no se puede deshabilitar al único owner — promueve otro owner antes',
@@ -1925,6 +1931,23 @@ const fmtUSD=(v,d=6)=>{
 // Number formatting follows the language: 1.234,56 in pt/es, 1,234.56 in en. It was
 // pinned to pt-BR, which would show the wrong separator to an English-speaking user.
 const fmtN=v=>Number(v||0).toLocaleString(LOCALE_TAG[LANG]||'en-US');
+// FE-UX-004: render a UTC ISO timestamp in the user's (or the configured) timezone.
+// The old `(ts).replace('T',' ').replace('Z','')` just DELETED the Z — it showed the UTC
+// wall-clock as if it were local, so every log/audit/alert row was off by the viewer's
+// offset with no indication. Intl.DateTimeFormat converts honestly; CFG.timezone overrides
+// the browser zone when the deployment pins one. Falls back to the old string only if the
+// value does not parse.
+const fmtTS=(ts)=>{
+  if(!ts) return '';
+  try{
+    const d=new Date(ts);
+    if(isNaN(d.getTime())) throw new Error('bad ts');
+    const tz=(typeof CFG!=='undefined'&&CFG&&CFG.timezone)||undefined;
+    return new Intl.DateTimeFormat(LOCALE_TAG[LANG]||'en-US',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,...(tz?{timeZone:tz}:{})}).format(d);
+  }catch(e){
+    return String(ts).replace('T',' ').replace('Z','');
+  }
+};
 // tk() reads a theme color token (RGB channels in the <style>) and returns a CSS color. It is what
 // removes the duplicated hex from here: before, the brand green existed in tailwind.config AND in
 // 4 spots of the chart configuration — changing the brand left the charts behind.
@@ -2868,7 +2891,11 @@ async function loadUsageBundle(){
   if(Number(sli.eligible||0)>0){ const av=Number(sli.availability_pct||0);
     setCard('sli',{state:'ok',value:av.toFixed(1)+'%',sub:(av>=99?'✓':'⚠')+' '+fmtN(sli.eligible)+' '+_t('eligible')+' · '+fmtN(sli.bad)+' '+_t('failures'),tone:av>=99?'ok':'warn'});
   } else setCard('sli',{state:'empty',sub:'no reliability data in the period'});
-  if(Number(t.saved_usd||0)>0) setCard('roi',{state:'ok',value:fmtUSD(t.saved_usd,2),sub:'💚 '+(Number(t.saved_pct||0)).toFixed(0)+'% '+_t('of gross'),tone:'good'});
+  // FE-UX-006: saved_usd is the BLENDED dollar total (verified + counterfactual), so it
+  // must be paired with saved_blended_pct — not saved_pct, which the API narrowed to the
+  // verified-only ratio. Pairing a blended number with a verified percentage described two
+  // different quantities on one card. Fall back to saved_pct only if the API predates the field.
+  if(Number(t.saved_usd||0)>0) setCard('roi',{state:'ok',value:fmtUSD(t.saved_usd,2),sub:'💚 '+(Number(t.saved_blended_pct!=null?t.saved_blended_pct:t.saved_pct||0)).toFixed(0)+'% '+_t('of gross'),tone:'good'});
   else setCard('roi',{state:'empty',sub:'no savings in the period'});
   ovBudget.cost=Number(t.cost_usd||0); renderBudgetCard();
 }
@@ -3051,7 +3078,7 @@ RENDER.roi=async function(){
     row(_t('Paid with provider credit'), fmtUSD(credit,4), _t('balance consumed — not savings'), 'text-brand2')+
     row(_t('Paid in real money'), fmtUSD(cash,4), _t('actual outlay in the period'))+
     row(_t('Total cost'), fmtUSD(t.cost_usd,4), _t('credit + money'), 'text-mut')+
-    row(_t('Total savings'), fmtUSD(t.saved_usd,4), (t.saved_pct||0).toFixed(0)+'% '+_t('of gross (cost + savings)'), 'text-brand font-semibold')+
+    row(_t('Total savings'), fmtUSD(t.saved_usd,4), (t.saved_blended_pct!=null?t.saved_blended_pct:t.saved_pct||0).toFixed(0)+'% '+_t('of gross (cost + savings)'), 'text-brand font-semibold')+
     row(_t('— verified (cache)'), fmtUSD(sv,4), _t('defensible basis for gain-share'), 'text-brand')+
     row(_t('— counterfactual (auto-cheapest + fallback + budget)'), fmtUSD(sc,4), _t('measured against the requested model'), 'text-mut');
 
@@ -3415,14 +3442,40 @@ function setupBedrockByo(){
 // The model list is per region: Bedrock does not offer the same set everywhere, so a
 // region change invalidates the dropdown.
 $('#bedRegion')&&($('#bedRegion').addEventListener('change',()=>seedBedrockCatalog()));
+// GOV-UX-003: register a DISABLED placeholder route carrying the BYO credential, so the
+// backend allowlist (GOV-SEC-002 — /admin/bedrock/models only lists a role already
+// declared on one of this org's routes) accepts the ARN. Without this, first-time BYO
+// onboarding was a deadlock: you cannot list models for a role with no route, and you
+// cannot pick a route without listing models. The placeholder serves no traffic
+// (enabled:false) and is superseded when the customer Adds a real model on this account.
+async function registerByoPlaceholder(arn, region, ext, msg){
+  msg.className='text-xs text-mut'; msg.textContent=_t('registering this account first…');
+  const acct=(/arn:aws:iam::(\d+):/.exec(arn)||[])[1]||'acct';
+  const name='_byo_'+acct;
+  CFG.routing=CFG.routing||{}; CFG_RAW=CFG_RAW||{}; CFG_RAW.routing=CFG_RAW.routing||{};
+  const route={provider:'bedrock', enabled:false, role_arn:arn, kind:'external', fallback:[]};
+  if(region) route.region=region;
+  if(ext) route.external_id=ext;
+  CFG.routing[name]=route; CFG_RAW.routing[name]=route;
+  return await saveConfig(msg,['routing']);
+}
 // Button that fetches the BYO models
 $('#bedFetchModels')&&($('#bedFetchModels').onclick=async ()=>{
   const arn = $('#bedRole').value.trim();
   const region = $('#bedRegion').value.trim() || 'us-east-1';
+  const ext = ($('#bedExt') && $('#bedExt').value.trim()) || '';
   const msg = $('#bedFetchMsg');
   if (!arn) { msg.className='text-xs text-amber-400'; msg.textContent=_t('enter the Role ARN'); return; }
   if (!arn.includes('AIPlatGatewayAccess')) { msg.className='text-xs text-amber-400'; msg.textContent=_t('Role ARN must contain "AIPlatGatewayAccess"'); return; }
-  const models = await fetchByoBedrockModels(arn, region, msg);
+  let models = await fetchByoBedrockModels(arn, region, msg);
+  // GOV-UX-003: if the fetch failed and this ARN is not yet on any route, it is first-time
+  // onboarding — register the placeholder then retry, so the allowlist now carries the ARN.
+  if (!models) {
+    const declared = Object.values((CFG&&CFG.routing)||{}).some(r=>r && r.role_arn===arn);
+    if (!declared && await registerByoPlaceholder(arn, region, ext, msg)) {
+      models = await fetchByoBedrockModels(arn, region, msg);
+    }
+  }
   if (models && models.length) {
     _byoModelsCache = models;
     fillByoModels(mergeBedrockCatalog(models));
@@ -4330,7 +4383,8 @@ async function saveConfig(msgEl,keys){
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(_terr(e,r)); }
     msgEl.className='text-xs text-brand'; msgEl.textContent='✓ '+_t('saved — applies to the next requests (~15s).');
     CFG=null; _order=null; await loadConfig(true);
-  }catch(e){ msgEl.className='text-xs text-amber-400'; msgEl.textContent=_t('failed: ')+e.message; }
+    return true; // GOV-UX-003: callers (BYO placeholder register) need to know it persisted
+  }catch(e){ msgEl.className='text-xs text-amber-400'; msgEl.textContent=_t('failed: ')+e.message; return false; }
 }
 
 // =================== LIMITS & BUDGET ===================
@@ -5139,7 +5193,7 @@ RENDER.audit=async function(){
   try{ const r=await api(API.adminApi,'/admin/audit'+(orgQ()?'?'+orgQ():'')); if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(_terr(e,r));} d=await r.json(); }
   catch(e){ rows.innerHTML='<tr><td class="py-3 text-amber-400" colspan="5">'+esc(_t('Failed to load the audit trail: '))+esc(e.message)+'</td></tr>'; return; }
   const ents=d.entries||[];
-  const when=(ts)=>{ try{ return esc((ts||'').replace('T',' ').replace('Z','')); }catch(e){ return esc(ts); } };
+  const when=(ts)=>{ try{ return esc(fmtTS(ts)); }catch(e){ return esc(ts); } };
   rows.innerHTML = ents.length ? ents.map(e=>`<tr class="border-t border-line align-top">
       <td class="py-2.5 whitespace-nowrap">${when(e.ts)}</td>
       <td>${esc(e.actor)||'—'}${e.actor_role?` <span class="text-[10px] text-mut">(${esc(e.actor_role)})</span>`:''}</td>
@@ -5605,7 +5659,7 @@ RENDER.logs=async function(){
       const lbl=_t(REASON_LABEL[rz]||rz)||'—';
       motivo=`<span class="text-amber-300" title="${esc(det||rz)}">${esc(lbl)}</span>`;
     }
-    tr.innerHTML=`<td class="px-4 py-1.5 text-xs text-mut">${(r.ts||'').replace('T',' ').replace('Z','')}</td>
+    tr.innerHTML=`<td class="px-4 py-1.5 text-xs text-mut">${esc(fmtTS(r.ts))}</td>
       <td>${esc(r.model||'—')}${swap?' <span class="text-[10px] text-brand">↣</span>':''}</td><td class="text-[11px]">${swapCell}</td><td class="text-mut">${provCell}</td>
       <td>${esc(r.app&&r.app!=='none'?r.app:'—')}</td>
       <td>${esc(r.feature&&r.feature!=='none'?r.feature:'—')}</td><td class="text-mut">${fmtN((r.tokens_in||0)+(r.tokens_out||0))}</td>
@@ -5736,7 +5790,7 @@ RENDER.alertLog=async function(){
     if(a.rule==='anomaly'){ valor=alogNum(a.current_pct,'%'); limiar=_t('normal')+' '+alogNum(a.baseline_pct,'%'); }
     const sev=a.severity?' <span class="text-[10px] px-1.5 py-0.5 rounded border border-amber-500/50 text-amber-400">'+esc(a.severity)+'</span>':'';
     return `<tr class="border-t border-line/60">
-      <td class="px-4 py-2 whitespace-nowrap">${esc((a.ts||'').replace('T',' ').replace('Z',''))}</td>
+      <td class="px-4 py-2 whitespace-nowrap">${esc(fmtTS(a.ts))}</td>
       <td>${esc(ALOG_RULE[a.rule]?_t(ALOG_RULE[a.rule]):(a.rule||'—'))}${sev}</td>
       <td>${esc(valor)}</td>
       <td class="text-mut">${esc(limiar)}</td>
@@ -5833,7 +5887,7 @@ RENDER.auditTrail=async function(){
     // no keyboard handler — unreachable by keyboard. Now it is a data-attr + the bind
     // below, with role/tabindex/aria-expanded.
     return `<tr class="border-t border-line/60${chs.length?' cursor-pointer hover:bg-panel2/40':''}"${chs.length?` data-avtoggle="${i}" role="button" tabindex="0" aria-expanded="false" aria-controls="avd${i}"`:''}>
-      <td class="px-4 py-2 whitespace-nowrap">${esc((r.ts||'').replace('T',' ').replace('Z',''))}</td>
+      <td class="px-4 py-2 whitespace-nowrap">${esc(fmtTS(r.ts))}</td>
       <td>${quem}</td>
       <td>${esc(AUD_ACTION[r.action]?_t(AUD_ACTION[r.action]):r.action)}</td>
       <td class="font-mono text-[11px]">${esc(r.target||'—')}</td>
