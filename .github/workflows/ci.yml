@@ -100,3 +100,27 @@ jobs:
       # FE-SEC-001: fail the build if a data value is interpolated into innerHTML without esc().
       - name: scripts/xss-check.sh
         run: bash scripts/xss-check.sh
+
+  # XC-IAC-003: a clean-clone build of the deployable artifacts. dist/ is git-ignored and
+  # each domain's Lambda source_code_hash reads those zips, so a fresh checkout could not
+  # produce a deployable tree without running the per-domain build.sh. This job proves it
+  # does — every build.sh compiles its Go Lambdas (arm64) and packages dist/*.zip on a
+  # clean runner. Combined with the committed .terraform.lock.hcl files (providers are now
+  # pinned, multi-platform), a clean clone is reproducible end to end; a credentialed
+  # `terraform plan` still needs deploy-time AWS access and is out of CI's scope.
+  build-dist:
+    name: Clean-clone dist build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: [core, governance, observability, audit, help]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: domains/${{ matrix.domain }}/src/go.mod
+      - name: build.sh
+        run: bash domains/${{ matrix.domain }}/build.sh
+      - name: dist/ present
+        run: test -n "$(ls -A domains/${{ matrix.domain }}/dist/*.zip)"
