@@ -598,6 +598,9 @@ const I18N={
     'per 1K tok — in':'por 1K tok — in',
     'per 1K tokens. Your negotiated price is discarded.':'por 1K tokens. O seu preço negociado é descartado.',
     'pick a team for this member':'escolha um time para este membro',
+    'enter the new team name':'informe o nome do novo time',
+    'creating the team…':'criando o time…',
+    'that team does not exist yet — create it in the Teams tab first, then invite the member':'esse time ainda não existe — crie-o na aba Times primeiro e depois convide o membro',
     'pick the provider':'escolha o provedor', 'plan':'plano',
     'Plan changed to {plan}. Limits applied (~15s at the gateway).':'Plano alterado para {plan}. Limites aplicados (~15s no gateway).',
     'Plans':'Planos', 'Platform area — raw JSON':'Área de plataforma — JSON cru',
@@ -901,6 +904,8 @@ const I18N={
     'only an owner can grant the owner role':'apenas um owner pode conceder o papel de owner',
     'range too large (max 90 days)':'intervalo grande demais (máx. 90 dias)',
     'role_arn must be an AIPlatGatewayAccess role already configured on one of this org\'s routes':'role_arn precisa ser um papel AIPlatGatewayAccess já configurado em uma das rotas desta org',
+    'role_arn is required':'role_arn é obrigatório',
+    'role_arn must be an AIPlatGatewayAccess role (arn:aws:iam::<account>:role/AIPlatGatewayAccess*)':'role_arn precisa ser um papel AIPlatGatewayAccess (arn:aws:iam::<conta>:role/AIPlatGatewayAccess*)',
     'scope_widening':'ampliação de escopo',
     'to must be after from':'to precisa ser depois de from',
     'unknown_app':'app desconhecido',
@@ -1482,6 +1487,9 @@ const I18N={
     'per 1K tok — in':'por 1K tok — in',
     'per 1K tokens. Your negotiated price is discarded.':'por 1K tokens. Tu precio negociado se descarta.',
     'pick a team for this member':'elige un equipo para este miembro',
+    'enter the new team name':'ingresa el nombre del nuevo equipo',
+    'creating the team…':'creando el equipo…',
+    'that team does not exist yet — create it in the Teams tab first, then invite the member':'ese equipo aún no existe — créalo primero en la pestaña Equipos y luego invita al miembro',
     'pick the provider':'elige el proveedor', 'plan':'plan',
     'Plan changed to {plan}. Limits applied (~15s at the gateway).':'Plan cambiado a {plan}. Límites aplicados (~15s en el gateway).',
     'Plans':'Planes', 'Platform area — raw JSON':'Área de plataforma — JSON crudo',
@@ -1781,6 +1789,8 @@ const I18N={
     'only an owner can grant the owner role':'solo un owner puede otorgar el rol de owner',
     'range too large (max 90 days)':'rango demasiado grande (máx. 90 días)',
     'role_arn must be an AIPlatGatewayAccess role already configured on one of this org\'s routes':'role_arn debe ser un rol AIPlatGatewayAccess ya configurado en una de las rutas de esta organización',
+    'role_arn is required':'role_arn es obligatorio',
+    'role_arn must be an AIPlatGatewayAccess role (arn:aws:iam::<account>:role/AIPlatGatewayAccess*)':'role_arn debe ser un rol AIPlatGatewayAccess (arn:aws:iam::<cuenta>:role/AIPlatGatewayAccess*)',
     'scope_widening':'ampliación de alcance',
     'to must be after from':'to debe ser posterior a from',
     'unknown_app':'app desconocida',
@@ -3308,19 +3318,25 @@ function bedrockVendor(m) {
 // account's catalog for that region, used to seed the dropdown before any credential
 // is typed. `el` is the status line to write into, because the two callers live in
 // different cards.
-async function fetchByoBedrockModels(roleArn, region, el) {
+async function fetchByoBedrockModels(roleArn, region, el, ext) {
   const msg = el || $('#mcMsg');
   msg.className = 'text-xs text-mut'; msg.textContent = _t('fetching models…');
   try {
-    const params = new URLSearchParams();
-    if (roleArn) params.set('role_arn', roleArn);
-    if (region) params.set('region', region);
-    // API.adminApi, not API.admin: window.AIPLAT has no `admin` key, so the old call
-    // fetched the string "undefined/admin/bedrock/models" — a relative URL against the
-    // CloudFront origin, which has no such behavior. The button therefore never
-    // reached the API at all, which is the other half of why the dropdown only ever
-    // showed the hardcoded table.
-    const r = await api(API.adminApi, '/admin/bedrock/models?' + params.toString());
+    let r;
+    if (roleArn) {
+      // GOV-SEC-010: list a BYO account's models through the REQUEST-SCOPED endpoint — the
+      // ARN travels in the POST body and the server writes NO config. This replaces the
+      // old "register a disabled placeholder route then retry the GET" hack, which left a
+      // callable data-plane route holding the customer's role_arn with an empty model id.
+      r = await api(API.adminApi, '/admin/bedrock/models', { method: 'POST',
+        body: JSON.stringify({ role_arn: roleArn, external_id: ext || '', region: region || '' }) });
+    } else {
+      // Platform-catalog seed (no credential): the GET lists the deployment account's own
+      // models for the region, used to populate the dropdown before any ARN is typed.
+      const params = new URLSearchParams();
+      if (region) params.set('region', region);
+      r = await api(API.adminApi, '/admin/bedrock/models?' + params.toString());
+    }
     if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(_terr(e,r)); }
     const d = await r.json();
     return (d.models || []).map(m => ({
@@ -3442,24 +3458,7 @@ function setupBedrockByo(){
 // The model list is per region: Bedrock does not offer the same set everywhere, so a
 // region change invalidates the dropdown.
 $('#bedRegion')&&($('#bedRegion').addEventListener('change',()=>seedBedrockCatalog()));
-// GOV-UX-003: register a DISABLED placeholder route carrying the BYO credential, so the
-// backend allowlist (GOV-SEC-002 — /admin/bedrock/models only lists a role already
-// declared on one of this org's routes) accepts the ARN. Without this, first-time BYO
-// onboarding was a deadlock: you cannot list models for a role with no route, and you
-// cannot pick a route without listing models. The placeholder serves no traffic
-// (enabled:false) and is superseded when the customer Adds a real model on this account.
-async function registerByoPlaceholder(arn, region, ext, msg){
-  msg.className='text-xs text-mut'; msg.textContent=_t('registering this account first…');
-  const acct=(/arn:aws:iam::(\d+):/.exec(arn)||[])[1]||'acct';
-  const name='_byo_'+acct;
-  CFG.routing=CFG.routing||{}; CFG_RAW=CFG_RAW||{}; CFG_RAW.routing=CFG_RAW.routing||{};
-  const route={provider:'bedrock', enabled:false, role_arn:arn, kind:'external', fallback:[]};
-  if(region) route.region=region;
-  if(ext) route.external_id=ext;
-  CFG.routing[name]=route; CFG_RAW.routing[name]=route;
-  return await saveConfig(msg,['routing']);
-}
-// Button that fetches the BYO models
+// Button that fetches the BYO models (GOV-SEC-010: request-scoped POST, no config write).
 $('#bedFetchModels')&&($('#bedFetchModels').onclick=async ()=>{
   const arn = $('#bedRole').value.trim();
   const region = $('#bedRegion').value.trim() || 'us-east-1';
@@ -3467,15 +3466,7 @@ $('#bedFetchModels')&&($('#bedFetchModels').onclick=async ()=>{
   const msg = $('#bedFetchMsg');
   if (!arn) { msg.className='text-xs text-amber-400'; msg.textContent=_t('enter the Role ARN'); return; }
   if (!arn.includes('AIPlatGatewayAccess')) { msg.className='text-xs text-amber-400'; msg.textContent=_t('Role ARN must contain "AIPlatGatewayAccess"'); return; }
-  let models = await fetchByoBedrockModels(arn, region, msg);
-  // GOV-UX-003: if the fetch failed and this ARN is not yet on any route, it is first-time
-  // onboarding — register the placeholder then retry, so the allowlist now carries the ARN.
-  if (!models) {
-    const declared = Object.values((CFG&&CFG.routing)||{}).some(r=>r && r.role_arn===arn);
-    if (!declared && await registerByoPlaceholder(arn, region, ext, msg)) {
-      models = await fetchByoBedrockModels(arn, region, msg);
-    }
-  }
+  const models = await fetchByoBedrockModels(arn, region, msg, ext);
   if (models && models.length) {
     _byoModelsCache = models;
     fillByoModels(mergeBedrockCatalog(models));
@@ -5454,16 +5445,35 @@ async function delMember(email){
 $('#memAdd')&&($('#memAdd').onclick=async()=>{
   const email=$('#memEmail').value.trim(), role=$('#memRole').value, m=$('#memMsg');
   if(!email){ m.className='text-xs text-amber-400'; m.textContent=_t('enter the e-mail'); return; }
-  let team=''; if(_memTeamTier){ team=$('#memTeam').value; if(team==='__new__') team=$('#memTeamNew').value.trim();
-    if(!team && role!=='owner' && role!=='admin'){ m.className='text-xs text-amber-400'; m.textContent=_t('pick a team for this member'); return; } }
+  // FE-FUN-002: a free-text "new team…" must CREATE the team before the member — otherwise
+  // the member POST carries a name that TEAMS#<org> does not have and GOV-SEC-009 rejects it
+  // with 400 unknown_team. newTeamName holds the typed display name; the team id comes back
+  // from POST /admin/teams and is what the member is actually assigned.
+  let team=''; let newTeamName='';
+  if(_memTeamTier){
+    const selTeam=$('#memTeam').value;
+    if(selTeam==='__new__'){
+      newTeamName=$('#memTeamNew').value.trim();
+      if(!newTeamName){ m.className='text-xs text-amber-400'; m.textContent=_t('enter the new team name'); return; }
+    } else { team=selTeam; }
+    if(!team && !newTeamName && role!=='owner' && role!=='admin'){ m.className='text-xs text-amber-400'; m.textContent=_t('pick a team for this member'); return; }
+  }
   const apps=_memTeamTier?[]:_memAppsSel.slice();
   const editing=_memEditing;
   // platform_admin only, and only on create: a permanent password skips the
   // e-mail invite entirely (test accounts). Empty = normal invite flow.
   const testPass=(!editing && auth.isPlatform && $('#memTestPass')) ? $('#memTestPass').value.trim() : '';
-  const body={email,role,team,apps}; if(testPass) body.password=testPass;
   m.className='text-xs text-mut'; m.textContent=editing?_t('saving…'):_t('inviting…');
-  try{ const r=await api(API.adminApi,'/admin/members',{method:editing?'PUT':'POST',body:JSON.stringify(body)});
+  try{
+    if(newTeamName){
+      m.textContent=_t('creating the team…');
+      const td=await teamApi('POST','/admin/teams',{display_name:newTeamName});
+      team=td.id; // the slug the server assigned — this is what the member is assigned to
+      if(typeof loadTeamsApps==='function'){ try{ await loadTeamsApps(true); }catch(_){} }
+    }
+    const body={email,role,team,apps}; if(testPass) body.password=testPass;
+    m.textContent=editing?_t('saving…'):_t('inviting…');
+    const r=await api(API.adminApi,'/admin/members',{method:editing?'PUT':'POST',body:JSON.stringify(body)});
     const d=await r.json(); if(!r.ok) throw new Error(_terr(d,r));
     const active=!editing && d.status==='active';
     m.className='text-xs text-brand';
@@ -5471,7 +5481,13 @@ $('#memAdd')&&($('#memAdd').onclick=async()=>{
       :active?'✓ '+_t('test account {email} created and active — sign in with the password you set').replace('{email}',email)
       :'✓ '+_t('invite sent to {email} (temporary password by e-mail)').replace('{email}',email);
     memResetForm(); RENDER.members();
-  }catch(e){ m.className='text-xs text-amber-400'; m.textContent=_t('failed: ')+e.message; }
+  }catch(e){ m.className='text-xs text-amber-400';
+    // FE-FUN-002: should not happen now that the team is created first, but if the API ever
+    // returns unknown_team, tell the operator the remedy rather than the bare code.
+    m.textContent=/unknown_team/i.test(e.message)
+      ? _t('that team does not exist yet — create it in the Teams tab first, then invite the member')
+      : _t('failed: ')+e.message;
+  }
 });
 // advanced area (platform_admin): raw JSON
 $('#advLoad')&&($('#advLoad').onclick=async()=>{
