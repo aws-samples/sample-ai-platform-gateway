@@ -18,7 +18,7 @@ The hierarchy is **progressive**: absent levels collapse. An empty `team` resolv
 - Writes use a **single scope** (`ScopeKey`): an org with no team writes to `ORG#`, not to `TEAM#default`. Team-scoped callers are forced to `TEAM#` (never org or global).
 
 ## Structural isolation
-The **partition carries the org** (`ORG#<org>…`), so a read never crosses orgs, not even through a bug. `global` is written only by `platform_admin`. The member record is `MEMBER#<org>#<email>` and the teams/apps record is `TEAMS#<org>` — distinct prefixes, no collision.
+The **partition carries the org** (`ORG#<org>…`), so a read never crosses orgs, not even through a bug. `global` is written only by `platform_admin`. The member record is `MEMBER#<org>#<sub>` and the teams/apps record is `TEAMS#<org>` — distinct prefixes, no collision.
 
 ## Duplication on purpose (Core × Governance)
 The scope chain is implemented **twice** (Core and Governance) as a **contract**, not a shared runtime library. The drift risk is covered by a contract test against a common fixture.

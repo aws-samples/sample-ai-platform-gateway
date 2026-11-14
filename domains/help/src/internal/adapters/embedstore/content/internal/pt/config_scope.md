@@ -18,7 +18,7 @@ Hierarquia **progressiva**: níveis ausentes colapsam. `team` vazio resolve para
 - Escrita usa o **escopo único** (`ScopeKey`): org sem time grava em `ORG#`, não em `TEAM#default`. Team-scoped força `TEAM#` (nunca org/global).
 
 ## Isolamento estrutural
-A **partição carrega a org** (`ORG#<org>…`), então uma leitura nunca cruza orgs, nem por bug. `global` só é escrito por `platform_admin`. O registro de membro é `MEMBER#<org>#<email>` e o de times/apps é `TEAMS#<org>` — prefixos distintos, sem colisão.
+A **partição carrega a org** (`ORG#<org>…`), então uma leitura nunca cruza orgs, nem por bug. `global` só é escrito por `platform_admin`. O registro de membro é `MEMBER#<org>#<sub>` e o de times/apps é `TEAMS#<org>` — prefixos distintos, sem colisão.
 
 ## Duplicação de propósito (Core × Governance)
 A cadeia de escopo é implementada **duas vezes** (Core e Governance) como **contrato**, não biblioteca compartilhada. O risco de drift é coberto por teste de contrato sobre um fixture comum.

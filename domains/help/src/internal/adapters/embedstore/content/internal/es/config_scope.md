@@ -18,7 +18,7 @@ La jerarquía es **progresiva**: los niveles ausentes colapsan. Un `team` vacío
 - La escritura usa un **ámbito único** (`ScopeKey`): una org sin equipo escribe en `ORG#`, no en `TEAM#default`. Los llamadores restringidos a un equipo quedan forzados a `TEAM#` (nunca org ni global).
 
 ## Aislamiento estructural
-La **partición lleva la org** (`ORG#<org>…`), así que una lectura nunca cruza organizaciones, ni por un bug. `global` solo lo escribe `platform_admin`. El registro de miembro es `MEMBER#<org>#<email>` y el de equipos/apps es `TEAMS#<org>` — prefijos distintos, sin colisión.
+La **partición lleva la org** (`ORG#<org>…`), así que una lectura nunca cruza organizaciones, ni por un bug. `global` solo lo escribe `platform_admin`. El registro de miembro es `MEMBER#<org>#<sub>` y el de equipos/apps es `TEAMS#<org>` — prefijos distintos, sin colisión.
 
 ## Duplicación a propósito (Core × Governance)
 La cadena de ámbitos está implementada **dos veces** (Core y Governance) como **contrato**, no como librería compartida en runtime. El riesgo de drift está cubierto por un test de contrato contra un fixture común.
