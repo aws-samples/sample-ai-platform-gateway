@@ -230,6 +230,28 @@ resource "aws_secretsmanager_secret_version" "key_hash_pepper" {
   secret_string = random_password.key_hash_pepper.result
 }
 
+# CORE-SEC-005: a per-deployment secret the router uses to derive each BYO customer's
+# cross-account ExternalID as HMAC(secret, org) instead of the guessable literal
+# "aiplat-<org>". Same provisioning pattern as the key-hash pepper: random, held in state
+# (stable across deploys so a customer's trust-policy ExternalID does not change under
+# them), mirrored into Secrets Manager. Injected only into the router (the only Lambda
+# that assumes a BYO role).
+resource "random_password" "byo_external_id_secret" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "byo_external_id_secret" {
+  name                    = "${local.name}-byo-external-id-secret"
+  description             = "HMAC secret for deriving BYO cross-account ExternalID (CORE-SEC-005)."
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "byo_external_id_secret" {
+  secret_id     = aws_secretsmanager_secret.byo_external_id_secret.id
+  secret_string = random_password.byo_external_id_secret.result
+}
+
 # --- Go Lambda (arm64) ---
 resource "aws_lambda_function" "router" {
   function_name    = "${local.name}-router"
@@ -278,6 +300,8 @@ resource "aws_lambda_function" "router" {
       # CORE-SEC-008: the key-hash pepper (same value as keyadmin) so the router verifies
       # the peppered HMAC written by keyadmin.
       KEY_HASH_PEPPER = random_password.key_hash_pepper.result
+      # CORE-SEC-005: derive the BYO ExternalID from this per-deployment secret.
+      BYO_EXTERNAL_ID_SECRET = random_password.byo_external_id_secret.result
     }
   }
 

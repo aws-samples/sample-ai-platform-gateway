@@ -89,10 +89,14 @@ const reasonInvalidRequest = "invalid_request"
 const reasonProviderConfig = "provider_config"
 
 // providerRouteError reports whether a provider rejection means the configured model
-// ROUTE is wrong (unknown/retired model id), as opposed to a bad caller request. A 404 is
-// always a route error; otherwise it matches the provider wordings for an unresolvable
-// model identifier (Bedrock's "could not resolve the foundation model", "model identifier
-// is invalid", end-of-life notices, and model/identifier "not found/exist/supported").
+// ROUTE is wrong (an unresolvable/retired model id), as opposed to a bad caller request.
+//
+// CORE-BND-008: a TYPED 404 is a route error; for everything else we match only the
+// ANCHORED model-resolution wordings. The earlier broad rule `(model|identifier) &&
+// (not found|not supported|…)` also fired on genuine caller faults the provider phrases
+// with those words — "tool use is not supported by this model", "image inputs are not
+// supported by model X" — turning a 400 into a 502 provider_config and a mis-billed
+// fallback. Those must stay invalid_request, so the generic combination is gone.
 func providerRouteError(status int, body string) bool {
 	if status == 404 {
 		return true
@@ -102,12 +106,11 @@ func providerRouteError(status int, body string) bool {
 	case strings.Contains(b, "could not resolve the foundation model"),
 		strings.Contains(b, "model identifier is invalid"),
 		strings.Contains(b, "provided model identifier is invalid"),
-		strings.Contains(b, "end of life"), strings.Contains(b, "end-of-life"),
-		strings.Contains(b, "no longer supported"):
-		return true
-	case (strings.Contains(b, "model") || strings.Contains(b, "identifier")) &&
-		(strings.Contains(b, "not found") || strings.Contains(b, "does not exist") ||
-			strings.Contains(b, "not exist") || strings.Contains(b, "not supported")):
+		strings.Contains(b, "the model identifier provided is invalid"),
+		strings.Contains(b, "model id is invalid"),
+		strings.Contains(b, "model is no longer supported"),
+		strings.Contains(b, "model has reached end of life"),
+		strings.Contains(b, "model has reached end-of-life"):
 		return true
 	}
 	return false
@@ -257,10 +260,13 @@ func classifyProviderErr(err error) string {
 	// is reasonInvalidRequest's job in reasonMeta). Checked AFTER auth(401/403) and
 	// rate(429) so those keep their own class; the tokens below are specific to a
 	// validation rejection and do not appear in a 5xx.
-	// CORE-BND-006: a ValidationException (or 404 prose) that the model id cannot be
-	// resolved is the operator's ROUTE mistake, not the caller's — checked BEFORE the
-	// generic validationexception→invalid_request case so it is not mislabelled.
-	case providerRouteError(0, e) || strings.Contains(e, "404"):
+	// CORE-BND-006/008: an untyped ValidationException whose text is an anchored
+	// model-resolution message is the operator's ROUTE mistake — checked BEFORE the
+	// generic validationexception→invalid_request case. CORE-BND-008 dropped the bare
+	// Contains(e,"404") here: it matched "404" anywhere in free text (a request id, a model
+	// id), turning caller faults into provider_config. A real HTTP 404 arrives typed on
+	// ports.ProviderError.Status and is handled in the typed branch above.
+	case providerRouteError(0, e):
 		return reasonProviderConfig
 	case strings.Contains(e, "validationexception") || strings.Contains(e, "malformed input") ||
 		strings.Contains(e, "http 400") || strings.Contains(e, "statuscode: 400") ||

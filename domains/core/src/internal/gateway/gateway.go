@@ -18,7 +18,10 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +54,14 @@ type Route struct {
 	BaseURL         string   `json:"base_url"`
 	APIKeySecret    string   `json:"api_key_secret"`
 	Fallback        []string `json:"fallback"`
+
+	// Disabled marks a route the router MUST NOT resolve (GOV-SEC-010). A disabled route
+	// is skipped during resolution and can never be chosen or fallen back to, so a
+	// placeholder/credential-holding entry (e.g. a half-finished BYO onboarding row) cannot
+	// be invoked by naming its alias. The JSON key is "disabled" (default false = active);
+	// the field is a pointer-free bool so an absent key reads as "active", preserving every
+	// existing route's behaviour.
+	Disabled bool `json:"disabled,omitempty"`
 
 	// ModelID declares WHICH WEIGHTS this route serves (e.g. "openai/gpt-5.2").
 	// Routes sharing it are the same model, so swapping between them carries no
@@ -466,6 +477,17 @@ func loadConfig(ctx context.Context, team, app string) *Config {
 	if c.Pricing == nil {
 		c.Pricing = map[string]routing.PriceHistory{}
 	}
+	// GOV-SEC-010: a disabled route MUST NOT be resolvable. Dropping it from the per-request
+	// Routing map here — the single place the effective config is materialised — means it
+	// cannot be named as a primary (→ unknown_model), cannot be a fallback, and cannot be a
+	// candidate for auto-cheapest: a half-finished BYO onboarding row carrying a role_arn can
+	// never trigger an AssumeRole by being named. The map is fresh per call, so this never
+	// mutates the config cache.
+	for name, r := range c.Routing {
+		if r.Disabled {
+			delete(c.Routing, name)
+		}
+	}
 	return c
 }
 
@@ -855,6 +877,30 @@ func streamingUnsupported(e error) bool {
 	return strings.Contains(s, "not supported") || strings.Contains(s, "unsupported") || strings.Contains(s, "does not support") || strings.Contains(s, "no native stream")
 }
 
+// byoExternalIDSecret is a per-deployment secret used to derive the BYO cross-account
+// ExternalID (CORE-SEC-005). It reuses the KEY_HASH_PEPPER provisioning pattern: a random
+// value held in Secrets Manager and injected into the router's env, so it is not committed
+// and is stable across deploys. Empty in dev/test → the legacy predictable value is used.
+var byoExternalIDSecret = []byte(os.Getenv("BYO_EXTERNAL_ID_SECRET"))
+
+// deriveExternalID derives the cross-account AssumeRole ExternalID for the deployment's
+// org. The old value was the GUESSABLE literal "aiplat-<org>": anyone could predict a
+// customer's ExternalID, which is exactly the shared-secret the confused-deputy mitigation
+// relies on. With a per-deployment secret the value is HMAC(secret, org) — unguessable
+// without the secret — and still deterministic so a customer can set it once in their trust
+// policy. When no secret is provisioned (dev/test) it falls back to the legacy literal so
+// behaviour is unchanged there; production provisions the secret (see core/tf). BYO
+// operators must set their role's trust-policy ExternalID to this derived value — see the
+// BYO section of the README and help content.
+func deriveExternalID(org string) string {
+	if len(byoExternalIDSecret) == 0 {
+		return "aiplat-" + org
+	}
+	mac := hmac.New(sha256.New, byoExternalIDSecret)
+	mac.Write([]byte("byo-external-id:" + org))
+	return "aiplat-" + hex.EncodeToString(mac.Sum(nil))[:24]
+}
+
 // validateRouteFn is the route guard providerFor applies. It is a seam (like
 // callProviderFn/openProviderStreamFn) so the wire/stream tests, which legitimately point
 // base_url at a local http httptest server, can relax it; production always uses the real
@@ -954,7 +1000,7 @@ func providerFor(ctx context.Context, r Route) (ports.Provider, error) {
 		// back to a value every deployment/org would share.
 		ext := r.ExternalID
 		if r.RoleARN != "" && ext == "" {
-			ext = "aiplat-" + deploymentOrg
+			ext = deriveExternalID(deploymentOrg)
 		}
 		p = &bedrock.Adapter{
 			Pool:          bedrockPool,
@@ -1830,6 +1876,26 @@ func cachedMessageParts(cached map[string]interface{}) (reasoning, text string) 
 	return reasoning, text
 }
 
+// cachedFinishReason reads choices[0].finish_reason out of a cached response body, so a
+// STREAM replay reports the same terminal reason the stored body carries (CORE-FUN-006).
+// A max_tokens-cut answer is stored with "length"; replaying it as a hardcoded "stop" told
+// a streaming client the answer was complete when it was truncated. Defaults to "stop"
+// when the field is absent (older entries, or a genuinely complete answer).
+func cachedFinishReason(cached map[string]interface{}) string {
+	ch, ok := cached["choices"].([]interface{})
+	if !ok || len(ch) == 0 {
+		return "stop"
+	}
+	c0, ok := ch[0].(map[string]interface{})
+	if !ok {
+		return "stop"
+	}
+	if s, ok := c0["finish_reason"].(string); ok && s != "" {
+		return s
+	}
+	return "stop"
+}
+
 // reasoningKeyPart is the cache-key contribution of a thinking request.
 //
 // It is the RESOLVED effort, not the raw string the client sent, so a request clamped to a
@@ -2680,12 +2746,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 			if body.Stream {
 				cachedReasoning, text := cachedMessageParts(cached)
 				var sb bytes.Buffer
-				// A cached answer is always a clean text completion (tool-call and partial
-				// answers are never cached — see the streaming/buffered Put guards), so
-				// finish_reason is "stop" and there are no tool calls to replay.
+				// CORE-FUN-006: replay the stored finish_reason (a max_tokens cut is stored
+				// as "length"), not a hardcoded "stop" — otherwise a streaming replay claims
+				// a truncated answer was complete. Tool answers are never cached, so there
+				// are no tool_calls to replay.
 				// CORE-FUN-003: the SSE frames carry the SERVED model (from the stored body),
 				// matching the aiplat block and the non-streaming reply.
-				pseudoStream(&sb, "chatcmpl-"+ck[:12], servedModel, cachedReasoning, text, "stop", nil)
+				pseudoStream(&sb, "chatcmpl-"+ck[:12], servedModel, cachedReasoning, text, cachedFinishReason(cached), nil)
 				// Same aiplat block the non-streaming cache hit returns, so a streaming
 				// caller still sees cache_hit and the saved amount. Tokens are 0 on a
 				// cache hit by definition — nothing was sent to a provider.
@@ -2763,7 +2830,8 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 						if body.Stream {
 							cachedReasoning, text := cachedMessageParts(cached)
 							var sb bytes.Buffer
-							pseudoStream(&sb, "chatcmpl-"+ck[:12], semServedModel, cachedReasoning, text, "stop", nil)
+							// CORE-FUN-006: replay the stored finish_reason, not a literal "stop".
+							pseudoStream(&sb, "chatcmpl-"+ck[:12], semServedModel, cachedReasoning, text, cachedFinishReason(cached), nil)
 							// Carries semantic_score as well, so a streaming caller can
 							// see the answer was an APPROXIMATE match and how close.
 							sseFinal(&sb, "chatcmpl-"+ck[:12], semServedModel, 0, 0, cached["aiplat"].(map[string]interface{}))
@@ -3099,19 +3167,13 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		// inflating the counterfactual ledger with token estimation error.
 		usedRoute := c.Routing[usedName]
 
-		// Assemble the response with tool_calls support
-		finishReason := "stop"
-		if res.stopReason != "" {
-			// Normalize the stop reason to the OpenAI dialect
-			switch res.stopReason {
-			case "tool_use":
-				finishReason = "tool_calls"
-			case "end_turn":
-				finishReason = "stop"
-			default:
-				finishReason = res.stopReason
-			}
-		}
+		// Assemble the response with tool_calls support.
+		// CORE-BND-007: normalise the stop reason through the SAME finishReasonFor the stream
+		// and cache-write paths use, so a max_tokens cut is reported as "length" (the OpenAI
+		// dialect) on the buffered transport too — not the provider's "max_tokens" vocabulary.
+		// Without this, the same truncated answer said "max_tokens" buffered and "length"
+		// streamed/replayed, and clients branching on finish_reason==="length" missed the cut.
+		finishReason := finishReasonFor(res.stopReason, len(res.toolCalls), false)
 
 		msgContent := map[string]interface{}{"role": "assistant", "content": res.text}
 		// A SEPARATE field, and only when there is something to put in it.

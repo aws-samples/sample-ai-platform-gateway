@@ -100,11 +100,15 @@ variable "response_streaming" {
   default = true
 }
 
-# CORE-NFR-003: keep one router environment always warm so a burst does not pay the
-# per-sandbox scale-out penalty. This poc env opts in to 1; the module default is 0.
+# CORE-NFR-007: provisioned concurrency did NOT change the measured burst latency
+# (p50 2550 ms with PC=1 vs 2529 without): the ~1.3 s penalty is uniform across all 20
+# concurrent requests, so it is downstream of handler entry, not per-sandbox scale-out.
+# PC=1 only added always-on billing for no benefit. Set to 0; the knob stays for an
+# operator who profiles a real scale-out case. CORE-NFR-003 is re-opened as deferred with
+# the burst-profiling task.
 variable "router_provisioned_concurrency" {
   type    = number
-  default = 1
+  default = 0
 }
 
 variable "agentcore_gateway_enabled" {

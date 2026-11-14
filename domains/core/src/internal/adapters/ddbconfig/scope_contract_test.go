@@ -177,7 +177,7 @@ func TestCeilingFoldContract_Core(t *testing.T) {
 		stripOrgOnly(child, c.BelowOrg)
 		snap := snapshotCeilings(base)
 		deepMerge(base, child)
-		foldCeilings(base, snap)
+		foldCeilings(base, snap, c.BelowOrg)
 		for k, want := range c.Expect {
 			if !reflect.DeepEqual(base[k], want) {
 				t.Errorf("[%s] effective %q = %#v, the contract wants %#v", c.Name, k, base[k], want)

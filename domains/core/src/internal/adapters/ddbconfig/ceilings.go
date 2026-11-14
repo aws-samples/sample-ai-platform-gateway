@@ -165,7 +165,9 @@ func stripOrgOnly(level map[string]interface{}, belowOrg bool) {
 
 // foldCeilings clamps the merged config (which deepMerge has already overlaid with the
 // child level) back to be no looser than the parent snapshot. It mutates base in place.
-func foldCeilings(base map[string]interface{}, p ceilingSnapshot) {
+// below is true when the child level being folded is a TEAM#/APP# scope; it gates the
+// rules that must NOT apply to an ORG (or global) write — see cache_scope (CORE-FUN-007).
+func foldCeilings(base map[string]interface{}, p ceilingSnapshot, below bool) {
 	// budget — smaller positive effective limit wins. CORE-SEC-009: compare the CHILD's
 	// effective limit (limit_usd if positive, else monthly_usd — the same precedence as
 	// Budget.Limit()) so a child cannot widen via whichever budget key the parent did not
@@ -236,12 +238,18 @@ func foldCeilings(base map[string]interface{}, p ceilingSnapshot) {
 	// answers cached by other teams. The default only bounds a child that DECLARES a scope;
 	// if the child declares none, behaviour is unchanged (inherit the parent's explicit
 	// scope, if any).
+	// CORE-FUN-007: the "undeclared parent defaults to team" rule applies ONLY when the
+	// child is a TEAM#/APP# scope (below). It exists so a TEAM/APP cannot silently opt into
+	// the looser "deployment" scope and read other teams' cached answers. An ORG (or global)
+	// write has no such floor: if no ancestor declared a scope, an ORG may legitimately
+	// choose "deployment" (deployment-wide caching is a per-org decision). Defaulting at
+	// every fold step made "deployment" unreachable everywhere.
 	parentScope := p.cacheScope
-	if parentScope == "" {
+	if parentScope == "" && below {
 		parentScope = "team"
 	}
 	if child, ok := base["cache_scope"].(string); ok && child != "" {
-		if cacheScopeRank[parentScope] > cacheScopeRank[child] {
+		if parentScope != "" && cacheScopeRank[parentScope] > cacheScopeRank[child] {
 			base["cache_scope"] = parentScope
 		}
 	} else if p.cacheScope != "" {

@@ -99,6 +99,24 @@ func TestClassifyProviderErr_RouteMisconfig(t *testing.T) {
 	}
 }
 
+// CORE-BND-008: capability rejections the provider phrases with "model … not supported"
+// are CALLER faults (the request asked for tools/images the model lacks), not an
+// unresolvable route. They must stay invalid_request — the old broad `(model|identifier)
+// && not supported` rule mis-classified them as provider_config, and the bare
+// Contains(e,"404") matched "404" anywhere in free text. Fails on the old code.
+func TestClassifyProviderErr_CapabilityRejectionsAreCallerFaults(t *testing.T) {
+	callerFaults := []error{
+		&ports.ProviderError{Status: 400, Label: "bedrock", Body: "ValidationException: tool use is not supported by this model"},
+		&ports.ProviderError{Status: 400, Label: "bedrock", Body: "ValidationException: image inputs are not supported by model anthropic.claude-x"},
+		errors.New("ValidationException: this model does not support tool use (req id 404abc)"),
+	}
+	for _, e := range callerFaults {
+		if got := classifyProviderErr(e); got != reasonInvalidRequest {
+			t.Errorf("classifyProviderErr(%v) = %q, want %q (caller fault, not a route error)", e, got, reasonInvalidRequest)
+		}
+	}
+}
+
 func TestValidateRequest(t *testing.T) {
 	ok := []chatMsg{{Role: "user", Content: []byte(`"hi"`)}}
 	cases := []struct {

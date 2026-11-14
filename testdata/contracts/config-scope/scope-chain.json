@@ -509,6 +509,30 @@
       "expect": {
         "cache_scope": "team"
       }
+    },
+    {
+      "name": "CORE-FUN-007 ORG declares deployment cache_scope with global silent: effective deployment, write accepted",
+      "below_org": false,
+      "parent": {},
+      "child": {
+        "cache_scope": "deployment"
+      },
+      "widens": [],
+      "expect": {
+        "cache_scope": "deployment"
+      }
+    },
+    {
+      "name": "CORE-FUN-007 global declares deployment cache_scope, ORG silent: effective deployment inherited, write accepted",
+      "below_org": false,
+      "parent": {
+        "cache_scope": "deployment"
+      },
+      "child": {},
+      "widens": [],
+      "expect": {
+        "cache_scope": "deployment"
+      }
     }
   ]
 }

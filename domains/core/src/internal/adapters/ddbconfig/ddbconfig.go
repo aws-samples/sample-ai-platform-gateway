@@ -250,7 +250,7 @@ func (s *Store) Effective(ctx context.Context, team, app string, base map[string
 					} else {
 						delete(base, allowedModelsKey)
 					}
-					foldCeilings(base, parentCeil)
+					foldCeilings(base, parentCeil, belowOrg(k))
 					if _, has := m["budget"]; has {
 						budgetScope = k
 					}
