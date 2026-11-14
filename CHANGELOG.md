@@ -146,6 +146,19 @@ value; the client-visible ones are named below so an operator upgrading knows wh
   the shorter replay window costs nothing in UX.
 - **The streaming data path validates the configured route** (https / non-loopback base_url,
   allowlisted role_arn) the same as the buffered path did.
+- **A rate-limiting WAF fronts the console.** A CLOUDFRONT-scope WAFv2 web ACL (per-IP rate
+  limit + the AWS managed common rule set in count mode) is attached to the console
+  distribution — the admin surface previously had no edge rate limiting. On by default
+  (`console_waf_enabled`). The real authorization stays the Cognito authorizer; this is
+  defence in depth.
+
+#### Performance
+
+- **Optional router provisioned concurrency.** A burst of new requests paid a per-sandbox
+  scale-out penalty (p50 roughly double steady state). `router_provisioned_concurrency`
+  (default 0 = off) keeps N router environments warm; when set, the API Gateway integration
+  invokes a published `live` alias so the warm pool is actually hit. The bundled poc env
+  sets it to 1.
 
 #### Upgrade notes
 
@@ -162,6 +175,13 @@ value; the client-visible ones are named below so an operator upgrading knows wh
 - **Webhook URLs are validated for scheme and literal IP at write time, without DNS.** An
   unresolvable-but-syntactically-valid host no longer blocks saving the Alerts tab; the SSRF
   resolution check runs at delivery time, where it matters.
+- **`.terraform.lock.hcl` files are now committed** (multi-platform: linux_amd64,
+  darwin_amd64, darwin_arm64), so a clean clone resolves the same provider versions. A new CI
+  job builds every domain's `dist/` on a clean runner. The frontend module now requires a
+  us-east-1-aliased provider (`aws.useast1`) for the console WAF — the env wrapper passes it.
+- **The poc enables `router_provisioned_concurrency = 1`**, which incurs always-on
+  provisioned-concurrency billing for one router environment. Set it to 0 to turn that off;
+  the reusable module defaults to 0.
 
 ## [1.6.0] - 2026-10-26
 
