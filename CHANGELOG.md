@@ -74,6 +74,95 @@ live measurements and rejected options are in `docs/agentcore-gateway-capabiliti
   The gateway per-invocation price is not published, so the reconciler counts invocations but
   does not yet attach a dollar figure to them.
 
+---
+
+### Audit remediation
+
+A security and correctness pass over the gateway, the control plane and the observability
+pipeline. Most entries tighten a contract that previously returned a plausible-but-wrong
+value; the client-visible ones are named below so an operator upgrading knows what changed.
+
+#### Changed (client-visible contract)
+
+- **Requests the dialect cannot honour now return `400`, not a served `200`.** `n > 1`,
+  `response_format`, `tool_choice` other than `"auto"`, and `logit_bias` are rejected up
+  front instead of being silently ignored and answered anyway.
+- **A malformed route no longer blames the caller.** A provider rejection that the model id
+  cannot be resolved (an unknown/retired `provider_model_id`, a 404, a "could not resolve the
+  foundation model" ValidationException) is now reported as a route/config problem
+  (`provider_config`, category `config`, **not** SLI-eligible) with a message pointing at the
+  route — not a `400 "check your parameters"` aimed at the client.
+- **`saved_pct` is the verified-only ratio; `saved_blended_pct` is new.** The dollar
+  `saved_usd` is the blended (verified + counterfactual) total, and the Overview/ROI cards now
+  pair it with `saved_blended_pct` so a number and its percentage describe the same quantity.
+- **Streaming responses cache a `max_tokens` cut the same as buffered ones.** A length-cut
+  answer is now cacheable on both transports and the cached body carries the real
+  `finish_reason` (`"length"`, not a hardcoded `"stop"`), so the cache-hit rate no longer
+  depends on whether the caller streamed.
+- **A semantic-cache hit reports the model that actually produced the cached answer**
+  (read from the stored body), not the model the current request would have chosen.
+- **`feature` is bounded to 64 characters of `[A-Za-z0-9._-]`; unknown paths are `404`;
+  conflicting `Authorization` + `x-aiplat-key` is `401`; a `429` carries a window-relative
+  `Retry-After`.** (Carried over from the prior pass; restated here as a single contract list.)
+- **Control-plane writes are validated:** a team/app scope that widens a parent policy is
+  `400 scope_widening`; an unknown member team is `400 unknown_team`; a global (platform)
+  write is no longer compared against itself, so a platform operator can now relax a global
+  budget or guardrail.
+
+#### Fixed
+
+- **`savings_floored` means what it says.** It is `true` only when a negative net saving was
+  clamped to zero — not on every ordinary zero-saving request. Dashboards counting floored
+  rows no longer count all traffic.
+- **The archived audit trail keeps numbers as JSON numbers.** `change_count` and the
+  truncation counts are serialised numerically again (not as quoted strings), restoring the
+  cold-tier shape for Athena/Glue consumers.
+- **Alerts and routing hints are evaluated once, for this deployment's org.** The notifier and
+  hints-publisher no longer fan every `ORG#` config out over the same deployment-wide usage
+  numbers; alert-log rows now carry `org` for attribution.
+- **BYO Bedrock onboarding works from the console.** "Fetch models" for a brand-new role now
+  registers a disabled placeholder route carrying the credential (so the allowlist accepts the
+  ARN) and then lists the account's models, instead of dead-locking on "role not configured".
+- **Timestamps render in the viewer's (or the configured) timezone** via `Intl.DateTimeFormat`
+  / `CFG.timezone`, instead of displaying UTC with the `Z` stripped off.
+
+#### Security
+
+- **API keys are hashed with a per-deployment HMAC pepper.** A `KEY_HASH_PEPPER` secret is
+  provisioned and injected into both the router and keyadmin; new keys are stored as a
+  peppered HMAC. Existing keys keep verifying via the legacy unsalted fallback, so no key
+  breaks — rotate keys to move them onto the pepper.
+- **A member's access scope is keyed by their immutable Cognito `sub`, not their e-mail.** A
+  team-scoped member can no longer shed their scope by changing (and re-verifying) their
+  e-mail; there is no e-mail fallback in the pre-token trigger.
+- **The audit event bus rejects forged entries.** Its resource policy is now an explicit
+  `Deny` for every principal except the two approved publisher roles (an Allow-only policy
+  restricted nothing same-account).
+- **Two narrow ceiling-escape routes closed.** A child scope can no longer widen a budget by
+  declaring `limit_usd` while the parent capped via `monthly_usd`, nor opt into the looser
+  `deployment` cache scope when no ancestor declared one (an undeclared parent now defaults to
+  `team`).
+- **Control-plane id/access tokens live 1 hour (was 8).** The console refreshes silently, so
+  the shorter replay window costs nothing in UX.
+- **The streaming data path validates the configured route** (https / non-loopback base_url,
+  allowlisted role_arn) the same as the buffered path did.
+
+#### Upgrade notes
+
+- **Every domain's `terraform apply` now adopts its Lambda log groups via `import {}` blocks**
+  in the `envs/poc` root. On an existing stack the plan shows *import + retention update*, not
+  *create* (a plain create failed with `ResourceAlreadyExistsException`). For a brand-new
+  account where the groups do not exist yet, remove those `import` blocks before the first apply.
+- **`KEY_HASH_PEPPER` is generated once and held in Terraform state** (a `random_password`).
+  Do not regenerate it: changing it invalidates every stored key hash. It is mirrored into
+  Secrets Manager (`<name>-key-hash-pepper`) for recovery/rotation.
+- **The governance seed `default_config.json` only seeds behaviour defaults**
+  (`auto_cheapest`, `cache_ttl`) at the global scope. Guardrail toggles are set per org from
+  the console, so the global scope no longer imposes an un-loosenable guardrail ceiling on orgs.
+- **Webhook URLs are validated for scheme and literal IP at write time, without DNS.** An
+  unresolvable-but-syntactically-valid host no longer blocks saving the Alerts tab; the SSRF
+  resolution check runs at delivery time, where it matters.
+
 ## [1.6.0] - 2026-10-26
 
 Follow-up security hardening after the 1.5.0 fix for the cross-tenant escalation
