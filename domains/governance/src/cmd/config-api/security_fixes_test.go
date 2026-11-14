@@ -137,6 +137,17 @@ func TestValidateWebhookURL_ConfigAPI(t *testing.T) {
 	if err := validateWebhookURL("https://example.com/hook"); err != nil {
 		t.Errorf("expected public https to pass, got %v", err)
 	}
+	// OBS-NFR-005: write-time validation does NOT resolve DNS, so a syntactically valid
+	// https host that does not resolve is ACCEPTED at save time (the SSRF resolve check runs
+	// at delivery in the notifier). A host that stops resolving must not block saving the
+	// Alerts tab, and the test must not depend on outbound DNS.
+	if err := validateWebhookURL("https://nonexistent-host-xyz.invalid/hook"); err != nil {
+		t.Errorf("an unresolvable but syntactically valid https host must be accepted at write time, got %v", err)
+	}
+	// A literal private IP is still rejected without any lookup.
+	if err := validateWebhookURL("https://192.168.0.5/hook"); err == nil {
+		t.Errorf("a literal private IP must be rejected at write time")
+	}
 	if got := webhookURLFromConfig(map[string]interface{}{"budget": 1}); got != "" {
 		t.Errorf("no alerts block should yield empty, got %q", got)
 	}

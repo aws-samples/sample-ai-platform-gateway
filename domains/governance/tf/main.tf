@@ -957,6 +957,14 @@ resource "aws_ssm_parameter" "deployment_org" {
   type  = "String"
   value = var.deployment_org
 }
+# AUD-IAC-002: publish the config-api role ARN so the audit bus Deny can reference it from
+# SSM instead of re-deriving the name from project/environment (a rename or a different
+# environment would otherwise silently deny this legitimate publisher).
+resource "aws_ssm_parameter" "config_api_role_arn" {
+  name  = "${local.ssm_root}/governance/config_api_role_arn"
+  type  = "String"
+  value = aws_iam_role.config_api.arn
+}
 resource "aws_ssm_parameter" "social_providers" {
   name = "${local.ssm_root}/governance/social_providers"
   type = "String"
