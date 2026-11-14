@@ -48,3 +48,13 @@ module "domain" {
 }
 
 output "help_api_endpoint" { value = module.domain.help_api_endpoint }
+
+# XC-IAC-006: adopt the live auto-created Lambda log group into state. Import blocks
+# are only valid in the ROOT module, so this targets the child module's resource.
+# Plan shows import + retention update, not create (which fails
+# ResourceAlreadyExistsException). One-time bootstrap on an EXISTING stack; remove for
+# a greenfield deploy. See README "Quick start".
+import {
+  to = module.domain.aws_cloudwatch_log_group.help_api
+  id = "/aws/lambda/aiplat-poc-help-api"
+}
