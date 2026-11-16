@@ -131,5 +131,12 @@ internal-midway/
 # RepoLinter report (evidência p/ o ticket de release open-source; não é produto).
 repolinter-report/
 
+# Auditoria do Fable 5.1 — prompt que roda OUTRO modelo (Fable) para escrutinar o
+# código + ambiente Isengard, e os relatórios por domínio que ele gera para o
+# Claude consumir na correção. É processo de engenharia do autor (achados,
+# repro contra um deploy específico, credenciais/IDs de demonstração), não
+# produto. NUNCA versionar.
+fable-audit/
+
 # Artefatos de processo de release (descrição de MR, rascunhos de ticket) — não é produto.
 release-artifacts/
