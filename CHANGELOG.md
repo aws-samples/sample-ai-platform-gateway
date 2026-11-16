@@ -12,6 +12,10 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.0.0] - 2026-11-16
+
 Amazon Bedrock AgentCore Gateway full-capability adoption. Every transport and rule is
 optional and off by default in the reusable module; a deployment opts in per flag. Design,
 live measurements and rejected options are in `docs/agentcore-gateway-capabilities.md`.
@@ -852,6 +856,7 @@ single file. Driven by an external code review plus [issue #3].
   deployed per domain with Terraform.
 
 [issue #3]: https://github.com/aws-samples/sample-ai-platform-gateway/issues/3
+[2.0.0]: https://github.com/aws-samples/sample-ai-platform-gateway/compare/v1.6.0...v2.0.0
 [1.1.1]: https://github.com/aws-samples/sample-ai-platform-gateway/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/aws-samples/sample-ai-platform-gateway/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/aws-samples/sample-ai-platform-gateway/releases/tag/v1.0.0
