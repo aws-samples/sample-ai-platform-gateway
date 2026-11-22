@@ -227,6 +227,59 @@ set `"sampling_style": "adaptive"` to omit `temperature` for that model while st
 `top_p`, `max_tokens` and `stop` — without it, a plain `temperature: 0` request would fail at
 the provider and be silently downgraded to another model by the fallback ladder.
 
+### Provider prompt caching on OpenAI-compatible routes
+
+Amazon Bedrock's OpenAI-compatible endpoint selects its
+[prompt-caching mode](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html)
+with a top-level body field, `prompt_cache_options`, and takes breakpoints inside content parts
+as `prompt_cache_breakpoint`. In the default `implicit` mode it adds an automatic breakpoint on
+the latest message (a cache write on every request) as well as using yours; `explicit` mode
+uses only the breakpoints you place. Message content already travels unchanged, so the
+breakpoints arrive; the body field is forwarded verbatim on an `openai_compatible` route that
+sets `"prompt_cache": true`:
+
+```python
+resp = client.chat.completions.create(
+    model="gpt-luna",
+    messages=[{"role": "system", "content": [
+        {"type": "text", "text": LONG_STABLE_PREFIX,
+         "prompt_cache_breakpoint": {"mode": "explicit"}}]}, ...],
+    extra_body={"prompt_cache_options": {"mode": "explicit", "ttl": "30m"}},
+)
+```
+
+```json
+"gpt-luna": {
+  "provider": "openai_compatible",
+  "base_url": "https://bedrock-mantle.us-east-1.api.aws/openai/v1",
+  "provider_model_id": "openai.gpt-6-luna",
+  "prompt_cache": true,
+  "capabilities": { "cache_tokens_inclusive": true }
+}
+```
+
+Set `cache_tokens_inclusive: true` on these routes. This dialect reports cache reads in
+`prompt_tokens_details.cached_tokens` *inside* `prompt_tokens`; with the default (exclusive)
+the ledger bills the cached tokens twice, so a cache hit is recorded as costing more than no
+cache at all.
+
+On an `openai_compatible` route, `prompt_cache` means "let the caller's cache directive
+through"; the gateway inserts no breakpoint of its own. On `bedrock`, `bedrock_gateway`,
+`bedrock_invoke` and `anthropic` routes it keeps its existing meaning (the adapter marks the
+end of the system block) and `prompt_cache_options` is not forwarded. The console shows the
+prefix-cache toggle only for those providers, so on an `openai_compatible` route set it in the
+routing config.
+
+The field is dropped before the call on any route without `prompt_cache`, because other
+OpenAI-compatible upstreams may reject an unknown top-level field. That check is per route, so
+in a fallback chain only the opted-in routes receive it; the `prompt_cache_breakpoint` keys
+inside message content still go to every route, as they did before. A value that is not a JSON
+object is rejected with a 400 naming the parameter. It does not change the answer, so it is not
+part of the response-cache key.
+
+Not covered yet: on `stream: true` the usage record does not read `cached_tokens` (only the
+buffered path does), and cache writes are not counted on this dialect.
+
 ### AgentCore Gateway transport (optional)
 
 Besides calling Amazon Bedrock directly, a route can reach models through an **Amazon Bedrock

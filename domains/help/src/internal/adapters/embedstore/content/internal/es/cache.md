@@ -14,4 +14,4 @@
 - El ahorro se registra como `semantic_cache` (**contrafactual/aproximado** — admite falsos positivos). Costo y latencia: ~60 ms de vectorización por miss; cada acierto evita 100% del costo de esa llamada.
 
 ## Prompt caching del proveedor (cache de prefijo)
-Por ruta (`prompt_cache`), solo donde el proveedor lo soporta (Bedrock/Anthropic): el gateway marca el fin del system para cachear el prefijo estable; las lecturas siguientes con el mismo prefijo cuestan ~90% menos (la 1ª escritura cobra un premio). Se registra como ahorro comprobado `provider_prompt_cache`.
+Por ruta (`prompt_cache`), solo donde el proveedor lo soporta. En rutas Bedrock/Anthropic el gateway marca el fin del system para cachear el prefijo estable; en rutas `openai_compatible` reenvía el `prompt_cache_options` del cliente (la caché de la API compatible con OpenAI de Bedrock; poné `cache_tokens_inclusive: true` en la ruta). Las lecturas siguientes con el mismo prefijo cuestan ~90% menos (la 1ª escritura cobra un premio). Se registra como ahorro comprobado `provider_prompt_cache`.

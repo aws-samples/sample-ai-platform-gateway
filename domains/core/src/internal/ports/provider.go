@@ -83,6 +83,12 @@ type InvokeInput struct {
 	// Grouped in one struct rather than added as four more fields so that adding the next
 	// parameter does not touch five call sites again.
 	Inference InferenceParams
+	// PromptCacheOptions is the caller's provider prompt-cache directive, as raw JSON — for
+	// example Amazon Bedrock's OpenAI-compatible `prompt_cache_options`. It is opaque here
+	// (bytes, not a decoded type) because only one adapter understands it: openai_compatible
+	// forwards it unchanged, and the gateway sets it only on a route that opted into prompt
+	// caching (Route.PromptCache). nil means the caller sent none.
+	PromptCacheOptions []byte
 }
 
 // InferenceParams are the per-request sampling controls, in provider-neutral form.

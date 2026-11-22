@@ -14,4 +14,4 @@
 - Savings are recorded as `semantic_cache` (**counterfactual/approximate** — it admits false positives). Cost and latency: ~60 ms of vectorisation per miss; each hit avoids 100% of that call's cost.
 
 ## Provider prompt caching (prefix cache)
-Per route (`prompt_cache`), only where the provider supports it (Bedrock/Anthropic): the gateway marks the end of the system message to cache the stable prefix; later reads with the same prefix cost ~90% less (the first write charges a premium). Recorded as verified saving `provider_prompt_cache`.
+Per route (`prompt_cache`), only where the provider supports it. On Bedrock/Anthropic routes the gateway marks the end of the system message to cache the stable prefix; on `openai_compatible` routes it forwards the caller's `prompt_cache_options` instead (Bedrock's OpenAI-compatible caching; set `cache_tokens_inclusive: true` on the route). Later reads with the same prefix cost ~90% less (the first write charges a premium). Recorded as verified saving `provider_prompt_cache`.
