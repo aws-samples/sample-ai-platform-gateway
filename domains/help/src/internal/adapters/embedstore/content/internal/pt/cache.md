@@ -14,4 +14,4 @@
 - Economia entra como `semantic_cache` (**contrafactual/aproximada** — admite falso positivo). Custo/latência: ~60ms de vetorização por miss; cada hit evita 100% do custo da chamada.
 
 ## Prompt caching do provedor (cache de prefixo)
-Por rota (`prompt_cache`), só onde o provedor suporta (Bedrock/Anthropic): o gateway marca o fim do system para cachear o prefixo estável; leituras seguintes com o mesmo prefixo custam ~90% menos (a 1ª gravação cobra um prêmio). Entra como economia verificada `provider_prompt_cache`.
+Por rota (`prompt_cache`), só onde o provedor suporta. Em rotas Bedrock/Anthropic o gateway marca o fim do system para cachear o prefixo estável; em rotas `openai_compatible` encaminha o `prompt_cache_options` do cliente (o cache da API compatível com OpenAI do Bedrock; defina `cache_tokens_inclusive: true` na rota). Leituras seguintes com o mesmo prefixo custam ~90% menos (a 1ª gravação cobra um prêmio). Entra como economia verificada `provider_prompt_cache`.

@@ -9,9 +9,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/aiplat/core/internal/adapters/secrets"
+	"github.com/aiplat/core/internal/httpapi"
 )
 
 // withSecretStore gives providerFor a secret store when the test runs on its own: the
@@ -28,12 +31,14 @@ func withSecretStore(t *testing.T) {
 
 // ── the defect these tests exist for ──────────────────────────────────────────
 //
-// Amazon Bedrock's OpenAI-compatible endpoint caches a prompt prefix only when the request
-// says so twice: a content part carries `prompt_cache_breakpoint` and the BODY carries
-// `prompt_cache_options`. The gateway kept the first (message content travels through Raw)
-// and dropped the second, because the openai_compatible body is rebuilt from a fixed set of
-// fields. The request still succeeded, so nothing reported that the cached prefix was never
-// reused and every input token was billed at the full rate.
+// Amazon Bedrock's OpenAI-compatible endpoint selects the cache mode with a top-level BODY
+// field, `prompt_cache_options` ({"mode":"implicit"|"explicit","ttl":...}); breakpoints
+// travel inside content parts as `prompt_cache_breakpoint`. The gateway kept the
+// breakpoints (message content travels through Raw) and dropped the body field, because the
+// openai_compatible body is rebuilt from a fixed set of fields. The request still succeeded
+// in the provider's default (implicit) mode, which adds an automatic breakpoint on the
+// latest message — a cache write on every request — so a caller that asked for explicit
+// mode to place only its own breakpoints silently got different caching and billing.
 
 const cacheOpts = `{"mode":"explicit","ttl":"30m"}`
 
@@ -165,5 +170,153 @@ func TestPromptCacheOptions_Validation(t *testing.T) {
 		if string(out) != c.wantOut {
 			t.Errorf("%s: out = %q, want %q", c.name, string(out), c.wantOut)
 		}
+	}
+}
+
+// ── through the handler ───────────────────────────────────────────────────────
+//
+// The tests above exercise the pieces. These drive handle() end to end against local
+// upstreams, so a regression in the wiring (the body field not parsed, not copied into the
+// invocation, or the 400 not returned) fails here even if every piece still works alone.
+
+// upstream is a local OpenAI-compatible server that records every request body it receives
+// and answers with the given status and body.
+type upstream struct {
+	mu     sync.Mutex
+	bodies []map[string]interface{}
+	srv    *httptest.Server
+}
+
+func newUpstream(t *testing.T, status int, ctype, reply string) *upstream {
+	t.Helper()
+	u := &upstream{}
+	u.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		raw, _ := io.ReadAll(req.Body)
+		var b map[string]interface{}
+		_ = json.Unmarshal(raw, &b)
+		u.mu.Lock()
+		u.bodies = append(u.bodies, b)
+		u.mu.Unlock()
+		w.Header().Set("content-type", ctype)
+		w.WriteHeader(status)
+		io.WriteString(w, reply)
+	}))
+	t.Cleanup(u.srv.Close)
+	return u
+}
+
+func (u *upstream) received() []map[string]interface{} {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]map[string]interface{}(nil), u.bodies...)
+}
+
+// handleWith runs one request through handle() with the real provider path (not the fake
+// seam), so the body that reaches the upstream is the one the gateway really builds.
+func handleWith(t *testing.T, routing, body string) httpapi.Response {
+	t.Helper()
+	neutralizeCoreGlobals(t)
+	relaxRouteGuard(t)
+	t.Setenv("MODEL_ROUTING", routing)
+	t.Setenv("PRICING_TABLE", `{"m1":{"input":0.001,"output":0.002},"m2":{"input":0.001,"output":0.002}}`)
+	installSeams(t, nil)
+	callProviderFn = callProvider // installSeams restores the previous value on cleanup
+	resp, err := handle(context.Background(), httpapi.Request{
+		Method: "POST", Path: "/v1/chat/completions",
+		Headers:   map[string]string{"authorization": "Bearer test"},
+		Body:      body,
+		RequestID: "test-req-prompt-cache-options",
+	})
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	return resp
+}
+
+func compatRoute(name, baseURL string, promptCache bool, fallback string) string {
+	r := map[string]interface{}{
+		"provider": "openai_compatible", "provider_model_id": name, "base_url": baseURL,
+		"prompt_cache": promptCache, "capabilities": map[string]interface{}{"tool_use": true, "tier": "fast"},
+	}
+	if fallback != "" {
+		r["fallback"] = []string{fallback}
+	}
+	b, _ := json.Marshal(r)
+	return `"` + name + `":` + string(b)
+}
+
+const requestWithOpts = `{"model":"m1","messages":[{"role":"system","content":[{"type":"text","text":"long stable prefix","prompt_cache_breakpoint":{"mode":"explicit"}}]},{"role":"user","content":"hi"}],"prompt_cache_options":` + cacheOpts + `}`
+
+func TestPromptCacheOptions_Handler_Buffered(t *testing.T) {
+	up := newUpstream(t, 200, "application/json", cannedOpenAI)
+	resp := handleWith(t, "{"+compatRoute("m1", up.srv.URL, true, "")+"}", requestWithOpts)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, resp.Body)
+	}
+	got := up.received()
+	if len(got) != 1 {
+		t.Fatalf("upstream received %d requests, want 1", len(got))
+	}
+	if _, ok := got[0]["prompt_cache_options"].(map[string]interface{}); !ok {
+		t.Errorf("prompt_cache_options did not reach the upstream through handle(): %v", got[0])
+	}
+}
+
+func TestPromptCacheOptions_Handler_Stream(t *testing.T) {
+	sse := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n" +
+		"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\n" +
+		"data: [DONE]\n\n"
+	up := newUpstream(t, 200, "text/event-stream", sse)
+	body := strings.Replace(requestWithOpts, `{"model":"m1",`, `{"model":"m1","stream":true,`, 1)
+	resp := handleWith(t, "{"+compatRoute("m1", up.srv.URL, true, "")+"}", body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, resp.Body)
+	}
+	got := up.received()
+	if len(got) != 1 {
+		t.Fatalf("upstream received %d requests, want 1", len(got))
+	}
+	if got[0]["stream"] != true {
+		t.Fatalf("expected the streaming path, upstream body: %v", got[0])
+	}
+	if _, ok := got[0]["prompt_cache_options"].(map[string]interface{}); !ok {
+		t.Errorf("prompt_cache_options did not reach the upstream on stream:true: %v", got[0])
+	}
+}
+
+// A fallback chain can mix an opted-in route with one that is not: the second must not see
+// the field even though the same invocation is reused for it.
+func TestPromptCacheOptions_Handler_FallbackToRouteWithoutOptIn(t *testing.T) {
+	first := newUpstream(t, 503, "application/json", `{"error":{"message":"unavailable"}}`)
+	second := newUpstream(t, 200, "application/json", cannedOpenAI)
+	routing := "{" + compatRoute("m1", first.srv.URL, true, "m2") + "," + compatRoute("m2", second.srv.URL, false, "") + "}"
+	resp := handleWith(t, routing, requestWithOpts)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200 from the fallback: %s", resp.StatusCode, resp.Body)
+	}
+	f, s := first.received(), second.received()
+	if len(f) == 0 || len(s) != 1 {
+		t.Fatalf("requests: first=%d second=%d, want first>=1 and second=1", len(f), len(s))
+	}
+	if _, ok := f[0]["prompt_cache_options"]; !ok {
+		t.Errorf("the opted-in route did not receive prompt_cache_options: %v", f[0])
+	}
+	if v, present := s[0]["prompt_cache_options"]; present {
+		t.Errorf("prompt_cache_options = %v reached the fallback route without prompt_cache", v)
+	}
+}
+
+func TestPromptCacheOptions_Handler_RejectsNonObject(t *testing.T) {
+	up := newUpstream(t, 200, "application/json", cannedOpenAI)
+	body := strings.Replace(requestWithOpts, cacheOpts, `"explicit"`, 1)
+	resp := handleWith(t, "{"+compatRoute("m1", up.srv.URL, true, "")+"}", body)
+	if resp.StatusCode != 400 {
+		t.Fatalf("status = %d, want 400: %s", resp.StatusCode, resp.Body)
+	}
+	if !strings.Contains(resp.Body, "prompt_cache_options") {
+		t.Errorf("the 400 must name the parameter, got: %s", resp.Body)
+	}
+	if n := len(up.received()); n != 0 {
+		t.Errorf("upstream called %d times for a rejected request, want 0", n)
 	}
 }

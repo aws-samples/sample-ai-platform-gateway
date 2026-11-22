@@ -80,10 +80,12 @@ type Route struct {
 	ExternalID string `json:"external_id,omitempty"`
 	Region     string `json:"region,omitempty"`
 
-	// PromptCache turns on the provider's prompt caching for this route (today only
-	// Bedrock). Opt-in (default false): the cache-write charges a premium and only
-	// pays off when the system prefix repeats across requests. The adapter marks the
-	// end of the system block with a cache point when this is true.
+	// PromptCache turns on the provider's prompt caching for this route. Opt-in (default
+	// false): the cache-write charges a premium and only pays off when the prefix repeats
+	// across requests. On bedrock, bedrock_gateway, bedrock_invoke and anthropic routes the
+	// adapter marks the end of the system block with a cache point. On openai_compatible
+	// routes the gateway places nothing itself; it forwards the caller's
+	// prompt_cache_options (see invocation.forRoute), which no other route receives.
 	PromptCache bool `json:"prompt_cache,omitempty"`
 
 	// ReasoningStyle declares which extended-thinking REQUEST SHAPE this model accepts:
