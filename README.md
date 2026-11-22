@@ -227,6 +227,30 @@ set `"sampling_style": "adaptive"` to omit `temperature` for that model while st
 `top_p`, `max_tokens` and `stop` — without it, a plain `temperature: 0` request would fail at
 the provider and be silently downgraded to another model by the fallback ladder.
 
+### Provider prompt caching on OpenAI-compatible routes
+
+Amazon Bedrock's OpenAI-compatible endpoint caches a prompt prefix only when the request says
+so twice: a content part carries `prompt_cache_breakpoint` and the body carries
+`prompt_cache_options`. Message content already travels unchanged, so the breakpoints arrive;
+the body option is forwarded verbatim on an `openai_compatible` route that sets
+`"prompt_cache": true`:
+
+```python
+resp = client.chat.completions.create(
+    model="gpt-luna",
+    messages=[{"role": "system", "content": [
+        {"type": "text", "text": LONG_STABLE_PREFIX,
+         "prompt_cache_breakpoint": {"mode": "explicit"}}]}, ...],
+    extra_body={"prompt_cache_options": {"mode": "explicit", "ttl": "30m"}},
+)
+```
+
+It is forwarded only on routes with `prompt_cache` enabled, because other OpenAI-compatible
+upstreams may reject an unknown top-level field; on any other route it is dropped before the
+call, per route, so a fallback chain that mixes providers stays safe. A value that is not a
+JSON object is rejected with a 400 naming the parameter. It does not change the answer, so it
+is not part of the response-cache key.
+
 ### AgentCore Gateway transport (optional)
 
 Besides calling Amazon Bedrock directly, a route can reach models through an **Amazon Bedrock

@@ -111,6 +111,13 @@ func BuildRequestBody(modelID string, in ports.InvokeInput) map[string]interface
 		body["tools"] = toWireTools(in.Tools)
 	}
 	applyInference(body, in)
+	// The provider's prompt-cache directive (e.g. Bedrock's explicit caching), forwarded
+	// verbatim. The breakpoints it activates already travel inside the message content
+	// (Raw); without this field they are inert and the whole prompt is billed at the full
+	// rate. Present only when the caller sent it and the route opted in — see invocation.forRoute.
+	if len(in.PromptCacheOptions) > 0 {
+		body["prompt_cache_options"] = json.RawMessage(in.PromptCacheOptions)
+	}
 	return body
 }
 

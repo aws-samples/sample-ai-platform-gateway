@@ -12,7 +12,15 @@ an **Upgrade notes** section, which is where they are called out.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **Provider prompt caching on `openai_compatible` routes.** A caller's `prompt_cache_options`
+  (Amazon Bedrock's OpenAI-compatible explicit caching) is now forwarded verbatim, buffered
+  and streaming, on a route with `"prompt_cache": true`. Before, the body was rebuilt from a
+  fixed set of fields and the option was dropped: the breakpoints inside the messages arrived
+  but were inert, so the cached prefix was never reused and the whole prompt was billed at the
+  full rate. On a route without `prompt_cache` the option is still not sent, so other
+  OpenAI-compatible upstreams see no new field. A non-object value is a named 400.
 
 ## [2.0.0] - 2026-11-16
 

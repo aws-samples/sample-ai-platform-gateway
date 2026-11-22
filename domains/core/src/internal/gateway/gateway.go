@@ -822,7 +822,7 @@ func callProvider(ctx context.Context, r Route, msgs []chatMsg, tools []toolDef,
 	if err != nil {
 		return result{}, err
 	}
-	pr, err := p.Invoke(ctx, inf.input(msgs, tools))
+	pr, err := p.Invoke(ctx, inf.forRoute(r).input(msgs, tools))
 	if err != nil {
 		return result{}, err
 	}
@@ -844,16 +844,50 @@ type invocation struct {
 	// correlation header to a destination that vends its own logs (the AgentCore Gateway),
 	// for later ledger reconciliation.
 	RequestID string
+	// PromptCacheOptions is the caller's provider prompt-cache directive (a JSON object),
+	// already validated by normalizePromptCacheOptions. It reaches an adapter only through
+	// forRoute, so a route that did not opt into prompt caching never sees it.
+	PromptCacheOptions json.RawMessage
 }
 
 func (i invocation) input(msgs []chatMsg, tools []toolDef) ports.InvokeInput {
 	return ports.InvokeInput{
-		Messages:        toPortsMessages(msgs),
-		Tools:           toPortsTools(tools),
-		MaxOutputTokens: i.MaxOutputTokens,
-		Inference:       i.Params,
-		RequestID:       i.RequestID,
+		Messages:           toPortsMessages(msgs),
+		Tools:              toPortsTools(tools),
+		MaxOutputTokens:    i.MaxOutputTokens,
+		Inference:          i.Params,
+		RequestID:          i.RequestID,
+		PromptCacheOptions: i.PromptCacheOptions,
 	}
+}
+
+// forRoute narrows the invocation to what route r accepts. Today that is one rule: the
+// caller's prompt_cache_options is a provider-specific field, so it is kept only on a route
+// with prompt_cache enabled. Other OpenAI-compatible upstreams may 400 on an unknown
+// top-level field, and which upstream receives it is the operator's decision, not the
+// caller's. It is applied per route because one request can walk a fallback chain that
+// mixes providers.
+func (i invocation) forRoute(r Route) invocation {
+	if !r.PromptCache {
+		i.PromptCacheOptions = nil
+	}
+	return i
+}
+
+// normalizePromptCacheOptions validates the caller's prompt_cache_options. Absent or null
+// means "none"; a JSON object is forwarded as sent; anything else is a named 400, because
+// forwarding it would only move the error to the provider, and dropping it would silently
+// bill the full rate again.
+func normalizePromptCacheOptions(raw json.RawMessage) (json.RawMessage, string) {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return nil, ""
+	}
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(raw, &obj) != nil {
+		return nil, "parameter 'prompt_cache_options' must be a JSON object"
+	}
+	return raw, ""
 }
 
 // reRoleARN is the allowlist shape for a BYO Bedrock role: the CloudFormation template the
@@ -970,7 +1004,7 @@ func openProviderStream(ctx context.Context, r Route, msgs []chatMsg, tools []to
 	if !ok {
 		return nil, errNoNativeStream
 	}
-	return sp.OpenStream(ctx, inf.input(msgs, tools))
+	return sp.OpenStream(ctx, inf.forRoute(r).input(msgs, tools))
 }
 
 // providerFor constructs the adapter for a route. Shared by the buffered and the streaming
@@ -2429,6 +2463,10 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 		ResponseFormat json.RawMessage `json:"response_format,omitempty"`
 		ToolChoice     json.RawMessage `json:"tool_choice,omitempty"`
 		LogitBias      json.RawMessage `json:"logit_bias,omitempty"`
+		// PromptCacheOptions is the provider's prompt-cache directive (Bedrock's
+		// OpenAI-compatible explicit caching). It does not change the answer, only what the
+		// provider charges for a repeated prefix, so it is not part of the response-cache key.
+		PromptCacheOptions json.RawMessage `json:"prompt_cache_options,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		emitFailure(ctx, req.RequestID, ident, "", "", "", "blocked", "invalid_body", "", int(time.Since(start).Milliseconds()))
@@ -2439,6 +2477,11 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	// that omitted the parameter).
 	if f, msg := unsupportedParam(body.N, body.ResponseFormat, body.ToolChoice, body.LogitBias); f != "" {
 		emitFailure(ctx, req.RequestID, ident, body.Feature, "", body.Model, "blocked", reasonInvalidRequest, "unsupported parameter: "+f, int(time.Since(start).Milliseconds()))
+		return jerr(reqOrigin, 400, msg)
+	}
+	cacheOpts, msg := normalizePromptCacheOptions(body.PromptCacheOptions)
+	if msg != "" {
+		emitFailure(ctx, req.RequestID, ident, body.Feature, "", body.Model, "blocked", reasonInvalidRequest, "invalid parameter: prompt_cache_options", int(time.Since(start).Milliseconds()))
 		return jerr(reqOrigin, 400, msg)
 	}
 
@@ -2582,8 +2625,9 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 	}
 	stops := stopSequences(body.Stop)
 	inf := invocation{
-		MaxOutputTokens: maxTok,
-		RequestID:       req.RequestID,
+		MaxOutputTokens:    maxTok,
+		RequestID:          req.RequestID,
+		PromptCacheOptions: cacheOpts,
 		Params: ports.InferenceParams{
 			Temperature: body.Temperature,
 			TopP:        body.TopP,
@@ -2893,7 +2937,7 @@ func handle(ctx context.Context, req httpapi.Request) (apiResp, error) {
 				continue
 			}
 			if s.r.Provider == "openai_compatible" {
-				r, e := openStreamOpenAICompat(ctx, s.r.BaseURL, s.r.ProviderModelID, inf.input(body.Messages, body.Tools), getSecret(ctx, s.r.APIKeySecret))
+				r, e := openStreamOpenAICompat(ctx, s.r.BaseURL, s.r.ProviderModelID, inf.forRoute(s.r).input(body.Messages, body.Tools), getSecret(ctx, s.r.APIKeySecret))
 				if e == nil {
 					openResp, okStream = r, true
 					break
